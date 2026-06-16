@@ -65,14 +65,45 @@ class FakeModel:
     sh_degree = 2
 
     def __init__(self, means, opacity=None):
-        self._means = means
-        self._opacity = opacity if opacity is not None else []
+        self._means_values = self._unwrap_values(means)
+        self._opacity_values = self._unwrap_values(opacity if opacity is not None else [])
+        self.last_soft_delete_mask = None
+        self.soft_delete_masks = []
+        self.apply_deleted_calls = 0
 
     def get_means(self):
-        return self._means
+        return FakeTorchTensor(self._means_values)
 
     def get_opacity(self):
-        return self._opacity
+        return FakeTorchTensor(self._opacity_values)
+
+    def soft_delete(self, mask):
+        self.last_soft_delete_mask = list(mask)
+        self.soft_delete_masks.append(list(mask))
+
+    def apply_deleted(self):
+        self.apply_deleted_calls += 1
+        if self.last_soft_delete_mask is None:
+            return
+        kept_rows = [
+            row for row, selected in zip(self._means_values, self.last_soft_delete_mask) if not selected
+        ]
+        self._means_values = kept_rows
+        if self._opacity_values:
+            self._opacity_values = [
+                value
+                for value, selected in zip(self._opacity_values, self.last_soft_delete_mask)
+                if not selected
+            ]
+        self.last_soft_delete_mask = None
+
+    @staticmethod
+    def _unwrap_values(values):
+        if values is None:
+            return []
+        if isinstance(values, FakeTorchTensor):
+            return [list(item) if isinstance(item, list) else item for item in values._values]
+        return [list(item) if isinstance(item, list) else item for item in values]
 
 
 class FakeScene:
@@ -246,3 +277,77 @@ def test_select_by_height_raises_clear_error_when_selection_api_is_missing(monke
         match="set_selection_mask",
     ):
         adapter.select_by_height(0.0, 2.0)
+
+
+def test_delete_selection_uses_latest_known_mask_and_updates_stats(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.5],
+                    [1.0, 1.0, 3.0],
+                    [2.0, 2.0, 1.5],
+                    [3.0, 3.0, 5.0],
+                ]
+            ),
+            opacity=FakeTorchTensor([0.1, 0.2, 0.3, 0.4]),
+        )
+    )
+    fake_module = SimpleNamespace(scene=fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.select_by_height(4.0, 1.0)
+
+    deleted = adapter.delete_selection()
+    stats = adapter.get_stats()
+
+    assert deleted.ok is True
+    assert deleted.message == "Deleted 2 selected splats."
+    assert fake_scene._model.soft_delete_masks == [[False, True, True, False]]
+    assert fake_scene._model.apply_deleted_calls == 1
+    assert fake_scene.notify_changed_calls == 2
+    assert fake_scene.last_selection_mask == [False, False]
+    assert adapter._cached_selection_mask is None
+    assert stats.splat_count == 2
+    assert stats.selected_count == 0
+    assert stats.bounds.min.z == 0.5
+    assert stats.bounds.max.z == 5.0
+
+
+def test_delete_selection_returns_explicit_result_when_no_selection_exists(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.5],
+                    [1.0, 1.0, 3.0],
+                ]
+            )
+        )
+    )
+    fake_module = SimpleNamespace(scene=fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    deleted = adapter.delete_selection()
+
+    assert deleted.ok is False
+    assert deleted.message == "No active selection available to delete."
+    assert fake_scene._model.last_soft_delete_mask is None
+    assert adapter._cached_selection_mask is None

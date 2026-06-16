@@ -135,13 +135,37 @@ class LichtfeldPluginAdapter(AdapterContract):
         )
 
     def delete_selection(self) -> ToolResult:
-        self._load_lichtfeld()
-        # Future LichtFeld mapping:
-        # - scene.combined_model()
+        lichtfeld_module = self._load_lichtfeld()
+        scene = self._require_active_scene(lichtfeld_module)
+        model = self._require_combined_model(scene)
+        splat_count = len(self._extract_position_rows(model))
+        selection_mask = self._read_scene_selection_mask(scene, splat_count)
+        if selection_mask is None:
+            selection_mask = self._get_cached_selection_mask(splat_count)
+        if selection_mask is None or not any(selection_mask):
+            self._cached_selection_mask = None
+            return ToolResult(ok=False, message="No active selection available to delete.")
+
+        soft_delete = getattr(model, "soft_delete", None)
+        if not callable(soft_delete):
+            raise AdapterUnavailableError(
+                "Active LichtFeld combined model does not expose soft_delete for deletion."
+            )
+
+        # Current LichtFeld mapping:
         # - model.soft_delete(mask)
-        # - model.apply_deleted()
-        # - scene.notify_changed()
-        self._not_implemented("delete_selection")
+        # - model.apply_deleted() when available to commit pending deletions
+        soft_delete(selection_mask)
+        apply_deleted = getattr(model, "apply_deleted", None)
+        if callable(apply_deleted):
+            apply_deleted()
+
+        remaining_count = len(self._extract_position_rows(model))
+        self._clear_scene_selection_mask(scene, remaining_count)
+        self._cached_selection_mask = None
+        self._notify_scene_changed(scene)
+        deleted_count = sum(selection_mask)
+        return ToolResult(message=f"Deleted {deleted_count} selected splats.")
 
     def crop_by_box(self, box: Box3D, keep_inside: bool = True) -> ToolResult:
         self._load_lichtfeld()
@@ -471,6 +495,18 @@ class LichtfeldPluginAdapter(AdapterContract):
         notify_changed = getattr(scene, "notify_changed", None)
         if callable(notify_changed):
             notify_changed()
+
+    @staticmethod
+    def _clear_scene_selection_mask(scene: object, expected_length: int) -> None:
+        cleared_mask = [False] * expected_length
+        setter = getattr(scene, "set_selection_mask", None)
+        if callable(setter):
+            setter(cleared_mask)
+            return
+        for attribute_name in ("selection_mask", "_selection_mask", "last_selection_mask"):
+            if hasattr(scene, attribute_name):
+                setattr(scene, attribute_name, list(cleared_mask))
+                return
 
     @staticmethod
     def _not_implemented(method_name: str, **_: object) -> None:
