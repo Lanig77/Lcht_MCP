@@ -4,6 +4,15 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 from lichtfeld_mcp.core.gaussian import BoundingBox, Gaussian, GaussianId, Position3D
+from lichtfeld_mcp.core.query.expressions import (
+    ColorSimilarityExpression,
+    ComparisonExpression,
+    LogicalExpression,
+    NotExpression,
+    QueryExpression,
+    RangeExpression,
+)
+from lichtfeld_mcp.core.query.operators import AND, GT, GTE, LT, LTE, OR
 from lichtfeld_mcp.errors import InvalidParameterError
 
 
@@ -81,12 +90,79 @@ class GaussianCloud:
         )
 
     def query(self) -> GaussianQuery:
-        return GaussianQuery(tuple(self.gaussians))
+        return GaussianQuery(cloud=self)
+
+    def execute(self, query: GaussianQuery) -> list[Gaussian]:
+        return [
+            gaussian
+            for gaussian in self.gaussians
+            if all(self._matches(gaussian, expression) for expression in query.expressions)
+        ]
 
     def _register(self, gaussian: Gaussian) -> None:
         if gaussian.id.value in self._gaussians_by_id:
             raise InvalidParameterError(f"Duplicate GaussianId {gaussian.id.value}.")
         self._gaussians_by_id[gaussian.id.value] = gaussian
+
+    def _matches(self, gaussian: Gaussian, expression: QueryExpression) -> bool:
+        if isinstance(expression, ComparisonExpression):
+            value = self._resolve_scalar_value(gaussian, expression.field_name)
+            if value is None:
+                return False
+            if expression.operator == GT:
+                return value > expression.value
+            if expression.operator == GTE:
+                return value >= expression.value
+            if expression.operator == LT:
+                return value < expression.value
+            if expression.operator == LTE:
+                return value <= expression.value
+            return False
+        if isinstance(expression, RangeExpression):
+            value = self._resolve_scalar_value(gaussian, expression.field_name)
+            if value is None:
+                return False
+            if expression.lower is not None and value < expression.lower:
+                return False
+            if expression.upper is not None and value > expression.upper:
+                return False
+            return True
+        if isinstance(expression, ColorSimilarityExpression):
+            return (
+                abs(gaussian.color.r - expression.color.r) <= expression.tolerance
+                and abs(gaussian.color.g - expression.color.g) <= expression.tolerance
+                and abs(gaussian.color.b - expression.color.b) <= expression.tolerance
+            )
+        if isinstance(expression, LogicalExpression):
+            if expression.operator == AND:
+                return self._matches(gaussian, expression.left) and self._matches(
+                    gaussian,
+                    expression.right,
+                )
+            if expression.operator == OR:
+                return self._matches(gaussian, expression.left) or self._matches(
+                    gaussian,
+                    expression.right,
+                )
+            return False
+        if isinstance(expression, NotExpression):
+            return not self._matches(gaussian, expression.operand)
+        return False
+
+    @staticmethod
+    def _resolve_scalar_value(gaussian: Gaussian, field_name: str) -> float | None:
+        if field_name == "height":
+            return gaussian.position.z
+        if field_name == "opacity":
+            return gaussian.opacity
+        if field_name == "scale":
+            return (gaussian.scale.x + gaussian.scale.y + gaussian.scale.z) / 3.0
+        if field_name == "density":
+            value = gaussian.metadata.get("density")
+            if isinstance(value, (int, float)):
+                return float(value)
+            return None
+        return None
 
 
 from lichtfeld_mcp.core.gaussian_query import GaussianQuery
