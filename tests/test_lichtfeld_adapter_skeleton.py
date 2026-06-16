@@ -64,9 +64,10 @@ class FakeTorchTensor:
 class FakeModel:
     sh_degree = 2
 
-    def __init__(self, means, opacity=None):
+    def __init__(self, means, opacity=None, colors=None):
         self._means_values = self._unwrap_values(means)
         self._opacity_values = self._unwrap_values(opacity if opacity is not None else [])
+        self._colors_values = self._unwrap_values(colors) if colors is not None else None
         self.last_soft_delete_mask = None
         self.soft_delete_masks = []
         self.apply_deleted_calls = 0
@@ -76,6 +77,11 @@ class FakeModel:
 
     def get_opacity(self):
         return FakeTorchTensor(self._opacity_values)
+
+    def get_colors(self):
+        if self._colors_values is None:
+            return None
+        return FakeTorchTensor(self._colors_values)
 
     def soft_delete(self, mask):
         self.last_soft_delete_mask = list(mask)
@@ -93,6 +99,12 @@ class FakeModel:
             self._opacity_values = [
                 value
                 for value, selected in zip(self._opacity_values, self.last_soft_delete_mask)
+                if not selected
+            ]
+        if self._colors_values:
+            self._colors_values = [
+                value
+                for value, selected in zip(self._colors_values, self.last_soft_delete_mask)
                 if not selected
             ]
         self.last_soft_delete_mask = None
@@ -290,6 +302,17 @@ class FakeModelWithOpacityAttribute:
         return FakeTorchTensor(self._means_values)
 
 
+class FakeModelWithColorAttribute:
+    sh_degree = 1
+
+    def __init__(self, means, colors, attribute_name="colors_raw"):
+        self._means_values = FakeModel._unwrap_values(means)
+        setattr(self, attribute_name, FakeTorchTensor(FakeModel._unwrap_values(colors)))
+
+    def get_means(self):
+        return FakeTorchTensor(self._means_values)
+
+
 def test_delete_selection_uses_latest_known_mask_and_updates_stats(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
@@ -482,3 +505,109 @@ def test_select_by_opacity_rejects_invalid_model_opacity_values(monkeypatch):
 
     with pytest.raises(InvalidParameterError, match="opacity values must be between 0.0 and 1.0"):
         adapter.select_by_opacity(min_opacity=0.0, max_opacity=1.0)
+
+
+def test_select_by_color_uses_get_colors_with_float_values_and_tolerance(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.5],
+                    [1.0, 1.0, 3.0],
+                    [2.0, 2.0, 1.5],
+                    [3.0, 3.0, 5.0],
+                ]
+            ),
+            colors=FakeTorchTensor(
+                [
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.49, 0.51, 0.5],
+                    [0.0, 0.0, 1.0],
+                ]
+            ),
+        )
+    )
+    fake_module = SimpleNamespace(scene=fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    result = adapter.select_by_color(128, 128, 128, tolerance=4)
+
+    assert result.selected_count == 1
+    assert result.selection_mode == "replace"
+    assert result.message == "Color selection applied."
+    assert fake_scene.last_selection_mask == [False, False, True, False]
+    assert fake_scene.notify_changed_calls == 1
+    assert adapter.get_stats().selected_count == 1
+
+
+def test_select_by_color_falls_back_to_color_attribute_with_int_values(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModelWithColorAttribute(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.5],
+                    [1.0, 1.0, 3.0],
+                    [2.0, 2.0, 1.5],
+                ]
+            ),
+            colors=FakeTorchTensor(
+                [
+                    [10, 20, 30],
+                    [12, 18, 28],
+                    [200, 200, 200],
+                ]
+            ),
+            attribute_name="rgb_raw",
+        )
+    )
+    fake_module = SimpleNamespace(scene=fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    result = adapter.select_by_color(10, 20, 30, tolerance=2)
+
+    assert result.selected_count == 2
+    assert fake_scene.last_selection_mask == [True, True, False]
+    assert adapter.get_stats().selected_count == 2
+
+
+def test_select_by_color_rejects_invalid_rgb_and_tolerance(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor([[0.0, 0.0, 0.5]]),
+            colors=FakeTorchTensor([[1.0, 0.0, 0.0]]),
+        )
+    )
+    fake_module = SimpleNamespace(scene=fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(InvalidParameterError, match="r must be between 0 and 255"):
+        adapter.select_by_color(300, 0, 0)
+
+    with pytest.raises(InvalidParameterError, match="tolerance must be between 0 and 255"):
+        adapter.select_by_color(0, 0, 0, tolerance=-1)

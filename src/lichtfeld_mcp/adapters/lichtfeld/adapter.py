@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter as AdapterContract
-from lichtfeld_mcp.core.constraints import validate_selection_mode
+from lichtfeld_mcp.core.constraints import (
+    validate_color_tolerance,
+    validate_rgb_color,
+    validate_selection_mode,
+)
 from lichtfeld_mcp.core.requests import HeightRange
 from lichtfeld_mcp.core.validation import normalize_scene_path
 from lichtfeld_mcp.errors import AdapterUnavailableError
@@ -22,7 +26,7 @@ from lichtfeld_mcp.schemas.common import (
 
 from .cameras import CameraOperations
 from .export import ExportOperations
-from .gaussian import extract_opacity_values, extract_position_rows
+from .gaussian import extract_color_rows, extract_opacity_values, extract_position_rows
 from .scene import build_scene_stats, notify_scene_changed
 from .selection import SelectionState
 from .training import TrainingOperations
@@ -132,14 +136,30 @@ class LichtfeldAdapter(AdapterContract):
         tolerance: int = 20,
         mode: str = "replace",
     ) -> SelectionResult:
-        load_lichtfeld()
-        not_implemented(
-            "select_by_color",
-            r=r,
-            g=g,
-            b=b,
-            tolerance=tolerance,
-            mode=mode,
+        target_rgb = validate_rgb_color(r, g, b)
+        normalized_tolerance = validate_color_tolerance(tolerance)
+        normalized_mode = validate_selection_mode(mode)
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        colors = extract_color_rows(model)
+        color_mask = self._selection.build_color_mask(
+            colors,
+            rgb=target_rgb,
+            tolerance=normalized_tolerance,
+        )
+        selection_mask = self._selection.merge_selection_mask(
+            scene,
+            color_mask,
+            normalized_mode,
+        )
+        self._selection.apply_scene_selection_mask(scene, selection_mask)
+        self._selection.cache_mask(selection_mask)
+        notify_scene_changed(scene)
+        return SelectionResult(
+            selected_count=sum(selection_mask),
+            selection_mode=normalized_mode,
+            message="Color selection applied.",
         )
 
     def delete_selection(self) -> ToolResult:

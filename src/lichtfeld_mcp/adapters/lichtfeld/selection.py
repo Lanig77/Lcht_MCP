@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from lichtfeld_mcp.core.constraints import validate_color_tolerance, validate_rgb_color
 from lichtfeld_mcp.core.requests import HeightRange
 from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 
@@ -64,20 +65,43 @@ class SelectionState:
             for opacity in opacities
         ]
 
+    def build_color_mask(
+        self,
+        colors: list[tuple[float, float, float]],
+        rgb: tuple[int, int, int],
+        tolerance: int,
+    ) -> list[bool]:
+        target_rgb = validate_rgb_color(*rgb)
+        normalized_tolerance = validate_color_tolerance(tolerance)
+        return [
+            abs(color[0] - target_rgb[0]) <= normalized_tolerance
+            and abs(color[1] - target_rgb[1]) <= normalized_tolerance
+            and abs(color[2] - target_rgb[2]) <= normalized_tolerance
+            for color in colors
+        ]
+
     def merge_height_mask(
         self,
         scene: object,
         height_mask: list[bool],
         mode: str,
     ) -> list[bool]:
+        return self.merge_selection_mask(scene, height_mask, mode)
+
+    def merge_selection_mask(
+        self,
+        scene: object,
+        selection_mask: list[bool],
+        mode: str,
+    ) -> list[bool]:
         if mode == "replace":
-            return list(height_mask)
-        current_mask = self.current_selection_mask(scene, len(height_mask))
+            return list(selection_mask)
+        current_mask = self.current_selection_mask(scene, len(selection_mask))
         if current_mask is None:
-            current_mask = [False] * len(height_mask)
+            current_mask = [False] * len(selection_mask)
         if mode == "add":
-            return [current or selected for current, selected in zip(current_mask, height_mask)]
-        return [current and not selected for current, selected in zip(current_mask, height_mask)]
+            return [current or selected for current, selected in zip(current_mask, selection_mask)]
+        return [current and not selected for current, selected in zip(current_mask, selection_mask)]
 
     def apply_scene_selection_mask(self, scene: object, mask: list[bool]) -> None:
         setter = getattr(scene, "set_selection_mask", None)
