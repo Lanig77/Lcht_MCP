@@ -1,15 +1,12 @@
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "lcht-mcp-test-plugin"
+name = "lcht_mcp_test_plugin"
 version = "0.1.0"
 description = "Minimal LichtFeld Studio smoke-test plugin for Lcht_MCP."
-requires-python = ">=3.11"
+author = "Lcht_MCP"
 
-[tool.setuptools]
-packages = ["lcht_mcp_test_plugin"]
-
-[tool.setuptools.package-dir]
-lcht_mcp_test_plugin = "."
+[tool.lichtfeld]
+auto_start = true
+hot_reload = true
+plugin_api = ">=1,<2"
+lichtfeld_version = ">=0.4.2"
+required_features = []

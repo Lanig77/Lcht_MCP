@@ -43,6 +43,8 @@ After copying, the installed plugin folder should contain:
 - `C:\Users\icks0\.lichtfeld\plugins\lcht_mcp_test_plugin\pyproject.toml`
 - `C:\Users\icks0\.lichtfeld\plugins\lcht_mcp_test_plugin\__init__.py`
 
+The `pyproject.toml` must include a valid `[tool.lichtfeld]` section. Without it, LichtFeld detects the folder but rejects the plugin manifest.
+
 ## Configure The Repository Path
 
 The plugin needs access to your `Lcht_MCP` repository so it can import `src/lichtfeld_mcp`.
@@ -67,6 +69,15 @@ After copying the plugin:
 2. use the plugin reload command if your LichtFeld build exposes one
 
 If the plugin system discovers the package successfully, `on_load()` will run automatically.
+
+In the current minimal manifest:
+
+- `[project].name` is the plugin id: `lcht_mcp_test_plugin`
+- `[project].description` provides the plugin summary
+- `[project].version` declares the plugin version
+- `[tool.lichtfeld]` declares LichtFeld compatibility and loader behavior
+
+No separate manifest entry-point field is required in the local plugin manifests we aligned with. LichtFeld loads the plugin package from the folder and uses the package `__init__.py`, which exposes `on_load()` and `on_unload()`.
 
 ## Run The Plugin Test
 
@@ -167,10 +178,11 @@ If the plugin does not appear in LichtFeld Studio:
 
 1. confirm the folder name is exactly `lcht_mcp_test_plugin`
 2. confirm the folder contains both `pyproject.toml` and `__init__.py`
-3. restart LichtFeld Studio or reload plugins again
-4. check the LichtFeld logs for `lcht_mcp_test_plugin loaded`
-5. confirm the `Lcht_MCP` repository is reachable through `LCHT_MCP_REPO_ROOT` or `REPO_ROOT_HINT`
-6. confirm that `src\lichtfeld_mcp` exists in that repository
+3. confirm `pyproject.toml` contains a `[tool.lichtfeld]` section
+4. restart LichtFeld Studio or reload plugins again
+5. check the LichtFeld logs for `lcht_mcp_test_plugin loaded`
+6. confirm the `Lcht_MCP` repository is reachable through `LCHT_MCP_REPO_ROOT` or `REPO_ROOT_HINT`
+7. confirm that `src\lichtfeld_mcp` exists in that repository
 
 If the plugin loads but the button does not appear:
 
