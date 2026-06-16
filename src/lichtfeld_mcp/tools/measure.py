@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from lichtfeld_mcp.app_state import get_scene_api
+from lichtfeld_mcp.app_state import get_scene_service
 
 
 def measure_distance(
@@ -16,4 +16,4 @@ def measure_distance(
 ) -> dict:
     """Measure a 3D distance between two points."""
 
-    return get_scene_api().measure_distance(ax=ax, ay=ay, az=az, bx=bx, by=by, bz=bz, unit=unit).model_dump()
+    return get_scene_service().measure_distance(ax=ax, ay=ay, az=az, bx=bx, by=by, bz=bz, unit=unit).model_dump()

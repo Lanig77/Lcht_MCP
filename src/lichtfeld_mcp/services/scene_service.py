@@ -6,6 +6,7 @@ from lichtfeld_mcp.core.scene_api import SceneAPI
 from lichtfeld_mcp.schemas.common import (
     ExportResult,
     HistoryEntry,
+    MeasurementResult,
     OptimizationResult,
     ProjectInfo,
     SceneStats,
@@ -88,6 +89,26 @@ class SceneService:
             keep_inside=keep_inside,
         )
 
+    def crop_by_box(
+        self,
+        min_x: float,
+        min_y: float,
+        min_z: float,
+        max_x: float,
+        max_y: float,
+        max_z: float,
+        keep_inside: bool = True,
+    ) -> ToolResult:
+        return self._scene_api.crop_by_box(
+            min_x=min_x,
+            min_y=min_y,
+            min_z=min_z,
+            max_x=max_x,
+            max_y=max_y,
+            max_z=max_z,
+            keep_inside=keep_inside,
+        )
+
     def delete_selection(self) -> ToolResult:
         return self._scene_api.delete_selection()
 
@@ -96,6 +117,26 @@ class SceneService:
 
     def export_scene(self, output_path: str, fmt: str = "ply", target: str | None = None) -> ExportResult:
         return self._scene_api.export_scene(output_path=output_path, fmt=fmt, target=target)
+
+    def measure_distance(
+        self,
+        ax: float,
+        ay: float,
+        az: float,
+        bx: float,
+        by: float,
+        bz: float,
+        unit: str = "m",
+    ) -> MeasurementResult:
+        return self._scene_api.measure_distance(
+            ax=ax,
+            ay=ay,
+            az=az,
+            bx=bx,
+            by=by,
+            bz=bz,
+            unit=unit,
+        )
 
     def undo(self) -> ToolResult:
         return self._scene_api.undo()
