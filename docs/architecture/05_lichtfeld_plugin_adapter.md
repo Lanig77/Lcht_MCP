@@ -25,7 +25,7 @@ The plugin package is imported lazily only inside adapter methods that need it.
 
 The skeleton lives in:
 
-- `src/lichtfeld_mcp/adapters/lichtfeld.py`
+- `src/lichtfeld_mcp/adapters/lichtfeld/`
 
 It exposes a concrete plugin-oriented adapter class aligned to the current runtime
 contract.
@@ -34,6 +34,8 @@ Some operations are already implemented against the active LichtFeld plugin scen
 
 - `get_stats()`
 - `select_by_height()`
+- `select_by_opacity()`
+- `select_by_color()`
 - `delete_selection()`
 
 Other methods are still placeholders, including:
@@ -107,6 +109,43 @@ It currently:
 The adapter returns the existing `SelectionResult` contract so the MCP-facing layers
 remain unchanged.
 
+### `select_by_opacity()`
+
+`select_by_opacity()` uses the active scene/model and builds a boolean selection mask
+from Gaussian opacity values.
+
+It currently:
+
+- reads opacity values from `model.get_opacity()`
+- falls back to `model.opacity` or `model.opacity_raw` when needed
+- validates requested opacity bounds in the `0.0..1.0` range
+- normalizes inverted opacity ranges when both bounds are provided
+- creates a boolean mask for splats whose opacity is within the normalized range
+- applies that mask with `scene.set_selection_mask(mask)`
+- caches the mask and calls `scene.notify_changed()` when available
+
+### `select_by_color()`
+
+`select_by_color()` uses the active scene/model and builds a boolean selection mask
+from per-splat color values.
+
+It currently:
+
+- reads colors from `model.get_colors()`
+- falls back to `model.colors`, `model.colors_raw`, `model.rgb`, or `model.rgb_raw`
+- validates the input RGB triplet in the `0..255` range
+- validates `tolerance` in the `0..255` range
+- compares each color channel independently against the requested RGB target
+- applies that mask with `scene.set_selection_mask(mask)`
+- caches the mask and calls `scene.notify_changed()` when available
+
+Color handling is normalized before comparison:
+
+- adapter input is always RGB `0..255`
+- model colors expressed as floats `0.0..1.0` are scaled to `0..255`
+- model colors already expressed as `0..255` are compared directly
+- `tolerance` is applied per channel, not as Euclidean color distance
+
 ### `delete_selection()`
 
 `delete_selection()` uses the current selection mask and applies a first real deletion
@@ -114,7 +153,7 @@ flow against the LichtFeld model.
 
 It currently:
 
-- prefers the latest cached selection mask created by `select_by_height()`
+- prefers the latest cached selection mask created by selection operations
 - falls back to a scene-provided selection mask when the API exposes one
 - calls `model.soft_delete(mask)`
 - calls `model.apply_deleted()` when available
@@ -125,18 +164,39 @@ It currently:
 The method still returns the existing `ToolResult` contract for compatibility with the
 rest of the application.
 
+## Selection data sources
+
+The currently implemented selection operations read different model data:
+
+- `select_by_height()`: Gaussian means / `z` position from `get_means()` or `means_raw`
+- `select_by_opacity()`: opacity from `get_opacity()`, `opacity`, or `opacity_raw`
+- `select_by_color()`: colors from `get_colors()`, `colors`, `colors_raw`, `rgb`, or `rgb_raw`
+
 ## Active selection mask cache
 
 The adapter keeps a lightweight in-memory cache of the latest known selection mask.
 
 This cache exists for two reasons:
 
-- it lets `delete_selection()` work immediately after `select_by_height()` even if the
-scene API does not expose a readable selection mask
+- it lets `delete_selection()` work immediately after `select_by_height()`,
+`select_by_opacity()`, or `select_by_color()` even if the scene API does not expose a
+readable selection mask
 - it lets `get_stats()` report a meaningful `selected_count` when the current selection
 is known by the adapter
 
 The cache is cleared after `delete_selection()`.
+
+## Mask lifecycle
+
+The current selection flow follows the same lifecycle across implemented selectors:
+
+1. read the relevant Gaussian attribute from the active model
+2. build a boolean mask in Python
+3. push that mask to the scene with `scene.set_selection_mask(mask)`
+4. cache the active mask inside the adapter
+5. call `scene.notify_changed()` when available
+6. later, `delete_selection()` consumes the cached mask or a scene-provided current mask
+7. after deletion, the adapter clears both the cache and the visible scene selection
 
 ## No-selection behavior
 
@@ -164,9 +224,10 @@ MCP tools
 | --- | --- | --- |
 | `get_stats()` | implemented | reads active scene/model, computes bounds and splat count defensively |
 | `select_by_height()` | implemented | builds a boolean mask from Gaussian `z` positions |
+| `select_by_opacity()` | implemented | reads opacity values and applies a replace-style mask |
+| `select_by_color()` | implemented | supports RGB `0..255` input and float/int model colors |
 | `delete_selection()` | implemented | uses `soft_delete(mask)` and `apply_deleted()` when available |
 | `select_by_box()` | placeholder | not connected to LichtFeld yet |
-| `select_by_color()` | placeholder | not connected to LichtFeld yet |
 | `crop_by_height()` | placeholder | not connected to LichtFeld yet |
 | `undo()` | placeholder | no real LichtFeld undelete flow wired yet |
 | `open_project()` | placeholder | depends on whether the plugin API exposes project lifecycle controls |
@@ -176,9 +237,13 @@ MCP tools
 ## Current limitation
 
 - no real undo via LichtFeld is implemented yet
-- only height-based selection is implemented
 - `open_project()` / `save_project()` / `close_project()` are still placeholders unless
 the LichtFeld plugin API exposes those lifecycle operations cleanly
+- remaining selection gaps include:
+  - scale selection
+  - density selection
+  - bounding box selection
+  - semantic / AI-assisted selection
 - the mock adapter remains the only functional backend in tests
 
 This gives the project a safe next step toward a real LichtFeld integration without
