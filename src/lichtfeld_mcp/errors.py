@@ -27,3 +27,7 @@ class UnsupportedUnitError(LichtfeldMCPError):
 
 class InvalidParameterError(LichtfeldMCPError):
     """Raised when a numeric or bounded parameter is invalid."""
+
+
+class AdapterUnavailableError(LichtfeldMCPError):
+    """Raised when a configured backend adapter cannot be used in this runtime."""
