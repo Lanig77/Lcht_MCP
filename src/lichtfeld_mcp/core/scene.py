@@ -4,8 +4,9 @@ from .camera_set import CameraSet
 from .capabilities import Capabilities
 from .edit_manager import EditManager
 from .export_manager import ExportManager
-from .gaussian import BoundingBox
+from .gaussian import BoundingBox, RGBColor
 from .gaussian_cloud import GaussianCloud
+from .gaussian_query import GaussianQuery
 from .measurement_manager import MeasurementManager
 from .metadata import Metadata
 from .selection_manager import SelectionManager
@@ -28,6 +29,10 @@ class Scene:
     def gaussians(self) -> GaussianCloud:
         return self.gaussian_cloud
 
+    @property
+    def selection(self) -> SelectionManager:
+        return self.selection_manager
+
     def is_empty(self) -> bool:
         return self.gaussians.is_empty()
 
@@ -36,3 +41,26 @@ class Scene:
 
     def bounding_box(self) -> BoundingBox | None:
         return self.gaussians.bounding_box()
+
+    def select_query(self, query: GaussianQuery) -> None:
+        self.selection.clear()
+        self.selection.select(query.ids())
+
+    def select_by_height(
+        self,
+        min_z: float | None = None,
+        max_z: float | None = None,
+    ) -> None:
+        self.select_query(self.gaussians.query().by_height(min_z=min_z, max_z=max_z))
+
+    def select_by_opacity(
+        self,
+        min_opacity: float | None = None,
+        max_opacity: float | None = None,
+    ) -> None:
+        self.select_query(
+            self.gaussians.query().by_opacity(min_opacity=min_opacity, max_opacity=max_opacity)
+        )
+
+    def select_by_color(self, color: RGBColor, tolerance: int = 0) -> None:
+        self.select_query(self.gaussians.query().by_color(color=color, tolerance=tolerance))
