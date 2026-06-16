@@ -42,6 +42,10 @@ After copying, the installed plugin folder should contain:
 
 - `C:\Users\icks0\.lichtfeld\plugins\lcht_mcp_test_plugin\pyproject.toml`
 - `C:\Users\icks0\.lichtfeld\plugins\lcht_mcp_test_plugin\__init__.py`
+- `C:\Users\icks0\.lichtfeld\plugins\lcht_mcp_test_plugin\settings.json`
+- `C:\Users\icks0\.lichtfeld\plugins\lcht_mcp_test_plugin\core\`
+- `C:\Users\icks0\.lichtfeld\plugins\lcht_mcp_test_plugin\operators\`
+- `C:\Users\icks0\.lichtfeld\plugins\lcht_mcp_test_plugin\panels\`
 
 The `pyproject.toml` must include a valid `[tool.lichtfeld]` section. Without it, LichtFeld detects the folder but rejects the plugin manifest.
 
@@ -59,7 +63,7 @@ It looks for the repository in this order:
 If your clone is not in that default location, use one of these options:
 
 1. set `LCHT_MCP_REPO_ROOT` before launching LichtFeld Studio
-2. edit `REPO_ROOT_HINT` in the installed plugin `__init__.py`
+2. edit `REPO_ROOT_HINT` in the installed plugin `core\test_runner.py`
 
 ## Restart Or Reload Plugins
 
@@ -79,24 +83,57 @@ In the current minimal manifest:
 
 No separate manifest entry-point field is required in the local plugin manifests we aligned with. LichtFeld loads the plugin package from the folder and uses the package `__init__.py`, which exposes `on_load()` and `on_unload()`.
 
+The plugin now follows the same high-level architecture as the official `360_record` plugin:
+
+- top-level `__init__.py` registers classes with `lf.register_class(...)`
+- `panels/` contains the UI panel class
+- `operators/` contains the executable operator class
+- `core/` contains the safe test runner logic
+- `settings.json` enables startup loading
+
+The registration pattern matches the local official plugin:
+
+- `on_load()` registers panel and operator classes
+- `on_unload()` unregisters them in reverse order
+- the panel button triggers the operator with `lf.ui.ops.invoke(...)`
+
 ## Run The Plugin Test
 
-If LichtFeld exposes a compatible UI registration API, the plugin will register a button or action named:
+The plugin appears in the same `MAIN_PANEL_TAB` family as `360_record`.
+
+Look for a panel named:
+
+`Lcht MCP Test`
+
+Inside that panel, click:
 
 `Run Lcht MCP Test`
 
-Click that button or action to run the smoke test.
+The panel button invokes the registered operator through:
 
-If no compatible UI registration API is available, the plugin logs a clear fallback message. In that case, run it manually from the LichtFeld Python console:
+`lfs_plugins.lcht_mcp_test_plugin.operators.run_test.LCHTMCP_OT_run_test`
+
+If you want to trigger the operator manually from the LichtFeld Python console, run:
 
 ```python
-import lcht_mcp_test_plugin
-lcht_mcp_test_plugin.run_lcht_mcp_test()
+import lichtfeld as lf
+lf.ui.ops.invoke("lfs_plugins.lcht_mcp_test_plugin.operators.run_test.LCHTMCP_OT_run_test")
+```
+
+If you prefer to run the underlying function directly from Python:
+
+```python
+from lcht_mcp_test_plugin.core.test_runner import run_lcht_mcp_test
+run_lcht_mcp_test()
 ```
 
 ## Change The Height Range
 
-Edit the installed plugin `__init__.py` and update:
+Edit the installed plugin:
+
+`C:\Users\icks0\.lichtfeld\plugins\lcht_mcp_test_plugin\core\test_runner.py`
+
+and update:
 
 ```python
 MIN_Z = 0.0
@@ -131,34 +168,32 @@ The plugin runs each step in its own `try/except` block and logs a clear message
 6. Print `selected_count`.
 7. Call `delete_selection()` only if `DELETE_SELECTED` was changed to `True`.
 
-The plugin prefers `lf.log.info(...)` and `lf.log.error(...)` when available, and falls back to `print(...)` otherwise.
+The plugin uses the same logging style as the official local plugin family:
+
+- `lf.log.info(...)` for normal lifecycle and execution messages
+- `lf.log.error(...)` for failures
 
 ## Expected Output
 
 Typical success output looks like:
 
 ```text
-[Lcht_MCP Plugin] lcht_mcp_test_plugin loaded.
-[Lcht_MCP Plugin] Registered 'Run Lcht MCP Test' via LichtFeld UI API (register_button).
-[Lcht_MCP Plugin] Starting safe adapter smoke test with MIN_Z=0.0, MAX_Z=2.0, DELETE_SELECTED=False.
-[Lcht_MCP Plugin] LichtfeldAdapter instantiated from C:\Users\icks0\Documents\MCP GS\Lcht_MCP.
-[Lcht_MCP Plugin] splat_count=123456
-[Lcht_MCP Plugin] bounding_box=min=Vec3(x=-2.1, y=-1.0, z=0.0) max=Vec3(x=4.8, y=3.2, z=7.4)
-[Lcht_MCP Plugin] select_by_height range: min_z=0.0, max_z=2.0
-[Lcht_MCP Plugin] selected_count=8421
-[Lcht_MCP Plugin] delete_selection skipped because DELETE_SELECTED=False.
+lcht_mcp_test_plugin loaded
+lcht_mcp_test_plugin: Starting safe adapter smoke test with MIN_Z=0.0, MAX_Z=2.0, DELETE_SELECTED=False.
+lcht_mcp_test_plugin: LichtfeldAdapter instantiated from C:\Users\icks0\Documents\MCP GS\Lcht_MCP.
+lcht_mcp_test_plugin: splat_count=123456
+lcht_mcp_test_plugin: bounding_box=min=Vec3(x=-2.1, y=-1.0, z=0.0) max=Vec3(x=4.8, y=3.2, z=7.4)
+lcht_mcp_test_plugin: select_by_height range: min_z=0.0, max_z=2.0
+lcht_mcp_test_plugin: selected_count=8421
+lcht_mcp_test_plugin: delete_selection skipped because DELETE_SELECTED=False.
 ```
 
-If UI registration is not available, a normal fallback message looks like:
-
-```text
-[Lcht_MCP Plugin] UI registration is not available. Run lcht_mcp_test_plugin.run_lcht_mcp_test() manually from the LichtFeld Python console.
-```
+Using the actual official plugin architecture, there is no separate dynamic button-registration log. The button becomes available because the panel class is registered during `on_load()`.
 
 If there is a problem, the plugin prints a clear error for the failing step, for example:
 
 ```text
-[Lcht_MCP Plugin] get_stats failed: No active LichtFeld scene is available.
+lcht_mcp_test_plugin: get_stats failed: No active LichtFeld scene is available.
 ```
 
 ## Standalone Script Fallback
@@ -177,15 +212,18 @@ This keeps the same safe default behavior with `DELETE_SELECTED = False`.
 If the plugin does not appear in LichtFeld Studio:
 
 1. confirm the folder name is exactly `lcht_mcp_test_plugin`
-2. confirm the folder contains both `pyproject.toml` and `__init__.py`
+2. confirm the folder contains `pyproject.toml`, `__init__.py`, `settings.json`, `core\`, `operators\`, and `panels\`
 3. confirm `pyproject.toml` contains a `[tool.lichtfeld]` section
 4. restart LichtFeld Studio or reload plugins again
 5. check the LichtFeld logs for `lcht_mcp_test_plugin loaded`
 6. confirm the `Lcht_MCP` repository is reachable through `LCHT_MCP_REPO_ROOT` or `REPO_ROOT_HINT`
 7. confirm that `src\lichtfeld_mcp` exists in that repository
 
-If the plugin loads but the button does not appear:
+If the plugin loads but the panel does not appear:
 
-1. look for the manual fallback log message
-2. run `lcht_mcp_test_plugin.run_lcht_mcp_test()` from the Python console
-3. keep using the plugin this way until the exact LichtFeld UI API is known for your build
+1. check that the panel space is the main side panel tab, the same family used by `360_record`
+2. confirm that `on_load()` completed without a class registration error
+3. run the operator manually with:
+   `lf.ui.ops.invoke("lfs_plugins.lcht_mcp_test_plugin.operators.run_test.LCHTMCP_OT_run_test")`
+4. if needed, run `from lcht_mcp_test_plugin.core.test_runner import run_lcht_mcp_test`
+5. then call `run_lcht_mcp_test()` directly to isolate UI registration from adapter execution
