@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Minimal LichtFeld Studio smoke-test plugin for Lcht_MCP."
 author = "Lcht_MCP"
 
+dependencies = [
+    "pydantic>=2.7.0",
+]
+
 [tool.lichtfeld]
 auto_start = true
 hot_reload = true
