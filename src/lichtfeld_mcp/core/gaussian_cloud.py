@@ -35,6 +35,17 @@ class GaussianCloud:
         self.gaussians.append(gaussian)
         self.splat_count = len(self.gaussians)
 
+    def restore_many(self, items: Iterable[tuple[int, Gaussian]]) -> int:
+        restored = 0
+        for index, gaussian in sorted(items, key=lambda item: item[0]):
+            self._register(gaussian)
+            insert_at = min(max(index, 0), len(self.gaussians))
+            self.gaussians.insert(insert_at, gaussian)
+            restored += 1
+        if restored > 0:
+            self.splat_count = len(self.gaussians)
+        return restored
+
     def remove_many(self, ids: Iterable[GaussianId]) -> int:
         selected_values = {gaussian_id.value for gaussian_id in ids}
         if not selected_values:
