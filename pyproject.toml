@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lichtfeld-mcp-gaussian-editor"
+version = "0.1.0"
+description = "MCP server prototype for controlling a Gaussian Splatting editor such as Lichtfeld Studio."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Lanig Fleury" }]
+dependencies = [
+  "mcp>=1.9.0",
+  "pydantic>=2.7.0",
+  "typing-extensions>=4.10.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2.0",
+  "ruff>=0.5.0",
+  "mypy>=1.10.0"
+]
+
+[project.scripts]
+lichtfeld-mcp = "lichtfeld_mcp.server:main"
+lichtfeld-mcp-dev = "lichtfeld_mcp.dev_cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lichtfeld_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

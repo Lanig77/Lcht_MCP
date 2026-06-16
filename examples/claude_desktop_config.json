@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "lichtfeld-gaussian-editor": {
+      "command": "python",
+      "args": [
+        "-m",
+        "lichtfeld_mcp.server"
+      ],
+      "env": {
+        "LICHTFELD_ADAPTER": "mock"
+      }
+    }
+  }
+}
