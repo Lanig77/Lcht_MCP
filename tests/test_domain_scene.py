@@ -4,6 +4,7 @@ from lichtfeld_mcp.core.camera_set import CameraSet
 from lichtfeld_mcp.core.capabilities import Capabilities
 from lichtfeld_mcp.core.edit_manager import EditManager
 from lichtfeld_mcp.core.export_manager import ExportManager
+from lichtfeld_mcp.core.gaussian import Gaussian, GaussianId, Position3D
 from lichtfeld_mcp.core.gaussian_cloud import GaussianCloud
 from lichtfeld_mcp.core.measurement_manager import MeasurementManager
 from lichtfeld_mcp.core.metadata import Metadata
@@ -15,6 +16,7 @@ from lichtfeld_mcp.core.statistics import Statistics
 def test_scene_instantiates_with_defaults():
     scene = Scene()
 
+    assert isinstance(scene.gaussians, GaussianCloud)
     assert isinstance(scene.gaussian_cloud, GaussianCloud)
     assert isinstance(scene.camera_set, CameraSet)
     assert isinstance(scene.selection_manager, SelectionManager)
@@ -24,6 +26,9 @@ def test_scene_instantiates_with_defaults():
     assert isinstance(scene.statistics, Statistics)
     assert isinstance(scene.metadata, Metadata)
     assert isinstance(scene.capabilities, Capabilities)
+    assert scene.is_empty() is True
+    assert scene.gaussian_count() == 0
+    assert scene.bounding_box() is None
     assert scene.gaussian_cloud.splat_count == 0
     assert scene.selection_manager.selection_mode == "replace"
     assert scene.measurement_manager.unit == "m"
@@ -31,13 +36,25 @@ def test_scene_instantiates_with_defaults():
 
 def test_scene_accepts_explicit_domain_components():
     scene = Scene(
-        gaussian_cloud=GaussianCloud(splat_count=42, sh_degree=3),
+        gaussian_cloud=GaussianCloud(
+            gaussians=[
+                Gaussian(id=GaussianId(1), position=Position3D(x=-1.0, y=2.0, z=3.0)),
+                Gaussian(id=GaussianId(2), position=Position3D(x=4.0, y=-5.0, z=0.5)),
+            ],
+            sh_degree=3,
+        ),
         metadata=Metadata(project_name="demo_scene"),
         capabilities=Capabilities(supports_export=True),
     )
 
-    assert scene.gaussian_cloud.splat_count == 42
+    assert scene.gaussians is scene.gaussian_cloud
+    assert scene.gaussian_cloud.splat_count == 2
     assert scene.gaussian_cloud.sh_degree == 3
+    assert scene.gaussian_count() == 2
+    assert scene.is_empty() is False
+    assert scene.bounding_box() is not None
+    assert scene.bounding_box().min == Position3D(x=-1.0, y=-5.0, z=0.5)
+    assert scene.bounding_box().max == Position3D(x=4.0, y=2.0, z=3.0)
     assert scene.metadata.project_name == "demo_scene"
     assert scene.capabilities.supports_export is True
 

@@ -4,6 +4,7 @@ from .camera_set import CameraSet
 from .capabilities import Capabilities
 from .edit_manager import EditManager
 from .export_manager import ExportManager
+from .gaussian import BoundingBox
 from .gaussian_cloud import GaussianCloud
 from .measurement_manager import MeasurementManager
 from .metadata import Metadata
@@ -22,3 +23,16 @@ class Scene:
     statistics: Statistics = field(default_factory=Statistics)
     metadata: Metadata = field(default_factory=Metadata)
     capabilities: Capabilities = field(default_factory=Capabilities)
+
+    @property
+    def gaussians(self) -> GaussianCloud:
+        return self.gaussian_cloud
+
+    def is_empty(self) -> bool:
+        return self.gaussians.is_empty()
+
+    def gaussian_count(self) -> int:
+        return self.gaussians.count()
+
+    def bounding_box(self) -> BoundingBox | None:
+        return self.gaussians.bounding_box()
