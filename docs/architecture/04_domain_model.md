@@ -94,8 +94,16 @@ It deduplicates selected IDs, preserves deterministic order in `ids()`, and expo
 Today it exposes:
 
 - `delete_selected()`
+- `undo_last()`
 
-It operates on the selected Gaussian IDs and removes them from the `GaussianCloud`.
+`delete_selected()` operates on the selected Gaussian IDs and removes them from the
+`GaussianCloud`.
+
+`undo_last()` provides a minimal domain-level undo. It currently restores only the
+latest `delete_selected` operation when enough undo data is present in history.
+
+After an undo, the selection remains empty. The operation restores gaussians into the
+cloud, but it does not re-select them.
 
 ### HistoryStack
 
@@ -106,8 +114,16 @@ At the moment it is used to record domain edit operations such as `delete_select
 - `action`
 - `affected_ids`
 - `details`
+- `restore_points`
 
-Undo restoration is not implemented yet.
+`HistoryEntry.restore_points` contains the minimal restore snapshot needed for undo.
+Each restore point keeps:
+
+- the original index of the removed gaussian in the cloud
+- the removed `Gaussian` object itself
+
+This allows the domain to restore deleted gaussians without introducing any dependency
+on MCP, services, adapters, or a concrete backend.
 
 ### Capabilities
 
@@ -136,6 +152,7 @@ A typical path looks like this:
 4. `Scene.selection` stores the selected IDs.
 5. `Scene.edit.delete_selected()` removes selected gaussians.
 6. `Scene.history` records the operation.
+7. `Scene.edit.undo_last()` can restore the latest `delete_selected` operation.
 
 ## Examples
 
@@ -179,6 +196,30 @@ deleted = scene.edit.delete_selected()
 assert deleted >= 0
 ```
 
+### Undo last delete
+
+```python
+from lichtfeld_mcp.core.gaussian import Gaussian, GaussianId, Position3D
+from lichtfeld_mcp.core.scene import Scene
+
+scene = Scene()
+scene.gaussians.add(
+    Gaussian(id=GaussianId(1), position=Position3D(x=0.0, y=0.0, z=0.0))
+)
+scene.gaussians.add(
+    Gaussian(id=GaussianId(2), position=Position3D(x=0.0, y=0.0, z=2.0))
+)
+
+scene.selection.select([GaussianId(2)])
+deleted = scene.edit.delete_selected()
+restored = scene.edit.undo_last()
+
+assert deleted == 1
+assert restored is True
+assert scene.gaussian_count() == 2
+assert scene.selection.is_empty() is True
+```
+
 ### Inspect history
 
 ```python
@@ -210,6 +251,8 @@ The backend adapters remain separate and are still the integration boundary for 
 - `Scene` owns domain state and helpers
 - selection and delete operations exist at the domain level
 - lightweight edit history exists
-- undo restoration is not implemented yet
+- minimal undo restoration exists for `delete_selected`
+- only `delete_selected` undo is currently supported
+- selection remains empty after undo
 
 This gives the project a clean foundation for future engine integrations and higher-level application flows.
