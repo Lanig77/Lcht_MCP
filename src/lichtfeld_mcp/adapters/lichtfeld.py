@@ -7,6 +7,7 @@ normal test suite can run without LichtFeld Studio installed.
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter as AdapterContract
 from lichtfeld_mcp.core.requests import HeightRange
@@ -46,15 +47,33 @@ class LichtfeldPluginAdapter(AdapterContract):
         self._not_implemented("close_project")
 
     def get_stats(self) -> SceneStats:
-        return self.get_scene_stats()
+        lichtfeld_module = self._load_lichtfeld()
+        scene = self._require_active_scene(lichtfeld_module)
+        model = self._require_combined_model(scene)
+        means_rows = self._extract_position_rows(model)
+        splat_count = len(means_rows)
+        bounds = self._build_bounds(means_rows)
+        project_path = self._get_scene_path(scene)
+        project_name = self._get_scene_name(scene, project_path)
+        sh_degree = self._get_sh_degree(model, scene)
+        opacity_mean = self._get_opacity_mean(model)
+
+        return SceneStats(
+            project_name=project_name,
+            project_path=project_path,
+            splat_count=splat_count,
+            selected_count=0,
+            file_size_mb=0.0,
+            estimated_vram_mb=round(splat_count * (32 + sh_degree * 12) / 1_000_000, 2),
+            bounds=bounds,
+            sh_degree=sh_degree,
+            opacity_mean=opacity_mean,
+            density_score=0.0,
+            history_length=0,
+        )
 
     def get_scene_stats(self) -> SceneStats:
-        self._load_lichtfeld()
-        # Future LichtFeld mapping:
-        # - scene.combined_model()
-        # - model.get_means()
-        # - derive bounds, splat count and related scene statistics from tensors
-        self._not_implemented("get_scene_stats")
+        return self.get_stats()
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:
         self._load_lichtfeld()
@@ -167,6 +186,181 @@ class LichtfeldPluginAdapter(AdapterContract):
                 "LichtFeld Studio Python plugin API could not be imported: "
                 f"{exc}."
             ) from exc
+
+    @staticmethod
+    def _require_active_scene(lichtfeld_module: object) -> object:
+        for attribute_name in (
+            "scene",
+            "current_scene",
+            "active_scene",
+            "get_scene",
+            "get_current_scene",
+            "get_active_scene",
+        ):
+            candidate = getattr(lichtfeld_module, attribute_name, None)
+            if callable(candidate):
+                candidate = candidate()
+            if candidate is not None:
+                return candidate
+        raise AdapterUnavailableError(
+            "No active LichtFeld scene is available from the Python plugin API."
+        )
+
+    @staticmethod
+    def _require_combined_model(scene: object) -> object:
+        combined_model = getattr(scene, "combined_model", None)
+        if callable(combined_model):
+            combined_model = combined_model()
+        if combined_model is None:
+            raise AdapterUnavailableError(
+                "No active LichtFeld combined model is available for statistics."
+            )
+        return combined_model
+
+    @classmethod
+    def _extract_position_rows(cls, model: object) -> list[tuple[float, float, float]]:
+        means = None
+        get_means = getattr(model, "get_means", None)
+        if callable(get_means):
+            means = get_means()
+        elif hasattr(model, "means_raw"):
+            means = getattr(model, "means_raw")
+        if means is None:
+            raise AdapterUnavailableError(
+                "Active LichtFeld combined model does not expose gaussian positions."
+            )
+        return cls._coerce_position_rows(means)
+
+    @classmethod
+    def _coerce_position_rows(cls, values: object) -> list[tuple[float, float, float]]:
+        materialized = cls._materialize_array(values)
+        if materialized is None:
+            return []
+        if isinstance(materialized, (list, tuple)):
+            items = list(materialized)
+        else:
+            try:
+                items = list(materialized)
+            except TypeError as exc:
+                raise AdapterUnavailableError(
+                    "LichtFeld gaussian positions are not iterable."
+                ) from exc
+        if not items:
+            return []
+        if cls._is_scalar(items[0]):
+            if len(items) < 3:
+                raise AdapterUnavailableError(
+                    "LichtFeld gaussian position rows must expose at least three coordinates."
+                )
+            return [cls._coerce_position_row(items)]
+        return [cls._coerce_position_row(item) for item in items]
+
+    @classmethod
+    def _coerce_position_row(cls, row: object) -> tuple[float, float, float]:
+        materialized = cls._materialize_array(row)
+        if isinstance(materialized, (list, tuple)):
+            items = list(materialized)
+        else:
+            try:
+                items = list(materialized)
+            except TypeError as exc:
+                raise AdapterUnavailableError(
+                    "LichtFeld gaussian position rows are not iterable."
+                ) from exc
+        if len(items) < 3:
+            raise AdapterUnavailableError(
+                "LichtFeld gaussian position rows must expose at least three coordinates."
+            )
+        return (float(items[0]), float(items[1]), float(items[2]))
+
+    @classmethod
+    def _materialize_array(cls, value: object) -> object:
+        current = value
+        for method_name in ("detach", "cpu"):
+            method = getattr(current, method_name, None)
+            if callable(method):
+                current = method()
+        numpy_method = getattr(current, "numpy", None)
+        if callable(numpy_method):
+            current = numpy_method()
+        tolist_method = getattr(current, "tolist", None)
+        if callable(tolist_method):
+            current = tolist_method()
+        return current
+
+    @staticmethod
+    def _is_scalar(value: object) -> bool:
+        return isinstance(value, (int, float))
+
+    @staticmethod
+    def _build_bounds(rows: list[tuple[float, float, float]]) -> Box3D:
+        if not rows:
+            origin = Vec3(x=0.0, y=0.0, z=0.0)
+            return Box3D(min=origin, max=origin)
+        xs = [row[0] for row in rows]
+        ys = [row[1] for row in rows]
+        zs = [row[2] for row in rows]
+        return Box3D(
+            min=Vec3(x=min(xs), y=min(ys), z=min(zs)),
+            max=Vec3(x=max(xs), y=max(ys), z=max(zs)),
+        )
+
+    @staticmethod
+    def _get_scene_path(scene: object) -> str:
+        for attribute_name in ("path", "project_path", "file_path"):
+            value = getattr(scene, attribute_name, None)
+            if value:
+                return str(value)
+        return "<active_lichtfeld_scene>"
+
+    @staticmethod
+    def _get_scene_name(scene: object, project_path: str) -> str:
+        for attribute_name in ("name", "project_name", "title"):
+            value = getattr(scene, attribute_name, None)
+            if value:
+                return str(value)
+        return Path(project_path).stem or "active_lichtfeld_scene"
+
+    @classmethod
+    def _get_opacity_mean(cls, model: object) -> float:
+        get_opacity = getattr(model, "get_opacity", None)
+        if not callable(get_opacity):
+            return 0.0
+        values = cls._flatten_scalars(get_opacity())
+        if not values:
+            return 0.0
+        return round(sum(values) / len(values), 6)
+
+    @staticmethod
+    def _get_sh_degree(model: object, scene: object) -> int:
+        for owner in (model, scene):
+            for attribute_name in ("sh_degree", "active_sh_degree"):
+                value = getattr(owner, attribute_name, None)
+                if isinstance(value, int):
+                    return value
+        return 0
+
+    @classmethod
+    def _flatten_scalars(cls, value: object) -> list[float]:
+        materialized = cls._materialize_array(value)
+        if materialized is None:
+            return []
+        if cls._is_scalar(materialized):
+            return [float(materialized)]
+        if isinstance(materialized, (list, tuple)):
+            items = list(materialized)
+        else:
+            try:
+                items = list(materialized)
+            except TypeError:
+                return []
+        flattened: list[float] = []
+        for item in items:
+            if cls._is_scalar(item):
+                flattened.append(float(item))
+            else:
+                flattened.extend(cls._flatten_scalars(item))
+        return flattened
 
     @staticmethod
     def _not_implemented(method_name: str, **_: object) -> None:

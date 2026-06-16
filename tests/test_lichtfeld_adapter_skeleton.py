@@ -1,6 +1,7 @@
 import builtins
 import importlib
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -44,3 +45,121 @@ def test_open_project_without_lichtfeld_raises_adapter_unavailable_error(monkeyp
         match="LichtFeld Studio Python plugin API is not available",
     ):
         adapter.open_project("demo_scene.lfp")
+
+
+class FakeTorchTensor:
+    def __init__(self, values):
+        self._values = values
+
+    def detach(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return self._values
+
+
+class FakeModel:
+    sh_degree = 2
+
+    def __init__(self, means, opacity=None):
+        self._means = means
+        self._opacity = opacity if opacity is not None else []
+
+    def get_means(self):
+        return self._means
+
+    def get_opacity(self):
+        return self._opacity
+
+
+class FakeScene:
+    def __init__(self, model, *, name="castle_demo", path="C:/data/castle_demo.lf"):
+        self.name = name
+        self.path = path
+        self._model = model
+
+    def combined_model(self):
+        return self._model
+
+
+def test_get_stats_uses_active_lichtfeld_scene_and_computes_bounds(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_module = SimpleNamespace(
+        scene=FakeScene(
+            FakeModel(
+                means=FakeTorchTensor(
+                    [
+                        [1.0, 2.0, 3.0],
+                        [-4.0, 0.5, 8.0],
+                        [2.5, -1.5, 1.0],
+                    ]
+                ),
+                opacity=FakeTorchTensor([0.2, 0.6, 1.0]),
+            )
+        )
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    stats = adapter.get_stats()
+
+    assert stats.project_name == "castle_demo"
+    assert stats.project_path == "C:/data/castle_demo.lf"
+    assert stats.splat_count == 3
+    assert stats.bounds.min.x == -4.0
+    assert stats.bounds.min.y == -1.5
+    assert stats.bounds.min.z == 1.0
+    assert stats.bounds.max.x == 2.5
+    assert stats.bounds.max.y == 2.0
+    assert stats.bounds.max.z == 8.0
+    assert stats.sh_degree == 2
+    assert stats.opacity_mean == 0.6
+
+
+def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_module = SimpleNamespace(scene=None)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="No active LichtFeld scene is available",
+    ):
+        adapter.get_stats()
+
+
+def test_get_stats_raises_clear_error_when_no_combined_model_exists(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_module = SimpleNamespace(scene=FakeScene(model=None))
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="No active LichtFeld combined model is available",
+    ):
+        adapter.get_stats()
