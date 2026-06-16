@@ -23,6 +23,12 @@ class SceneService:
     def open_project(self, path: str) -> ProjectInfo:
         return self._scene_api.open_project(path)
 
+    def save_project(self) -> ToolResult:
+        return self._scene_api.save_project()
+
+    def close_project(self) -> ToolResult:
+        return self._scene_api.close_project()
+
     def get_stats(self) -> SceneStats:
         return self._scene_api.get_scene_stats()
 

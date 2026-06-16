@@ -10,6 +10,8 @@ from lichtfeld_mcp.services.scene_service import SceneService
     ("method_name", "args", "kwargs", "expected_api_args", "expected_api_kwargs"),
     [
         ("open_project", ("demo_scene.lfp",), {}, ("demo_scene.lfp",), {}),
+        ("save_project", (), {}, (), {}),
+        ("close_project", (), {}, (), {}),
         ("get_stats", (), {}, (), {}),
         (
             "select_by_box",

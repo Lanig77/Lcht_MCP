@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from lichtfeld_mcp.app_state import get_scene_api
+from lichtfeld_mcp.app_state import get_scene_service
 
 
 def select_by_box(
@@ -19,7 +19,7 @@ def select_by_box(
     Modes: replace, add, subtract.
     """
 
-    return get_scene_api().select_by_box(
+    return get_scene_service().select_by_box(
         min_x=min_x,
         min_y=min_y,
         min_z=min_z,
@@ -37,7 +37,7 @@ def select_by_height(z_min: float | None = None, z_max: float | None = None, mod
     or 'remove the floor'.
     """
 
-    return get_scene_api().select_by_height(z_min=z_min, z_max=z_max, mode=mode).model_dump()
+    return get_scene_service().select_by_height(z_min=z_min, z_max=z_max, mode=mode).model_dump()
 
 
 def select_by_color(r: int, g: int, b: int, tolerance: int = 20, mode: str = "replace") -> dict:
@@ -47,7 +47,7 @@ def select_by_color(r: int, g: int, b: int, tolerance: int = 20, mode: str = "re
     white studio backgrounds, or dark noisy regions.
     """
 
-    return get_scene_api().select_by_color(
+    return get_scene_service().select_by_color(
         r=r,
         g=g,
         b=b,
@@ -59,4 +59,4 @@ def select_by_color(r: int, g: int, b: int, tolerance: int = 20, mode: str = "re
 def delete_selection() -> dict:
     """Delete the currently selected splats."""
 
-    return get_scene_api().delete_selection().model_dump()
+    return get_scene_service().delete_selection().model_dump()

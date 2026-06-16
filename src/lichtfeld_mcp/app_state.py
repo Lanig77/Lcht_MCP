@@ -7,10 +7,12 @@ import os
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter
 from lichtfeld_mcp.adapters.mock import MockLichtfeldAdapter
 from lichtfeld_mcp.core.scene_api import SceneAPI
+from lichtfeld_mcp.services.scene_service import SceneService
 
 
 _adapter: LichtfeldAdapter | None = None
 _scene_api: SceneAPI | None = None
+_scene_service: SceneService | None = None
 
 
 def get_adapter() -> LichtfeldAdapter:
@@ -44,3 +46,12 @@ def get_scene_api() -> SceneAPI:
     if _scene_api is None:
         _scene_api = SceneAPI(get_adapter())
     return _scene_api
+
+
+def get_scene_service() -> SceneService:
+    """Return a singleton scene service facade."""
+
+    global _scene_service
+    if _scene_service is None:
+        _scene_service = SceneService(get_scene_api())
+    return _scene_service
