@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from lichtfeld_mcp.errors import AdapterUnavailableError
+from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 
 
 def test_importing_lichtfeld_adapter_module_does_not_import_lichtfeld(monkeypatch):
@@ -279,6 +279,17 @@ def test_select_by_height_raises_clear_error_when_selection_api_is_missing(monke
         adapter.select_by_height(0.0, 2.0)
 
 
+class FakeModelWithOpacityAttribute:
+    sh_degree = 1
+
+    def __init__(self, means, opacity):
+        self._means_values = FakeModel._unwrap_values(means)
+        self.opacity = FakeTorchTensor(FakeModel._unwrap_values(opacity))
+
+    def get_means(self):
+        return FakeTorchTensor(self._means_values)
+
+
 def test_delete_selection_uses_latest_known_mask_and_updates_stats(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
@@ -351,3 +362,123 @@ def test_delete_selection_returns_explicit_result_when_no_selection_exists(monke
     assert deleted.message == "No active selection available to delete."
     assert fake_scene._model.last_soft_delete_mask is None
     assert adapter._cached_selection_mask is None
+
+
+def test_select_by_opacity_uses_get_opacity_and_applies_expected_mask(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.5],
+                    [1.0, 1.0, 3.0],
+                    [2.0, 2.0, 1.5],
+                ]
+            ),
+            opacity=FakeTorchTensor([0.1, 0.5, 0.9]),
+        )
+    )
+    fake_module = SimpleNamespace(scene=fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    result = adapter.select_by_opacity(min_opacity=0.2, max_opacity=0.8)
+
+    assert result.selected_count == 1
+    assert result.selection_mode == "replace"
+    assert result.message == "Opacity selection applied."
+    assert fake_scene.last_selection_mask == [False, True, False]
+    assert fake_scene.notify_changed_calls == 1
+    assert adapter.get_stats().selected_count == 1
+
+
+def test_select_by_opacity_falls_back_to_opacity_attribute_and_normalizes_range(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModelWithOpacityAttribute(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.5],
+                    [1.0, 1.0, 3.0],
+                    [2.0, 2.0, 1.5],
+                    [3.0, 3.0, 5.0],
+                ]
+            ),
+            opacity=FakeTorchTensor([0.15, 0.4, 0.75, 0.95]),
+        )
+    )
+    fake_module = SimpleNamespace(scene=fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    result = adapter.select_by_opacity(min_opacity=0.8, max_opacity=0.2)
+
+    assert result.selected_count == 2
+    assert fake_scene.last_selection_mask == [False, True, True, False]
+    assert adapter.get_stats().selected_count == 2
+
+
+def test_select_by_opacity_rejects_invalid_requested_range(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor([[0.0, 0.0, 0.5]]),
+            opacity=FakeTorchTensor([0.5]),
+        )
+    )
+    fake_module = SimpleNamespace(scene=fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(InvalidParameterError, match="min_opacity must be between 0.0 and 1.0"):
+        adapter.select_by_opacity(min_opacity=-0.1, max_opacity=0.5)
+
+    with pytest.raises(InvalidParameterError, match="max_opacity must be between 0.0 and 1.0"):
+        adapter.select_by_opacity(min_opacity=0.1, max_opacity=1.1)
+
+
+def test_select_by_opacity_rejects_invalid_model_opacity_values(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.5],
+                    [1.0, 1.0, 3.0],
+                ]
+            ),
+            opacity=FakeTorchTensor([0.2, 1.5]),
+        )
+    )
+    fake_module = SimpleNamespace(scene=fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(InvalidParameterError, match="opacity values must be between 0.0 and 1.0"):
+        adapter.select_by_opacity(min_opacity=0.0, max_opacity=1.0)

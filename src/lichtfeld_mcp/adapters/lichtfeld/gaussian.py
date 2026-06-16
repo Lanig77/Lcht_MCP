@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from lichtfeld_mcp.errors import InvalidParameterError
 from lichtfeld_mcp.errors import AdapterUnavailableError
 from lichtfeld_mcp.schemas.common import Box3D, Vec3
 
@@ -40,13 +41,33 @@ def build_bounds(position_rows: list[tuple[float, float, float]]) -> Box3D:
 
 
 def get_opacity_mean(model: object) -> float:
-    get_opacity = getattr(model, "get_opacity", None)
-    if not callable(get_opacity):
+    try:
+        values = extract_opacity_values(model)
+    except AdapterUnavailableError:
         return 0.0
-    values = _flatten_scalars(get_opacity())
     if not values:
         return 0.0
     return round(sum(values) / len(values), 6)
+
+
+def extract_opacity_values(model: object) -> list[float]:
+    opacity = None
+    get_opacity = getattr(model, "get_opacity", None)
+    if callable(get_opacity):
+        opacity = get_opacity()
+    elif hasattr(model, "opacity"):
+        opacity = getattr(model, "opacity")
+    elif hasattr(model, "opacity_raw"):
+        opacity = getattr(model, "opacity_raw")
+    if opacity is None:
+        raise AdapterUnavailableError(
+            "Active LichtFeld combined model does not expose gaussian opacity values."
+        )
+    values = _flatten_scalars(opacity)
+    for value in values:
+        if not 0.0 <= value <= 1.0:
+            raise InvalidParameterError("opacity values must be between 0.0 and 1.0.")
+    return values
 
 
 def get_sh_degree(model: object, scene: object) -> int:

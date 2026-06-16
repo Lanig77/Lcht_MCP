@@ -22,7 +22,7 @@ from lichtfeld_mcp.schemas.common import (
 
 from .cameras import CameraOperations
 from .export import ExportOperations
-from .gaussian import extract_position_rows
+from .gaussian import extract_opacity_values, extract_position_rows
 from .scene import build_scene_stats, notify_scene_changed
 from .selection import SelectionState
 from .training import TrainingOperations
@@ -99,6 +99,29 @@ class LichtfeldAdapter(AdapterContract):
             selected_count=sum(selection_mask),
             selection_mode=normalized_mode,
             message="Height selection applied.",
+        )
+
+    def select_by_opacity(
+        self,
+        min_opacity: float | None = None,
+        max_opacity: float | None = None,
+    ) -> SelectionResult:
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        opacities = extract_opacity_values(model)
+        selection_mask = self._selection.build_opacity_mask(
+            opacities,
+            min_opacity=min_opacity,
+            max_opacity=max_opacity,
+        )
+        self._selection.apply_scene_selection_mask(scene, selection_mask)
+        self._selection.cache_mask(selection_mask)
+        notify_scene_changed(scene)
+        return SelectionResult(
+            selected_count=sum(selection_mask),
+            selection_mode="replace",
+            message="Opacity selection applied.",
         )
 
     def select_by_color(

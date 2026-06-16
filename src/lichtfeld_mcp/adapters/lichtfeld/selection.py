@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from lichtfeld_mcp.core.requests import HeightRange
-from lichtfeld_mcp.errors import AdapterUnavailableError
+from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 
 from .utils import coerce_boolean_mask
 
@@ -47,6 +47,21 @@ class SelectionState:
         return [
             self._is_within_height_range(position[2], height_range)
             for position in position_rows
+        ]
+
+    def build_opacity_mask(
+        self,
+        opacities: list[float],
+        min_opacity: float | None = None,
+        max_opacity: float | None = None,
+    ) -> list[bool]:
+        normalized_min, normalized_max = self._normalize_opacity_range(
+            min_opacity=min_opacity,
+            max_opacity=max_opacity,
+        )
+        return [
+            self._is_within_opacity_range(opacity, normalized_min, normalized_max)
+            for opacity in opacities
         ]
 
     def merge_height_mask(
@@ -106,9 +121,36 @@ class SelectionState:
         return None
 
     @staticmethod
+    def _normalize_opacity_range(
+        min_opacity: float | None,
+        max_opacity: float | None,
+    ) -> tuple[float | None, float | None]:
+        if min_opacity is not None and not 0.0 <= min_opacity <= 1.0:
+            raise InvalidParameterError("min_opacity must be between 0.0 and 1.0.")
+        if max_opacity is not None and not 0.0 <= max_opacity <= 1.0:
+            raise InvalidParameterError("max_opacity must be between 0.0 and 1.0.")
+        if min_opacity is None or max_opacity is None:
+            return min_opacity, max_opacity
+        if min_opacity <= max_opacity:
+            return min_opacity, max_opacity
+        return max_opacity, min_opacity
+
+    @staticmethod
     def _is_within_height_range(z_value: float, height_range: HeightRange) -> bool:
         if height_range.z_min is not None and z_value < height_range.z_min:
             return False
         if height_range.z_max is not None and z_value > height_range.z_max:
+            return False
+        return True
+
+    @staticmethod
+    def _is_within_opacity_range(
+        opacity: float,
+        min_opacity: float | None,
+        max_opacity: float | None,
+    ) -> bool:
+        if min_opacity is not None and opacity < min_opacity:
+            return False
+        if max_opacity is not None and opacity > max_opacity:
             return False
         return True
