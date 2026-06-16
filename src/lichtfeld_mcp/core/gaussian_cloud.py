@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Iterable
 
 from lichtfeld_mcp.core.gaussian import BoundingBox, Gaussian, GaussianId, Position3D
 from lichtfeld_mcp.errors import InvalidParameterError
@@ -33,6 +34,23 @@ class GaussianCloud:
         self._register(gaussian)
         self.gaussians.append(gaussian)
         self.splat_count = len(self.gaussians)
+
+    def remove_many(self, ids: Iterable[GaussianId]) -> int:
+        selected_values = {gaussian_id.value for gaussian_id in ids}
+        if not selected_values:
+            return 0
+        before = len(self.gaussians)
+        self.gaussians = [
+            gaussian for gaussian in self.gaussians if gaussian.id.value not in selected_values
+        ]
+        removed = before - len(self.gaussians)
+        if removed == 0:
+            return 0
+        self._gaussians_by_id = {
+            gaussian.id.value: gaussian for gaussian in self.gaussians
+        }
+        self.splat_count = len(self.gaussians)
+        return removed
 
     def get(self, id: GaussianId) -> Gaussian | None:
         return self._gaussians_by_id.get(id.value)

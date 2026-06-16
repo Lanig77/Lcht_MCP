@@ -25,9 +25,16 @@ class Scene:
     metadata: Metadata = field(default_factory=Metadata)
     capabilities: Capabilities = field(default_factory=Capabilities)
 
+    def __post_init__(self) -> None:
+        self.edit_manager.attach(self.gaussians, self.selection)
+
     @property
     def gaussians(self) -> GaussianCloud:
         return self.gaussian_cloud
+
+    @property
+    def edit(self) -> EditManager:
+        return self.edit_manager
 
     @property
     def selection(self) -> SelectionManager:
