@@ -28,6 +28,10 @@ class Scene:
     capabilities: Capabilities = field(default_factory=Capabilities)
 
     def __post_init__(self) -> None:
+        self.gaussians.bind_history(
+            self.history,
+            on_change=self.edit_manager._sync_history_state,
+        )
         self.edit_manager.attach(self.gaussians, self.selection, self.history)
 
     @property

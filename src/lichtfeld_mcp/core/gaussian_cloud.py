@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Callable, Iterable
 
 from lichtfeld_mcp.core.gaussian import BoundingBox, Gaussian, GaussianId, Position3D
+from lichtfeld_mcp.core.history import GaussianRestorePoint, HistoryEntry, HistoryStack
 from lichtfeld_mcp.core.query.expressions import (
     ColorSimilarityExpression,
     ComparisonExpression,
@@ -23,6 +24,8 @@ class GaussianCloud:
     sh_degree: int = 0
     format_name: str | None = None
     _gaussians_by_id: dict[int, Gaussian] = field(init=False, default_factory=dict, repr=False)
+    _history: HistoryStack | None = field(init=False, default=None, repr=False)
+    _history_changed: Callable[[], None] | None = field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
         for gaussian in self.gaussians:
@@ -43,6 +46,24 @@ class GaussianCloud:
         self._register(gaussian)
         self.gaussians.append(gaussian)
         self.splat_count = len(self.gaussians)
+
+    def bind_history(
+        self,
+        history: HistoryStack | None,
+        on_change: Callable[[], None] | None = None,
+    ) -> None:
+        self._history = history
+        self._history_changed = on_change
+
+    def snapshot(self, ids: Iterable[GaussianId]) -> tuple[GaussianRestorePoint, ...]:
+        selected_values = {gaussian_id.value for gaussian_id in ids}
+        if not selected_values:
+            return ()
+        return tuple(
+            GaussianRestorePoint(index=index, gaussian=gaussian)
+            for index, gaussian in enumerate(self.gaussians)
+            if gaussian.id.value in selected_values
+        )
 
     def restore_many(self, items: Iterable[tuple[int, Gaussian]]) -> int:
         restored = 0
@@ -72,8 +93,34 @@ class GaussianCloud:
         self.splat_count = len(self.gaussians)
         return removed
 
+    def replace_many(self, gaussians: Iterable[Gaussian]) -> int:
+        replacements = {gaussian.id.value: gaussian for gaussian in gaussians}
+        if not replacements:
+            return 0
+        replaced = 0
+        updated_gaussians: list[Gaussian] = []
+        for gaussian in self.gaussians:
+            replacement = replacements.get(gaussian.id.value)
+            if replacement is None:
+                updated_gaussians.append(gaussian)
+                continue
+            updated_gaussians.append(replacement)
+            self._gaussians_by_id[gaussian.id.value] = replacement
+            replaced += 1
+        if replaced > 0:
+            self.gaussians = updated_gaussians
+            self.splat_count = len(self.gaussians)
+        return replaced
+
     def get(self, id: GaussianId) -> Gaussian | None:
         return self._gaussians_by_id.get(id.value)
+
+    def record_history(self, entry: HistoryEntry) -> None:
+        if self._history is None:
+            return
+        self._history.push(entry)
+        if self._history_changed is not None:
+            self._history_changed()
 
     def bounding_box(self) -> BoundingBox | None:
         if not self.gaussians:

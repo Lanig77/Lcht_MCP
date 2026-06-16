@@ -13,10 +13,23 @@ class GaussianRestorePoint:
 
 @dataclass(frozen=True, slots=True)
 class HistoryEntry:
-    action: str
+    action_type: str
     affected_ids: tuple[GaussianId, ...] = ()
-    details: dict[str, object] = field(default_factory=dict)
-    restore_points: tuple[GaussianRestorePoint, ...] = ()
+    before_state: tuple[GaussianRestorePoint, ...] = ()
+    after_state: tuple[GaussianRestorePoint, ...] = ()
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def action(self) -> str:
+        return self.action_type
+
+    @property
+    def details(self) -> dict[str, object]:
+        return self.metadata
+
+    @property
+    def restore_points(self) -> tuple[GaussianRestorePoint, ...]:
+        return self.before_state
 
 
 @dataclass(slots=True)

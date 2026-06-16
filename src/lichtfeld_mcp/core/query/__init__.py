@@ -1,3 +1,4 @@
+from .actions import DeleteAction, QueryAction, SetOpacityAction, TranslateAction
 from .expressions import (
     ColorSimilarityExpression,
     ComparisonExpression,
@@ -14,12 +15,16 @@ __all__ = [
     "ColorSimilarityExpression",
     "ComparisonExpression",
     "Density",
+    "DeleteAction",
     "GaussianQuery",
     "Height",
     "LogicalExpression",
     "NotExpression",
     "Opacity",
+    "QueryAction",
     "QueryExpression",
     "RangeExpression",
     "Scale",
+    "SetOpacityAction",
+    "TranslateAction",
 ]

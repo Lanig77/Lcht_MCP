@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .gaussian_cloud import GaussianCloud
-from .history import GaussianRestorePoint, HistoryEntry, HistoryStack
+from .gaussian import GaussianId
+from .history import HistoryEntry, HistoryStack
 from .selection_manager import SelectionManager
+
 
 @dataclass(slots=True)
 class EditManager:
@@ -29,21 +31,16 @@ class EditManager:
         if self._gaussians is None or self._selection is None or self._selection.is_empty():
             return 0
         selected_ids = self._selection.ids()
-        selected_values = {gaussian_id.value for gaussian_id in selected_ids}
-        restore_points = tuple(
-            GaussianRestorePoint(index=index, gaussian=gaussian)
-            for index, gaussian in enumerate(self._gaussians.gaussians)
-            if gaussian.id.value in selected_values
-        )
-        affected_ids = tuple(restore_point.gaussian.id for restore_point in restore_points)
+        before_state = self._gaussians.snapshot(selected_ids)
+        affected_ids = tuple(restore_point.gaussian.id for restore_point in before_state)
         deleted = self._gaussians.remove_many(selected_ids)
         if deleted > 0 and self._history is not None:
             self._history.push(
                 HistoryEntry(
-                    action="delete_selected",
+                    action_type="delete_selected",
                     affected_ids=affected_ids,
-                    details={"deleted_count": deleted},
-                    restore_points=restore_points,
+                    before_state=before_state,
+                    metadata={"deleted_count": deleted},
                 )
             )
         self._selection.clear()
@@ -54,12 +51,26 @@ class EditManager:
         if self._gaussians is None or self._selection is None or self._history is None:
             return False
         entry = self._history.peek()
-        if entry is None or entry.action != "delete_selected" or not entry.restore_points:
+        if entry is None or not entry.before_state:
             self._sync_history_state()
             return False
+        before_ids = {restore_point.gaussian.id.value for restore_point in entry.before_state}
+        after_ids = {restore_point.gaussian.id.value for restore_point in entry.after_state}
+        created_ids = tuple(
+            GaussianId(value=gaussian_id)
+            for gaussian_id in sorted(after_ids - before_ids)
+        )
+        if created_ids:
+            self._gaussians.remove_many(created_ids)
+        self._gaussians.replace_many(
+            restore_point.gaussian
+            for restore_point in entry.before_state
+            if self._gaussians.get(restore_point.gaussian.id) is not None
+        )
         self._gaussians.restore_many(
             (restore_point.index, restore_point.gaussian)
-            for restore_point in entry.restore_points
+            for restore_point in entry.before_state
+            if self._gaussians.get(restore_point.gaussian.id) is None
         )
         self._history.pop()
         self._selection.clear()
