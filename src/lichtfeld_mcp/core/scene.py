@@ -7,6 +7,7 @@ from .export_manager import ExportManager
 from .gaussian import BoundingBox, RGBColor
 from .gaussian_cloud import GaussianCloud
 from .gaussian_query import GaussianQuery
+from .history import HistoryStack
 from .measurement_manager import MeasurementManager
 from .metadata import Metadata
 from .selection_manager import SelectionManager
@@ -21,12 +22,13 @@ class Scene:
     edit_manager: EditManager = field(default_factory=EditManager)
     measurement_manager: MeasurementManager = field(default_factory=MeasurementManager)
     export_manager: ExportManager = field(default_factory=ExportManager)
+    history_stack: HistoryStack = field(default_factory=HistoryStack)
     statistics: Statistics = field(default_factory=Statistics)
     metadata: Metadata = field(default_factory=Metadata)
     capabilities: Capabilities = field(default_factory=Capabilities)
 
     def __post_init__(self) -> None:
-        self.edit_manager.attach(self.gaussians, self.selection)
+        self.edit_manager.attach(self.gaussians, self.selection, self.history)
 
     @property
     def gaussians(self) -> GaussianCloud:
@@ -35,6 +37,10 @@ class Scene:
     @property
     def edit(self) -> EditManager:
         return self.edit_manager
+
+    @property
+    def history(self) -> HistoryStack:
+        return self.history_stack
 
     @property
     def selection(self) -> SelectionManager:
