@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from lichtfeld_mcp.app_state import get_adapter
-from lichtfeld_mcp.schemas.common import Box3D, Vec3
+from lichtfeld_mcp.app_state import get_scene_api
 
 
 def crop_by_box(
@@ -17,11 +16,18 @@ def crop_by_box(
 ) -> dict:
     """Crop the scene by an axis-aligned 3D box."""
 
-    box = Box3D(min=Vec3(x=min_x, y=min_y, z=min_z), max=Vec3(x=max_x, y=max_y, z=max_z))
-    return get_adapter().crop_by_box(box, keep_inside=keep_inside).model_dump()
+    return get_scene_api().crop_by_box(
+        min_x=min_x,
+        min_y=min_y,
+        min_z=min_z,
+        max_x=max_x,
+        max_y=max_y,
+        max_z=max_z,
+        keep_inside=keep_inside,
+    ).model_dump()
 
 
 def crop_by_height(z_min: float | None = None, z_max: float | None = None, keep_inside: bool = True) -> dict:
     """Crop splats using a vertical range."""
 
-    return get_adapter().crop_by_height(z_min=z_min, z_max=z_max, keep_inside=keep_inside).model_dump()
+    return get_scene_api().crop_by_height(z_min=z_min, z_max=z_max, keep_inside=keep_inside).model_dump()

@@ -15,3 +15,15 @@ class UnsupportedTargetError(LichtfeldMCPError):
 
 class InvalidSelectionError(LichtfeldMCPError):
     """Raised when a selection cannot be applied."""
+
+
+class InvalidPathError(LichtfeldMCPError):
+    """Raised when a required path input is empty or malformed."""
+
+
+class UnsupportedUnitError(LichtfeldMCPError):
+    """Raised when a measurement unit is unsupported."""
+
+
+class InvalidParameterError(LichtfeldMCPError):
+    """Raised when a numeric or bounded parameter is invalid."""

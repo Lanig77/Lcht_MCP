@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -98,7 +97,3 @@ class MeasurementResult(BaseModel):
     value: float
     unit: str
     message: str
-
-
-def normalize_path(path: str | Path) -> str:
-    return str(Path(path).expanduser())

@@ -6,9 +6,11 @@ import os
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter
 from lichtfeld_mcp.adapters.mock import MockLichtfeldAdapter
+from lichtfeld_mcp.core.scene_api import SceneAPI
 
 
 _adapter: LichtfeldAdapter | None = None
+_scene_api: SceneAPI | None = None
 
 
 def get_adapter() -> LichtfeldAdapter:
@@ -33,3 +35,12 @@ def get_adapter() -> LichtfeldAdapter:
         return _adapter
 
     raise RuntimeError(f"Unsupported LICHTFELD_ADAPTER={adapter_name!r}. Use 'mock' for now.")
+
+
+def get_scene_api() -> SceneAPI:
+    """Return a singleton scene API facade."""
+
+    global _scene_api
+    if _scene_api is None:
+        _scene_api = SceneAPI(get_adapter())
+    return _scene_api

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from lichtfeld_mcp.app_state import get_adapter
-from lichtfeld_mcp.schemas.common import Vec3
+from lichtfeld_mcp.app_state import get_scene_api
 
 
 def measure_distance(
@@ -17,4 +16,4 @@ def measure_distance(
 ) -> dict:
     """Measure a 3D distance between two points."""
 
-    return get_adapter().measure_distance(Vec3(x=ax, y=ay, z=az), Vec3(x=bx, y=by, z=bz), unit=unit).model_dump()
+    return get_scene_api().measure_distance(ax=ax, ay=ay, az=az, bx=bx, by=by, bz=bz, unit=unit).model_dump()

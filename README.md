@@ -141,3 +141,17 @@ $env:LICHTFELD_ADAPTER="cli"
 ## Philosophie
 
 Le LLM ne doit jamais manipuler directement les splats. Il appelle des outils typés. Lichtfeld Studio reste responsable du moteur 3D, des fichiers, du rendu, de l'historique et de l'optimisation.
+
+## Architecture actuelle
+
+```text
+MCP tools -> core SceneAPI -> adapter -> Lichtfeld/mock engine
+```
+
+La couche `core` porte les règles transverses qui ne doivent pas vivre dans les tools MCP :
+
+- validation et normalisation des entrées ;
+- orchestration d'opérations de scène ;
+- point stable pour brancher plusieurs surfaces clientes.
+
+Les tools MCP restent fins, et les adapters restent focalisés sur le pont technique vers le moteur.

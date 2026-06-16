@@ -1,6 +1,6 @@
 # Lichtfeld API contract proposal
 
-The MCP server expects a minimal editor API. Lichtfeld Studio could expose it as Python, C++, CLI, local HTTP, or socket API.
+The adapter layer consumed by `core.SceneAPI` expects a minimal editor API. Lichtfeld Studio could expose it as Python, C++, CLI, local HTTP, or socket API.
 
 ## Required capabilities
 
@@ -24,4 +24,4 @@ list_history() -> list[HistoryEntry]
 
 ## Design principle
 
-The LLM must never edit splats directly. It calls typed tools; Lichtfeld remains the authority for geometry, rendering, optimization, file I/O, and history.
+The LLM must never edit splats directly. It calls typed tools, the tools delegate to `core.SceneAPI`, and Lichtfeld remains the authority for geometry, rendering, optimization, file I/O, and history.

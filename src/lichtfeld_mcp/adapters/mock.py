@@ -13,7 +13,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter
-from lichtfeld_mcp.errors import ProjectNotOpenError, UnsupportedTargetError
+from lichtfeld_mcp.core.constraints import validate_selection_mode
+from lichtfeld_mcp.core.presets import get_optimization_profile
+from lichtfeld_mcp.core.requests import (
+    BoxSelectionRequest,
+    ColorSelectionRequest,
+    ExportRequest,
+    HeightRange,
+    OptimizationRequest,
+)
+from lichtfeld_mcp.core.validation import normalize_measurement_unit, normalize_scene_path
+from lichtfeld_mcp.errors import ProjectNotOpenError
 from lichtfeld_mcp.schemas.common import (
     Box3D,
     ExportResult,
@@ -25,7 +35,6 @@ from lichtfeld_mcp.schemas.common import (
     SelectionResult,
     ToolResult,
     Vec3,
-    normalize_path,
 )
 
 
@@ -49,16 +58,6 @@ class MockSceneState:
 class MockLichtfeldAdapter(LichtfeldAdapter):
     """In-memory adapter for development and demonstrations."""
 
-    SUPPORTED_EXPORTS = {"ply", "spz", "splat", "json"}
-    TARGET_RULES = {
-        "quest3": {"max_splats": 2_000_000, "sh_degree": 2, "rules": ["cap_splats", "sh_degree_2", "enable_lod"]},
-        "web": {"max_splats": 1_500_000, "sh_degree": 2, "rules": ["cap_splats", "quantize", "enable_lod"]},
-        "mobile": {"max_splats": 900_000, "sh_degree": 1, "rules": ["aggressive_decimation", "quantize"]},
-        "unreal": {"max_splats": 5_000_000, "sh_degree": 3, "rules": ["preserve_quality", "generate_metadata"]},
-        "unity": {"max_splats": 3_000_000, "sh_degree": 2, "rules": ["balance_quality", "generate_metadata"]},
-        "archive": {"max_splats": None, "sh_degree": 3, "rules": ["preserve_quality", "write_manifest"]},
-    }
-
     def __init__(self) -> None:
         self._scene: MockSceneState | None = None
         self._snapshots: list[MockSceneState] = []
@@ -75,7 +74,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._history.append(HistoryEntry(index=len(self._history), action=action, details=details))
 
     def open_project(self, path: str) -> ProjectInfo:
-        normalized = normalize_path(path)
+        normalized = normalize_scene_path(path, label="project path")
         name = Path(normalized).stem or "untitled_scene"
         # Derive stable fake complexity from project name.
         seed = sum(ord(ch) for ch in name)
@@ -117,24 +116,67 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:
         scene = self._require_scene()
-        self._push_history("select_by_box", {"box": box.model_dump(), "mode": mode})
+        request = BoxSelectionRequest(box=box, mode=mode)
+        self._push_history("select_by_box", {"box": request.box.model_dump(), "mode": request.mode})
         selected = max(1, int(scene.splat_count * 0.18))
-        scene.selected_count = self._apply_selection_mode(scene.selected_count, selected, mode, scene.splat_count)
-        return SelectionResult(selected_count=scene.selected_count, selection_mode=mode, message="Box selection applied.")
+        scene.selected_count = self._apply_selection_mode(
+            scene.selected_count,
+            selected,
+            request.mode,
+            scene.splat_count,
+        )
+        return SelectionResult(
+            selected_count=scene.selected_count,
+            selection_mode=request.mode,
+            message="Box selection applied.",
+        )
 
     def select_by_height(self, z_min: float | None, z_max: float | None, mode: str = "replace") -> SelectionResult:
         scene = self._require_scene()
-        self._push_history("select_by_height", {"z_min": z_min, "z_max": z_max, "mode": mode})
+        height_range = HeightRange(z_min=z_min, z_max=z_max)
+        normalized_mode = validate_selection_mode(mode)
+        self._push_history(
+            "select_by_height",
+            {"z_min": height_range.z_min, "z_max": height_range.z_max, "mode": normalized_mode},
+        )
         selected = max(1, int(scene.splat_count * 0.25))
-        scene.selected_count = self._apply_selection_mode(scene.selected_count, selected, mode, scene.splat_count)
-        return SelectionResult(selected_count=scene.selected_count, selection_mode=mode, message="Height selection applied.")
+        scene.selected_count = self._apply_selection_mode(
+            scene.selected_count,
+            selected,
+            normalized_mode,
+            scene.splat_count,
+        )
+        return SelectionResult(
+            selected_count=scene.selected_count,
+            selection_mode=normalized_mode,
+            message="Height selection applied.",
+        )
 
     def select_by_color(self, r: int, g: int, b: int, tolerance: int = 20, mode: str = "replace") -> SelectionResult:
         scene = self._require_scene()
-        self._push_history("select_by_color", {"r": r, "g": g, "b": b, "tolerance": tolerance, "mode": mode})
-        selected = max(1, int(scene.splat_count * min(0.4, max(0.02, tolerance / 255.0))))
-        scene.selected_count = self._apply_selection_mode(scene.selected_count, selected, mode, scene.splat_count)
-        return SelectionResult(selected_count=scene.selected_count, selection_mode=mode, message="Color selection applied.")
+        request = ColorSelectionRequest.from_rgb(r=r, g=g, b=b, tolerance=tolerance, mode=mode)
+        self._push_history(
+            "select_by_color",
+            {
+                "r": request.color.r,
+                "g": request.color.g,
+                "b": request.color.b,
+                "tolerance": request.tolerance,
+                "mode": request.mode,
+            },
+        )
+        selected = max(1, int(scene.splat_count * min(0.4, max(0.02, request.tolerance / 255.0))))
+        scene.selected_count = self._apply_selection_mode(
+            scene.selected_count,
+            selected,
+            request.mode,
+            scene.splat_count,
+        )
+        return SelectionResult(
+            selected_count=scene.selected_count,
+            selection_mode=request.mode,
+            message="Color selection applied.",
+        )
 
     @staticmethod
     def _apply_selection_mode(current: int, selected: int, mode: str, total: int) -> int:
@@ -155,7 +197,8 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
 
     def crop_by_box(self, box: Box3D, keep_inside: bool = True) -> ToolResult:
         scene = self._require_scene()
-        self._push_history("crop_by_box", {"box": box.model_dump(), "keep_inside": keep_inside})
+        request = BoxSelectionRequest(box=box)
+        self._push_history("crop_by_box", {"box": request.box.model_dump(), "keep_inside": keep_inside})
         factor = 0.65 if keep_inside else 0.82
         before = scene.splat_count
         scene.splat_count = int(scene.splat_count * factor)
@@ -165,7 +208,11 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
 
     def crop_by_height(self, z_min: float | None, z_max: float | None, keep_inside: bool = True) -> ToolResult:
         scene = self._require_scene()
-        self._push_history("crop_by_height", {"z_min": z_min, "z_max": z_max, "keep_inside": keep_inside})
+        height_range = HeightRange(z_min=z_min, z_max=z_max)
+        self._push_history(
+            "crop_by_height",
+            {"z_min": height_range.z_min, "z_max": height_range.z_max, "keep_inside": keep_inside},
+        )
         factor = 0.72 if keep_inside else 0.88
         before = scene.splat_count
         scene.splat_count = int(scene.splat_count * factor)
@@ -174,42 +221,50 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
 
     def optimize_for_target(self, target: str, max_splats: int | None = None) -> OptimizationResult:
         scene = self._require_scene()
-        key = target.lower().strip()
-        if key not in self.TARGET_RULES:
-            raise UnsupportedTargetError(f"Unsupported target '{target}'. Supported: {sorted(self.TARGET_RULES)}")
-        rules = self.TARGET_RULES[key]
-        cap = max_splats if max_splats is not None else rules["max_splats"]
+        request = OptimizationRequest(target=target, max_splats=max_splats)
+        profile = get_optimization_profile(request.target)
+        cap = request.max_splats if request.max_splats is not None else profile.max_splats
         before = scene.splat_count
-        self._push_history("optimize_for_target", {"target": key, "max_splats": cap})
+        self._push_history("optimize_for_target", {"target": request.target, "max_splats": cap})
         if cap is not None:
             scene.splat_count = min(scene.splat_count, int(cap))
-        scene.sh_degree = int(rules["sh_degree"])
+        scene.sh_degree = profile.sh_degree
         scene.file_size_mb = round(scene.splat_count / 6500.0, 2)
         estimated_vram = round(scene.splat_count * (32 + scene.sh_degree * 12) / 1_000_000, 2)
         return OptimizationResult(
-            target=key,
+            target=request.target,
             before_splats=before,
             after_splats=scene.splat_count,
             sh_degree=scene.sh_degree,
             estimated_vram_mb=estimated_vram,
-            applied_rules=list(rules["rules"]),
-            message=f"Scene optimized for {key}.",
+            applied_rules=list(profile.rules),
+            message=f"Scene optimized for {request.target}.",
         )
 
     def export_scene(self, output_path: str, fmt: str, target: str | None = None) -> ExportResult:
         self._require_scene()
-        fmt_clean = fmt.lower().lstrip(".")
-        if fmt_clean not in self.SUPPORTED_EXPORTS:
-            raise UnsupportedTargetError(f"Unsupported export format '{fmt}'. Supported: {sorted(self.SUPPORTED_EXPORTS)}")
-        normalized = normalize_path(output_path)
-        self._push_history("export_scene", {"output_path": normalized, "format": fmt_clean, "target": target})
-        return ExportResult(output_path=normalized, format=fmt_clean, message=f"Export simulated to {normalized}")
+        request = ExportRequest(output_path=output_path, fmt=fmt, target=target)
+        self._push_history(
+            "export_scene",
+            {"output_path": request.output_path, "format": request.fmt, "target": request.target},
+        )
+        return ExportResult(
+            output_path=request.output_path,
+            format=request.fmt,
+            message=f"Export simulated to {request.output_path}",
+        )
 
     def measure_distance(self, a: Vec3, b: Vec3, unit: str = "m") -> MeasurementResult:
         self._require_scene()
+        normalized_unit = normalize_measurement_unit(unit)
         value = math.dist((a.x, a.y, a.z), (b.x, b.y, b.z))
-        self._push_history("measure_distance", {"a": a.model_dump(), "b": b.model_dump(), "unit": unit})
-        return MeasurementResult(kind="distance", value=round(value, 4), unit=unit, message=f"Distance: {value:.4f} {unit}")
+        self._push_history("measure_distance", {"a": a.model_dump(), "b": b.model_dump(), "unit": normalized_unit})
+        return MeasurementResult(
+            kind="distance",
+            value=round(value, 4),
+            unit=normalized_unit,
+            message=f"Distance: {value:.4f} {normalized_unit}",
+        )
 
     def undo(self) -> ToolResult:
         if not self._snapshots:
