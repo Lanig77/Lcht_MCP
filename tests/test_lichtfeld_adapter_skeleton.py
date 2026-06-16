@@ -80,6 +80,25 @@ class FakeScene:
         self.name = name
         self.path = path
         self._model = model
+        self.last_selection_mask = None
+        self.notify_changed_calls = 0
+
+    def combined_model(self):
+        return self._model
+
+    def set_selection_mask(self, mask):
+        self.last_selection_mask = list(mask)
+
+    def get_selection_mask(self):
+        return self.last_selection_mask
+
+    def notify_changed(self):
+        self.notify_changed_calls += 1
+
+
+class FakeSceneWithoutSelectionApi:
+    def __init__(self, model):
+        self._model = model
 
     def combined_model(self):
         return self._model
@@ -163,3 +182,67 @@ def test_get_stats_raises_clear_error_when_no_combined_model_exists(monkeypatch)
         match="No active LichtFeld combined model is available",
     ):
         adapter.get_stats()
+
+
+def test_select_by_height_normalizes_range_and_applies_expected_mask(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.5],
+                    [1.0, 1.0, 3.0],
+                    [2.0, 2.0, 1.5],
+                    [3.0, 3.0, 5.0],
+                ]
+            )
+        )
+    )
+    fake_module = SimpleNamespace(scene=fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    result = adapter.select_by_height(4.0, 1.0)
+
+    assert result.selected_count == 2
+    assert result.selection_mode == "replace"
+    assert fake_scene.last_selection_mask == [False, True, True, False]
+    assert fake_scene.notify_changed_calls == 1
+    assert adapter.get_stats().selected_count == 2
+
+
+def test_select_by_height_raises_clear_error_when_selection_api_is_missing(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_module = SimpleNamespace(
+        scene=FakeSceneWithoutSelectionApi(
+            FakeModel(
+                means=FakeTorchTensor(
+                    [
+                        [0.0, 0.0, 0.5],
+                        [1.0, 1.0, 3.0],
+                    ]
+                )
+            )
+        )
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="set_selection_mask",
+    ):
+        adapter.select_by_height(0.0, 2.0)

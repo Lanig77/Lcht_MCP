@@ -10,6 +10,7 @@ import importlib
 from pathlib import Path
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter as AdapterContract
+from lichtfeld_mcp.core.constraints import validate_selection_mode
 from lichtfeld_mcp.core.requests import HeightRange
 from lichtfeld_mcp.core.validation import normalize_scene_path
 from lichtfeld_mcp.errors import AdapterUnavailableError
@@ -29,6 +30,9 @@ from lichtfeld_mcp.schemas.common import (
 
 class LichtfeldPluginAdapter(AdapterContract):
     """Skeleton adapter for the LichtFeld Studio Python plugin API."""
+
+    def __init__(self) -> None:
+        self._cached_selection_mask: list[bool] | None = None
 
     def open_project(self, path: str) -> ProjectInfo:
         normalized_path = normalize_scene_path(path, label="project path")
@@ -57,12 +61,13 @@ class LichtfeldPluginAdapter(AdapterContract):
         project_name = self._get_scene_name(scene, project_path)
         sh_degree = self._get_sh_degree(model, scene)
         opacity_mean = self._get_opacity_mean(model)
+        selected_count = self._get_selected_count(scene, splat_count)
 
         return SceneStats(
             project_name=project_name,
             project_path=project_path,
             splat_count=splat_count,
-            selected_count=0,
+            selected_count=selected_count,
             file_size_mb=0.0,
             estimated_vram_mb=round(splat_count * (32 + sh_degree * 12) / 1_000_000, 2),
             bounds=bounds,
@@ -86,18 +91,29 @@ class LichtfeldPluginAdapter(AdapterContract):
         mode: str = "replace",
     ) -> SelectionResult:
         height_range = HeightRange(z_min=z_min, z_max=z_max)
-        self._load_lichtfeld()
-        # Future LichtFeld mapping:
-        # - scene.combined_model()
-        # - model.get_means()
-        # - build a boolean height mask from the means tensor
-        # - scene.set_selection_mask(mask)
-        # - scene.notify_changed()
-        self._not_implemented(
-            "select_by_height",
-            z_min=height_range.z_min,
-            z_max=height_range.z_max,
-            mode=mode,
+        normalized_mode = validate_selection_mode(mode)
+        lichtfeld_module = self._load_lichtfeld()
+        scene = self._require_active_scene(lichtfeld_module)
+        model = self._require_combined_model(scene)
+        means_rows = self._extract_position_rows(model)
+        height_mask = [
+            self._is_within_height_range(position[2], height_range)
+            for position in means_rows
+        ]
+        selection_mask = self._merge_selection_mask(
+            scene=scene,
+            height_mask=height_mask,
+            mode=normalized_mode,
+        )
+        self._set_scene_selection_mask(scene, selection_mask)
+        self._cached_selection_mask = list(selection_mask)
+        self._notify_scene_changed(scene)
+
+        selected_count = sum(selection_mask)
+        return SelectionResult(
+            selected_count=selected_count,
+            selection_mode=normalized_mode,
+            message="Height selection applied.",
         )
 
     def select_by_color(
@@ -321,6 +337,21 @@ class LichtfeldPluginAdapter(AdapterContract):
                 return str(value)
         return Path(project_path).stem or "active_lichtfeld_scene"
 
+    def _get_selected_count(self, scene: object, expected_length: int) -> int:
+        mask = self._read_scene_selection_mask(scene, expected_length)
+        if mask is None:
+            mask = self._get_cached_selection_mask(expected_length)
+        if mask is None:
+            return 0
+        return sum(mask)
+
+    def _get_cached_selection_mask(self, expected_length: int) -> list[bool] | None:
+        if self._cached_selection_mask is None:
+            return None
+        if len(self._cached_selection_mask) != expected_length:
+            return None
+        return list(self._cached_selection_mask)
+
     @classmethod
     def _get_opacity_mean(cls, model: object) -> float:
         get_opacity = getattr(model, "get_opacity", None)
@@ -361,6 +392,85 @@ class LichtfeldPluginAdapter(AdapterContract):
             else:
                 flattened.extend(cls._flatten_scalars(item))
         return flattened
+
+    @classmethod
+    def _read_scene_selection_mask(
+        cls,
+        scene: object,
+        expected_length: int,
+    ) -> list[bool] | None:
+        for attribute_name in (
+            "get_selection_mask",
+            "selection_mask",
+            "_selection_mask",
+            "last_selection_mask",
+        ):
+            candidate = getattr(scene, attribute_name, None)
+            if callable(candidate):
+                candidate = candidate()
+            if candidate is None:
+                continue
+            mask = cls._coerce_boolean_mask(candidate)
+            if len(mask) != expected_length:
+                continue
+            return mask
+        return None
+
+    @classmethod
+    def _coerce_boolean_mask(cls, value: object) -> list[bool]:
+        materialized = cls._materialize_array(value)
+        if materialized is None:
+            return []
+        if isinstance(materialized, (list, tuple)):
+            items = list(materialized)
+        else:
+            try:
+                items = list(materialized)
+            except TypeError as exc:
+                raise AdapterUnavailableError(
+                    "LichtFeld selection mask values are not iterable."
+                ) from exc
+        return [bool(item) for item in items]
+
+    @staticmethod
+    def _is_within_height_range(z_value: float, height_range: HeightRange) -> bool:
+        if height_range.z_min is not None and z_value < height_range.z_min:
+            return False
+        if height_range.z_max is not None and z_value > height_range.z_max:
+            return False
+        return True
+
+    def _merge_selection_mask(
+        self,
+        scene: object,
+        height_mask: list[bool],
+        mode: str,
+    ) -> list[bool]:
+        if mode == "replace":
+            return list(height_mask)
+        current_mask = self._read_scene_selection_mask(scene, len(height_mask))
+        if current_mask is None:
+            current_mask = self._get_cached_selection_mask(len(height_mask))
+        if current_mask is None:
+            current_mask = [False] * len(height_mask)
+        if mode == "add":
+            return [current or selected for current, selected in zip(current_mask, height_mask)]
+        return [current and not selected for current, selected in zip(current_mask, height_mask)]
+
+    @staticmethod
+    def _set_scene_selection_mask(scene: object, mask: list[bool]) -> None:
+        setter = getattr(scene, "set_selection_mask", None)
+        if not callable(setter):
+            raise AdapterUnavailableError(
+                "Active LichtFeld scene does not expose set_selection_mask for selection updates."
+            )
+        setter(mask)
+
+    @staticmethod
+    def _notify_scene_changed(scene: object) -> None:
+        notify_changed = getattr(scene, "notify_changed", None)
+        if callable(notify_changed):
+            notify_changed()
 
     @staticmethod
     def _not_implemented(method_name: str, **_: object) -> None:
