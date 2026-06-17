@@ -102,6 +102,38 @@ def coerce_boolean_mask(value: object) -> list[bool]:
     return [bool(item) for item in items]
 
 
+def to_lf_selection_mask(mask: object, lf_module: object) -> object:
+    normalized_mask = coerce_boolean_mask(mask)
+    tensor_factory = getattr(lf_module, "Tensor", None)
+    if callable(tensor_factory):
+        for attempt in (
+            lambda: tensor_factory(normalized_mask),
+            lambda: tensor_factory(data=normalized_mask),
+        ):
+            try:
+                return attempt()
+            except TypeError:
+                continue
+            except Exception as exc:
+                raise AdapterUnavailableError(
+                    "LichtFeld Tensor conversion failed for selection mask."
+                ) from exc
+
+    tensor_factory = getattr(lf_module, "tensor", None)
+    if callable(tensor_factory):
+        try:
+            return tensor_factory(normalized_mask)
+        except Exception as exc:
+            raise AdapterUnavailableError(
+                "LichtFeld tensor() conversion failed for selection mask."
+            ) from exc
+
+    raise AdapterUnavailableError(
+        "LichtFeld Studio Python plugin API does not expose a Tensor constructor "
+        "compatible with selection masks."
+    )
+
+
 def not_implemented(method_name: str, **_: object) -> None:
     raise NotImplementedError(
         f"LichtFeld plugin adapter skeleton does not implement '{method_name}' yet."

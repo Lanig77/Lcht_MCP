@@ -8,7 +8,7 @@ from lichtfeld_mcp.core.constraints import validate_color_tolerance, validate_rg
 from lichtfeld_mcp.core.requests import HeightRange
 from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 
-from .utils import coerce_boolean_mask
+from .utils import coerce_boolean_mask, to_lf_selection_mask
 
 
 @dataclass(slots=True)
@@ -103,19 +103,29 @@ class SelectionState:
             return [current or selected for current, selected in zip(current_mask, selection_mask)]
         return [current and not selected for current, selected in zip(current_mask, selection_mask)]
 
-    def apply_scene_selection_mask(self, scene: object, mask: list[bool]) -> None:
+    def apply_scene_selection_mask(
+        self,
+        scene: object,
+        mask: list[bool],
+        lf_module: object,
+    ) -> None:
         setter = getattr(scene, "set_selection_mask", None)
         if not callable(setter):
             raise AdapterUnavailableError(
                 "Active LichtFeld scene does not expose set_selection_mask for selection updates."
             )
-        setter(mask)
+        setter(to_lf_selection_mask(mask, lf_module))
 
-    def clear_scene_selection_mask(self, scene: object, expected_length: int) -> None:
+    def clear_scene_selection_mask(
+        self,
+        scene: object,
+        expected_length: int,
+        lf_module: object,
+    ) -> None:
         cleared_mask = [False] * expected_length
         setter = getattr(scene, "set_selection_mask", None)
         if callable(setter):
-            setter(cleared_mask)
+            setter(to_lf_selection_mask(cleared_mask, lf_module))
             return
         for attribute_name in ("selection_mask", "_selection_mask", "last_selection_mask"):
             if hasattr(scene, attribute_name):
