@@ -31,7 +31,39 @@ python -m venv .venv
 Set-ExecutionPolicy -Scope Process Bypass
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e .[dev]
+python -m pip install -e ".[dev]"
+```
+
+## Development setup
+
+Create the virtual environment:
+
+```powershell
+python -m venv .venv
+```
+
+Activate it on Windows:
+
+```powershell
+.\.venv\Scripts\activate
+```
+
+Install the project:
+
+```powershell
+pip install -e ".[dev]"
+```
+
+Run tests:
+
+```powershell
+python -m pytest
+```
+
+Run Ruff:
+
+```powershell
+ruff check .
 ```
 
 ## Test rapide sans client MCP
