@@ -3,6 +3,10 @@
 """Operators for the Lcht_MCP test plugin."""
 
 from .analyze_clusters import ANALYZE_CLUSTERS_OPERATOR_ID, LCHTMCP_OT_analyze_clusters
+from .analyze_voxel_clusters import (
+    ANALYZE_VOXEL_CLUSTERS_OPERATOR_ID,
+    LCHTMCP_OT_analyze_voxel_clusters,
+)
 from .diagnose_api import DIAGNOSE_API_OPERATOR_ID, LCHTMCP_OT_diagnose_api
 from .diagnose_native_selection import (
     DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID,
@@ -39,6 +43,10 @@ from .runtime_controls import (
     SMOKE_MAX_Z_UP_OPERATOR_ID,
     SMOKE_MIN_Z_DOWN_OPERATOR_ID,
     SMOKE_MIN_Z_UP_OPERATOR_ID,
+    VOXEL_MIN_CLUSTER_SIZE_DOWN_OPERATOR_ID,
+    VOXEL_MIN_CLUSTER_SIZE_UP_OPERATOR_ID,
+    VOXEL_SIZE_DOWN_OPERATOR_ID,
+    VOXEL_SIZE_UP_OPERATOR_ID,
     LCHTMCP_OT_arm_safe_delete,
     LCHTMCP_OT_cluster_distance_down,
     LCHTMCP_OT_cluster_distance_up,
@@ -65,6 +73,10 @@ from .runtime_controls import (
     LCHTMCP_OT_smoke_max_z_up,
     LCHTMCP_OT_smoke_min_z_down,
     LCHTMCP_OT_smoke_min_z_up,
+    LCHTMCP_OT_voxel_min_cluster_size_down,
+    LCHTMCP_OT_voxel_min_cluster_size_up,
+    LCHTMCP_OT_voxel_size_down,
+    LCHTMCP_OT_voxel_size_up,
 )
 from .run_safe_delete_test import (
     LCHTMCP_OT_run_safe_delete_test,
@@ -79,6 +91,7 @@ from .run_undo_validation import (
 __all__ = [
     "ARM_SAFE_DELETE_OPERATOR_ID",
     "ANALYZE_CLUSTERS_OPERATOR_ID",
+    "ANALYZE_VOXEL_CLUSTERS_OPERATOR_ID",
     "CONFIRM_SAFE_DELETE_OPERATOR_ID",
     "CLUSTER_DISTANCE_DOWN_OPERATOR_ID",
     "CLUSTER_DISTANCE_UP_OPERATOR_ID",
@@ -107,7 +120,12 @@ __all__ = [
     "SMOKE_MAX_Z_UP_OPERATOR_ID",
     "SMOKE_MIN_Z_DOWN_OPERATOR_ID",
     "SMOKE_MIN_Z_UP_OPERATOR_ID",
+    "VOXEL_MIN_CLUSTER_SIZE_DOWN_OPERATOR_ID",
+    "VOXEL_MIN_CLUSTER_SIZE_UP_OPERATOR_ID",
+    "VOXEL_SIZE_DOWN_OPERATOR_ID",
+    "VOXEL_SIZE_UP_OPERATOR_ID",
     "LCHTMCP_OT_analyze_clusters",
+    "LCHTMCP_OT_analyze_voxel_clusters",
     "LCHTMCP_OT_arm_safe_delete",
     "LCHTMCP_OT_cluster_distance_down",
     "LCHTMCP_OT_cluster_distance_up",
@@ -140,6 +158,10 @@ __all__ = [
     "LCHTMCP_OT_smoke_max_z_up",
     "LCHTMCP_OT_smoke_min_z_down",
     "LCHTMCP_OT_smoke_min_z_up",
+    "LCHTMCP_OT_voxel_min_cluster_size_down",
+    "LCHTMCP_OT_voxel_min_cluster_size_up",
+    "LCHTMCP_OT_voxel_size_down",
+    "LCHTMCP_OT_voxel_size_up",
     "RUN_SAFE_DELETE_TEST_OPERATOR_ID",
     "RUN_TEST_OPERATOR_ID",
     "RUN_UNDO_VALIDATION_OPERATOR_ID",

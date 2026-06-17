@@ -9,6 +9,7 @@ from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
 from ..operators.diagnose_native_selection import DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID
 from ..operators.diagnose_tensor_mask import DIAGNOSE_TENSOR_MASK_OPERATOR_ID
 from ..operators.analyze_clusters import ANALYZE_CLUSTERS_OPERATOR_ID
+from ..operators.analyze_voxel_clusters import ANALYZE_VOXEL_CLUSTERS_OPERATOR_ID
 from ..operators.runtime_controls import (
     ARM_SAFE_DELETE_OPERATOR_ID,
     CLUSTER_DISTANCE_DOWN_OPERATOR_ID,
@@ -36,6 +37,10 @@ from ..operators.runtime_controls import (
     SMOKE_MAX_Z_UP_OPERATOR_ID,
     SMOKE_MIN_Z_DOWN_OPERATOR_ID,
     SMOKE_MIN_Z_UP_OPERATOR_ID,
+    VOXEL_MIN_CLUSTER_SIZE_DOWN_OPERATOR_ID,
+    VOXEL_MIN_CLUSTER_SIZE_UP_OPERATOR_ID,
+    VOXEL_SIZE_DOWN_OPERATOR_ID,
+    VOXEL_SIZE_UP_OPERATOR_ID,
 )
 from ..operators.run_safe_delete_test import RUN_SAFE_DELETE_TEST_OPERATOR_ID
 from ..operators.run_test import RUN_TEST_OPERATOR_ID
@@ -108,6 +113,8 @@ class LchtMcpTestPanel(lf.ui.Panel):
             "Cluster Max Analysis Splats: "
             f"{config.max_cluster_analysis_splats}"
         )
+        layout.label(f"Voxel Size: {config.voxel_size:.2f}")
+        layout.label(f"Voxel Min Cluster Size: {config.voxel_min_cluster_size}")
         cluster_abort_color = (
             (0.4, 1.0, 0.4, 1.0)
             if config.abort_if_splat_count_above_limit
@@ -132,6 +139,10 @@ class LchtMcpTestPanel(lf.ui.Panel):
         )
         layout.text_colored(
             "Use Diagnose Native Selection API to try index-based selection entry points.",
+            theme.palette.text_dim,
+        )
+        layout.text_colored(
+            "Analyze Voxel Clusters is the recommended fast preview for large scenes.",
             theme.palette.text_dim,
         )
         layout.spacing()
@@ -259,6 +270,33 @@ class LchtMcpTestPanel(lf.ui.Panel):
             lf.ui.ops.invoke(DISABLE_CLUSTER_ANALYSIS_ABORT_OPERATOR_ID)
 
         layout.spacing()
+        layout.label("Voxel Preview Controls - Recommended fast preview")
+        if layout.button_styled(
+            "Voxel Size -##voxel_size_down",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(VOXEL_SIZE_DOWN_OPERATOR_ID)
+        if layout.button_styled(
+            "Voxel Size +##voxel_size_up",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(VOXEL_SIZE_UP_OPERATOR_ID)
+        if layout.button_styled(
+            "Voxel Min Size -##voxel_min_size_down",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(VOXEL_MIN_CLUSTER_SIZE_DOWN_OPERATOR_ID)
+        if layout.button_styled(
+            "Voxel Min Size +##voxel_min_size_up",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(VOXEL_MIN_CLUSTER_SIZE_UP_OPERATOR_ID)
+
+        layout.spacing()
         if layout.button_styled("Run Lcht MCP Test##run", "primary", (-1, 34 * scale)):
             lf.ui.ops.invoke(RUN_TEST_OPERATOR_ID)
         if layout.button_styled(
@@ -273,6 +311,12 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 34 * scale),
         ):
             lf.ui.ops.invoke(ANALYZE_CLUSTERS_OPERATOR_ID)
+        if layout.button_styled(
+            "Analyze Voxel Clusters##analyze_voxel_clusters",
+            "secondary",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(ANALYZE_VOXEL_CLUSTERS_OPERATOR_ID)
         if layout.button_styled(
             "Run Undo Validation##undo_validation",
             "warning",

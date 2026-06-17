@@ -5,6 +5,7 @@
 import lichtfeld as lf
 
 from .operators.analyze_clusters import LCHTMCP_OT_analyze_clusters
+from .operators.analyze_voxel_clusters import LCHTMCP_OT_analyze_voxel_clusters
 from .panels.test_panel import LchtMcpTestPanel
 from .operators.diagnose_api import LCHTMCP_OT_diagnose_api
 from .operators.diagnose_native_selection import LCHTMCP_OT_diagnose_native_selection
@@ -36,6 +37,10 @@ from .operators.runtime_controls import (
     LCHTMCP_OT_smoke_max_z_up,
     LCHTMCP_OT_smoke_min_z_down,
     LCHTMCP_OT_smoke_min_z_up,
+    LCHTMCP_OT_voxel_min_cluster_size_down,
+    LCHTMCP_OT_voxel_min_cluster_size_up,
+    LCHTMCP_OT_voxel_size_down,
+    LCHTMCP_OT_voxel_size_up,
 )
 from .operators.run_safe_delete_test import LCHTMCP_OT_run_safe_delete_test
 from .operators.run_test import LCHTMCP_OT_run_test
@@ -44,6 +49,7 @@ from .operators.run_undo_validation import LCHTMCP_OT_run_undo_validation
 _classes = [
     LchtMcpTestPanel,
     LCHTMCP_OT_analyze_clusters,
+    LCHTMCP_OT_analyze_voxel_clusters,
     LCHTMCP_OT_arm_safe_delete,
     LCHTMCP_OT_confirm_safe_delete,
     LCHTMCP_OT_disarm_safe_delete,
@@ -74,6 +80,10 @@ _classes = [
     LCHTMCP_OT_set_cluster_analysis_fast,
     LCHTMCP_OT_set_cluster_analysis_balanced,
     LCHTMCP_OT_set_cluster_analysis_detailed,
+    LCHTMCP_OT_voxel_size_down,
+    LCHTMCP_OT_voxel_size_up,
+    LCHTMCP_OT_voxel_min_cluster_size_down,
+    LCHTMCP_OT_voxel_min_cluster_size_up,
     LCHTMCP_OT_enable_cluster_analysis_abort,
     LCHTMCP_OT_disable_cluster_analysis_abort,
 ]

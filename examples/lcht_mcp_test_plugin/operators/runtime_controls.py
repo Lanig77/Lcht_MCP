@@ -18,6 +18,8 @@ from ..core.runtime_config import (
     MAX_SPLATS_STEP,
     SAFE_DELETE_Z_STEP,
     SMOKE_Z_STEP,
+    VOXEL_MIN_CLUSTER_SIZE_STEP,
+    VOXEL_SIZE_STEP,
     adjust_max_cluster_analysis_splats,
     adjust_cluster_distance_threshold,
     adjust_cluster_min_cluster_size,
@@ -27,6 +29,8 @@ from ..core.runtime_config import (
     adjust_safe_delete_min_z,
     adjust_smoke_test_max_z,
     adjust_smoke_test_min_z,
+    adjust_voxel_min_cluster_size,
+    adjust_voxel_size,
     arm_safe_delete,
     disable_cluster_analysis_abort,
     enable_cluster_analysis_abort,
@@ -129,6 +133,22 @@ DISABLE_CLUSTER_ANALYSIS_ABORT_OPERATOR_ID = (
     "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
     "LCHTMCP_OT_disable_cluster_analysis_abort"
 )
+VOXEL_SIZE_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_voxel_size_down"
+)
+VOXEL_SIZE_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_voxel_size_up"
+)
+VOXEL_MIN_CLUSTER_SIZE_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_voxel_min_cluster_size_down"
+)
+VOXEL_MIN_CLUSTER_SIZE_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_voxel_min_cluster_size_up"
+)
 SET_CLUSTER_ANALYSIS_FAST_OPERATOR_ID = (
     "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
     "LCHTMCP_OT_set_cluster_analysis_fast"
@@ -157,6 +177,8 @@ def _log_runtime_state(action: str) -> None:
         f"cluster_distance_threshold={config.cluster_distance_threshold:.4f}, "
         f"cluster_min_cluster_size={config.cluster_min_cluster_size}, "
         f"max_cluster_analysis_splats={config.max_cluster_analysis_splats}, "
+        f"voxel_size={config.voxel_size:.4f}, "
+        f"voxel_min_cluster_size={config.voxel_min_cluster_size}, "
         "abort_if_splat_count_above_limit="
         f"{config.abort_if_splat_count_above_limit}"
     )
@@ -387,6 +409,42 @@ class LCHTMCP_OT_disable_cluster_analysis_abort(_ConfigOperator):
 
     def _apply(self) -> None:
         disable_cluster_analysis_abort()
+
+
+class LCHTMCP_OT_voxel_size_down(_ConfigOperator):
+    label = "Voxel Size -"
+    description = "Decrease the voxel preview voxel size"
+    action_label = f"Decreased voxel size by {VOXEL_SIZE_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_voxel_size(-VOXEL_SIZE_STEP)
+
+
+class LCHTMCP_OT_voxel_size_up(_ConfigOperator):
+    label = "Voxel Size +"
+    description = "Increase the voxel preview voxel size"
+    action_label = f"Increased voxel size by {VOXEL_SIZE_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_voxel_size(VOXEL_SIZE_STEP)
+
+
+class LCHTMCP_OT_voxel_min_cluster_size_down(_ConfigOperator):
+    label = "Voxel Min Size -"
+    description = "Decrease the voxel preview minimum cluster size"
+    action_label = f"Decreased voxel min cluster size by {VOXEL_MIN_CLUSTER_SIZE_STEP}"
+
+    def _apply(self) -> None:
+        adjust_voxel_min_cluster_size(-VOXEL_MIN_CLUSTER_SIZE_STEP)
+
+
+class LCHTMCP_OT_voxel_min_cluster_size_up(_ConfigOperator):
+    label = "Voxel Min Size +"
+    description = "Increase the voxel preview minimum cluster size"
+    action_label = f"Increased voxel min cluster size by {VOXEL_MIN_CLUSTER_SIZE_STEP}"
+
+    def _apply(self) -> None:
+        adjust_voxel_min_cluster_size(VOXEL_MIN_CLUSTER_SIZE_STEP)
 
 
 class LCHTMCP_OT_set_cluster_analysis_fast(_ConfigOperator):

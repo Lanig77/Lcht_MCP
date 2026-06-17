@@ -20,6 +20,12 @@ from lichtfeld_mcp.core.constraints import (
 )
 from lichtfeld_mcp.core.requests import HeightRange
 from lichtfeld_mcp.core.validation import normalize_scene_path
+from lichtfeld_mcp.core.voxel_analysis import (
+    analyze_voxel_clusters,
+    largest_voxel_cluster,
+    voxel_clusters_outside_largest,
+    voxel_clusters_smaller_than,
+)
 from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 from lichtfeld_mcp.schemas.common import (
     Box3D,
@@ -88,6 +94,28 @@ class ClusterAnalysisSummary:
     sampling_elapsed_seconds: float
     cloud_build_elapsed_seconds: float
     clustering_elapsed_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class VoxelClusterAnalysisSummary:
+    voxel_size: float
+    min_voxel_cluster_size: int
+    total_splats: int
+    analyzed_splats: int
+    occupied_voxels: int
+    total_voxel_clusters: int
+    largest_voxel_cluster_voxel_count: int
+    largest_voxel_cluster_estimated_splats: int
+    small_voxel_cluster_count: int
+    estimated_floating_splats: int
+    approximate: bool
+    refused: bool
+    sampling_stride: int
+    message: str
+    used_native_sampling: bool
+    read_means_elapsed_seconds: float
+    sampling_elapsed_seconds: float
+    voxel_analysis_elapsed_seconds: float
 
 
 class LichtfeldAdapter(AdapterContract):
@@ -306,6 +334,152 @@ class LichtfeldAdapter(AdapterContract):
             sampling_elapsed_seconds=sampling_elapsed_seconds,
             cloud_build_elapsed_seconds=cloud_build_elapsed_seconds,
             clustering_elapsed_seconds=clustering_elapsed_seconds,
+        )
+
+    def analyze_voxel_clusters_preview(
+        self,
+        voxel_size: float,
+        min_voxel_cluster_size: int = 1,
+        max_splats: int = 25_000,
+        abort_if_above_limit: bool = False,
+    ) -> VoxelClusterAnalysisSummary:
+        if voxel_size <= 0.0:
+            raise InvalidParameterError("voxel_size must be strictly positive.")
+        if min_voxel_cluster_size < 1:
+            raise InvalidParameterError("min_voxel_cluster_size must be at least 1.")
+        if max_splats < 1:
+            raise InvalidParameterError("max_splats must be at least 1.")
+
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+
+        logger.info("LichtFeld voxel preview: before reading means")
+        read_means_started_at = perf_counter()
+        position_source = resolve_position_source(model)
+        read_means_elapsed_seconds = _elapsed_seconds(read_means_started_at)
+        logger.info(
+            "LichtFeld voxel preview: after reading means source_type=%s elapsed=%.3fs",
+            type(position_source).__name__,
+            read_means_elapsed_seconds,
+        )
+
+        total_splats = get_position_source_count(position_source)
+        materialized_position_rows: list[tuple[float, float, float]] | None = None
+        if total_splats is None:
+            materialized_position_rows = _coerce_position_rows(position_source)
+            total_splats = len(materialized_position_rows)
+
+        logger.info(
+            "LichtFeld voxel preview: total_splats=%s max_splats=%s abort_if_above_limit=%s voxel_size=%.4f min_voxel_cluster_size=%s",
+            total_splats,
+            max_splats,
+            abort_if_above_limit,
+            voxel_size,
+            min_voxel_cluster_size,
+        )
+        if abort_if_above_limit and total_splats > max_splats:
+            message = (
+                "Refused voxel cluster preview because "
+                f"splat_count={total_splats} exceeds max_splats={max_splats}. "
+                "Disable the abort flag to run sampled approximate voxel analysis instead."
+            )
+            logger.info("LichtFeld voxel preview: %s", message)
+            return VoxelClusterAnalysisSummary(
+                voxel_size=voxel_size,
+                min_voxel_cluster_size=min_voxel_cluster_size,
+                total_splats=total_splats,
+                analyzed_splats=0,
+                occupied_voxels=0,
+                total_voxel_clusters=0,
+                largest_voxel_cluster_voxel_count=0,
+                largest_voxel_cluster_estimated_splats=0,
+                small_voxel_cluster_count=0,
+                estimated_floating_splats=0,
+                approximate=False,
+                refused=True,
+                sampling_stride=1,
+                message=message,
+                used_native_sampling=False,
+                read_means_elapsed_seconds=read_means_elapsed_seconds,
+                sampling_elapsed_seconds=0.0,
+                voxel_analysis_elapsed_seconds=0.0,
+            )
+
+        logger.info("LichtFeld voxel preview: before sampling")
+        sampling_started_at = perf_counter()
+        if materialized_position_rows is not None:
+            sampled_rows, sampling_stride = sample_position_rows(
+                materialized_position_rows,
+                max_splats,
+            )
+            used_native_sampling = False
+        else:
+            sampled_rows, sampling_stride, used_native_sampling = extract_sampled_position_rows(
+                position_source,
+                max_splats,
+                total_splats=total_splats,
+            )
+        approximate = len(sampled_rows) != total_splats
+        sampling_elapsed_seconds = _elapsed_seconds(sampling_started_at)
+        logger.info(
+            "LichtFeld voxel preview: after sampling analyzed_splats=%s total_splats=%s sampling_stride=%s approximate=%s native_sampling=%s elapsed=%.3fs",
+            len(sampled_rows),
+            total_splats,
+            sampling_stride,
+            approximate,
+            used_native_sampling,
+            sampling_elapsed_seconds,
+        )
+
+        logger.info("LichtFeld voxel preview: before voxel analysis")
+        voxel_analysis_started_at = perf_counter()
+        voxel_clusters = analyze_voxel_clusters(
+            sampled_rows,
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=1,
+        )
+        voxel_analysis_elapsed_seconds = _elapsed_seconds(voxel_analysis_started_at)
+        logger.info(
+            "LichtFeld voxel preview: after voxel analysis total_voxel_clusters=%s elapsed=%.3fs",
+            len(voxel_clusters),
+            voxel_analysis_elapsed_seconds,
+        )
+
+        largest = largest_voxel_cluster(voxel_clusters)
+        small_clusters = voxel_clusters_smaller_than(voxel_clusters, min_voxel_cluster_size)
+        floating_clusters = [
+            cluster
+            for cluster in voxel_clusters_outside_largest(voxel_clusters)
+            if cluster.voxel_count < min_voxel_cluster_size
+        ]
+        if approximate:
+            message = "Voxel cluster preview complete in approximate sampled mode."
+        else:
+            message = "Voxel cluster preview complete."
+        return VoxelClusterAnalysisSummary(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+            total_splats=total_splats,
+            analyzed_splats=len(sampled_rows),
+            occupied_voxels=sum(cluster.voxel_count for cluster in voxel_clusters),
+            total_voxel_clusters=len(voxel_clusters),
+            largest_voxel_cluster_voxel_count=0 if largest is None else largest.voxel_count,
+            largest_voxel_cluster_estimated_splats=0
+            if largest is None
+            else largest.estimated_splat_count,
+            small_voxel_cluster_count=len(small_clusters),
+            estimated_floating_splats=sum(
+                cluster.estimated_splat_count for cluster in floating_clusters
+            ),
+            approximate=approximate,
+            refused=False,
+            sampling_stride=sampling_stride,
+            message=message,
+            used_native_sampling=used_native_sampling,
+            read_means_elapsed_seconds=read_means_elapsed_seconds,
+            sampling_elapsed_seconds=sampling_elapsed_seconds,
+            voxel_analysis_elapsed_seconds=voxel_analysis_elapsed_seconds,
         )
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:
@@ -694,4 +868,9 @@ class LichtfeldAdapter(AdapterContract):
 
 LichtfeldPluginAdapter = LichtfeldAdapter
 
-__all__ = ["ClusterAnalysisSummary", "LichtfeldAdapter", "LichtfeldPluginAdapter"]
+__all__ = [
+    "ClusterAnalysisSummary",
+    "LichtfeldAdapter",
+    "LichtfeldPluginAdapter",
+    "VoxelClusterAnalysisSummary",
+]

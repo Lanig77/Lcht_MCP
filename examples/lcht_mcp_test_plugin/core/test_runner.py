@@ -256,6 +256,84 @@ def run_cluster_analysis_preview() -> tuple[bool, str]:
     return True, message
 
 
+def run_voxel_cluster_analysis_preview() -> tuple[bool, str]:
+    """Run a non-destructive voxel occupancy analysis on the active LichtFeld scene."""
+    config = snapshot_runtime_config()
+    _log_info(
+        "Starting voxel cluster analysis preview with "
+        f"voxel_size={config.voxel_size:.4f}, "
+        f"min_voxel_cluster_size={config.voxel_min_cluster_size}, "
+        f"max_cluster_analysis_splats={config.max_cluster_analysis_splats}, "
+        "abort_if_splat_count_above_limit="
+        f"{config.abort_if_splat_count_above_limit}."
+    )
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Voxel cluster analysis adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    analyze_voxel_clusters_preview = getattr(adapter, "analyze_voxel_clusters_preview", None)
+    if not callable(analyze_voxel_clusters_preview):
+        message = "LichtfeldAdapter does not expose analyze_voxel_clusters_preview()."
+        _log_error(message)
+        return False, message
+
+    try:
+        summary = analyze_voxel_clusters_preview(
+            voxel_size=config.voxel_size,
+            min_voxel_cluster_size=config.voxel_min_cluster_size,
+            max_splats=config.max_cluster_analysis_splats,
+            abort_if_above_limit=config.abort_if_splat_count_above_limit,
+        )
+    except Exception as exc:
+        message = f"Voxel cluster analysis preview failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    if summary.refused:
+        _log_info(summary.message)
+        return True, summary.message
+
+    _log_info(f"total_splats={summary.total_splats}")
+    _log_info(f"analyzed_splats={summary.analyzed_splats}")
+    _log_info(f"occupied_voxels={summary.occupied_voxels}")
+    _log_info(f"used_native_sampling={summary.used_native_sampling}")
+    if summary.approximate:
+        sampling_ratio = (
+            0.0
+            if summary.total_splats <= 0
+            else summary.analyzed_splats / summary.total_splats
+        )
+        _log_info(
+            "approximate_analysis=True "
+            f"sampling_stride={summary.sampling_stride} "
+            f"sampling_ratio={sampling_ratio:.6f}"
+        )
+    else:
+        _log_info("approximate_analysis=False")
+    _log_info(f"total_voxel_clusters={summary.total_voxel_clusters}")
+    _log_info(
+        "largest_voxel_cluster="
+        f"voxels:{summary.largest_voxel_cluster_voxel_count} "
+        f"estimated_splats:{summary.largest_voxel_cluster_estimated_splats}"
+    )
+    _log_info(f"small_voxel_clusters={summary.small_voxel_cluster_count}")
+    _log_info(f"estimated_floating_splats={summary.estimated_floating_splats}")
+    _log_info(
+        "timings_seconds="
+        f"read_means:{summary.read_means_elapsed_seconds:.3f} "
+        f"sampling:{summary.sampling_elapsed_seconds:.3f} "
+        f"voxel_analysis:{summary.voxel_analysis_elapsed_seconds:.3f}"
+    )
+    message = summary.message
+    _log_info(message)
+    return True, message
+
+
 def run_lcht_mcp_test() -> tuple[bool, str]:
     """Run a safe adapter smoke test inside LichtFeld Studio."""
     config = snapshot_runtime_config()
