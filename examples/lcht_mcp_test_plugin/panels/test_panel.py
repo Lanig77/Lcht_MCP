@@ -4,7 +4,13 @@
 
 import lichtfeld as lf
 
-from ..core.test_runner import DELETE_SELECTED, ENABLE_SAFE_DELETE, MAX_Z, MIN_Z
+from ..core.test_runner import (
+    CONFIRM_SAFE_DELETE,
+    DELETE_SELECTED,
+    ENABLE_SAFE_DELETE,
+    MAX_Z,
+    MIN_Z,
+)
 from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
 from ..operators.diagnose_native_selection import DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID
 from ..operators.diagnose_tensor_mask import DIAGNOSE_TENSOR_MASK_OPERATOR_ID
@@ -48,6 +54,15 @@ class LchtMcpTestPanel(lf.ui.Panel):
         layout.text_colored(
             f"Enable Safe Delete: {'ON' if ENABLE_SAFE_DELETE else 'OFF'}",
             safe_delete_color,
+        )
+        confirm_safe_delete_color = (
+            (1.0, 0.4, 0.4, 1.0)
+            if CONFIRM_SAFE_DELETE
+            else (0.4, 1.0, 0.4, 1.0)
+        )
+        layout.text_colored(
+            f"Confirm Safe Delete: {'ON' if CONFIRM_SAFE_DELETE else 'OFF'}",
+            confirm_safe_delete_color,
         )
         layout.text_colored(
             "Check the LichtFeld log for splat_count, bounding_box and selected_count.",

@@ -22,6 +22,8 @@ Both options:
 
 `ENABLE_SAFE_DELETE` is also set to `False` by default.
 
+`CONFIRM_SAFE_DELETE` is also set to `False` by default.
+
 The script never deletes anything unless you explicitly change:
 
 ```python
@@ -34,6 +36,7 @@ The guarded delete validation is a separate flow and remains disabled unless you
 
 ```python
 ENABLE_SAFE_DELETE = True
+CONFIRM_SAFE_DELETE = True
 ```
 
 Before enabling it, duplicate the source scene and test only on a copy.
@@ -170,6 +173,7 @@ The plugin ships with:
 ```python
 DELETE_SELECTED = False
 ENABLE_SAFE_DELETE = False
+CONFIRM_SAFE_DELETE = False
 ```
 
 This prevents destructive operations during a first validation pass.
@@ -180,13 +184,26 @@ Only enable the guarded delete flow after you confirm the height selection is ta
 
 `Run Lcht MCP Test` remains non-destructive.
 
-`Run Safe Delete Test` is a separate guarded workflow. When `ENABLE_SAFE_DELETE=False`:
+`Run Safe Delete Test` is a separate guarded workflow.
+
+It requires a two-stage safety gate:
+
+- `ENABLE_SAFE_DELETE=True`
+- `CONFIRM_SAFE_DELETE=True`
+
+When `ENABLE_SAFE_DELETE=False`:
 
 - the plugin logs that the delete test is disabled
 - no selection is deleted
 - the operator returns successfully
 
-When `ENABLE_SAFE_DELETE=True`, the plugin:
+When `ENABLE_SAFE_DELETE=True` but `CONFIRM_SAFE_DELETE=False`:
+
+- the plugin logs that deletion is armed but not confirmed
+- no selection is deleted
+- the operator returns successfully
+
+Only when both flags are `True`, the plugin:
 
 1. reads initial stats
 2. selects a narrow default range:
@@ -203,6 +220,12 @@ When `ENABLE_SAFE_DELETE=True`, the plugin:
 7. clears selection before exit when possible
 
 Always duplicate the scene and validate on a copy first.
+
+Recommended progression:
+
+1. Run with `ENABLE_SAFE_DELETE=False` and `CONFIRM_SAFE_DELETE=False`
+2. Then run with `ENABLE_SAFE_DELETE=True` and `CONFIRM_SAFE_DELETE=False`
+3. Only on a duplicated PLY, run with both `ENABLE_SAFE_DELETE=True` and `CONFIRM_SAFE_DELETE=True`
 
 ## What The Plugin Does
 

@@ -5,6 +5,7 @@
 from .diagnostics import run_lcht_mcp_diagnostics, run_tensor_mask_construction_diagnostics
 from .diagnostics import run_native_selection_api_diagnostics
 from .test_runner import (
+    CONFIRM_SAFE_DELETE,
     DELETE_SELECTED,
     ENABLE_SAFE_DELETE,
     MAX_Z,
@@ -14,6 +15,7 @@ from .test_runner import (
 )
 
 __all__ = [
+    "CONFIRM_SAFE_DELETE",
     "DELETE_SELECTED",
     "ENABLE_SAFE_DELETE",
     "MAX_Z",

@@ -16,6 +16,7 @@ MIN_Z = 0.0
 MAX_Z = 2.0
 DELETE_SELECTED = False
 ENABLE_SAFE_DELETE = False
+CONFIRM_SAFE_DELETE = False
 SAFE_DELETE_MIN_Z = 1.0
 SAFE_DELETE_MAX_Z = 1.02
 SAFE_DELETE_MAX_COUNT = 50_000
@@ -191,12 +192,23 @@ def run_safe_delete_test() -> tuple[bool, str]:
     _log_info(
         "Starting safe delete test with "
         f"ENABLE_SAFE_DELETE={ENABLE_SAFE_DELETE}, "
-        f"range=({SAFE_DELETE_MIN_Z}, {SAFE_DELETE_MAX_Z})."
+        f"CONFIRM_SAFE_DELETE={CONFIRM_SAFE_DELETE}, "
+        f"range=({SAFE_DELETE_MIN_Z}, {SAFE_DELETE_MAX_Z}), "
+        f"thresholds=(max_count={SAFE_DELETE_MAX_COUNT}, max_ratio={SAFE_DELETE_MAX_RATIO:.6f})."
     )
 
     if not ENABLE_SAFE_DELETE:
         message = (
             "Safe delete test is disabled because ENABLE_SAFE_DELETE=False. "
+            "No destructive action was performed."
+        )
+        _log_info(message)
+        return True, message
+
+    if not CONFIRM_SAFE_DELETE:
+        message = (
+            "Safe delete test is armed but not confirmed because "
+            "ENABLE_SAFE_DELETE=True and CONFIRM_SAFE_DELETE=False. "
             "No destructive action was performed."
         )
         _log_info(message)
