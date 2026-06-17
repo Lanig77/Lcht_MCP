@@ -218,6 +218,7 @@ def run_cluster_analysis_preview() -> tuple[bool, str]:
 
     _log_info(f"total_splats={summary.total_splats}")
     _log_info(f"analyzed_splats={summary.analyzed_splats}")
+    _log_info(f"used_native_sampling={summary.used_native_sampling}")
     if summary.approximate:
         sampling_ratio = (
             0.0
@@ -241,6 +242,14 @@ def run_cluster_analysis_preview() -> tuple[bool, str]:
     _log_info(
         "candidate_floating_splats="
         f"{summary.candidate_floating_splat_count}"
+    )
+    _log_info(
+        "timings_seconds="
+        f"get_stats:{summary.stats_elapsed_seconds:.3f} "
+        f"read_means:{summary.read_means_elapsed_seconds:.3f} "
+        f"sampling:{summary.sampling_elapsed_seconds:.3f} "
+        f"gaussian_cloud:{summary.cloud_build_elapsed_seconds:.3f} "
+        f"clustering:{summary.clustering_elapsed_seconds:.3f}"
     )
     message = summary.message
     _log_info(message)

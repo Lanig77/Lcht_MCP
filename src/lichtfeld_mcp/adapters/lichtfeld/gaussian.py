@@ -13,16 +13,7 @@ from .utils import is_scalar, materialize_array
 
 
 def extract_position_rows(model: object) -> list[tuple[float, float, float]]:
-    means = None
-    get_means = getattr(model, "get_means", None)
-    if callable(get_means):
-        means = get_means()
-    elif hasattr(model, "means_raw"):
-        means = getattr(model, "means_raw")
-    if means is None:
-        raise AdapterUnavailableError(
-            "Active LichtFeld combined model does not expose gaussian positions."
-        )
+    means = resolve_position_source(model)
     return _coerce_position_rows(means)
 
 
@@ -132,8 +123,93 @@ def sample_position_rows(
     return sampled_rows, stride
 
 
+def resolve_position_source(model: object) -> object:
+    means = None
+    get_means = getattr(model, "get_means", None)
+    if callable(get_means):
+        means = get_means()
+    elif hasattr(model, "means_raw"):
+        means = getattr(model, "means_raw")
+    if means is None:
+        raise AdapterUnavailableError(
+            "Active LichtFeld combined model does not expose gaussian positions."
+        )
+    return means
+
+
+def get_position_source_count(position_source: object) -> int | None:
+    prepared = _prepare_array_for_row_access(position_source)
+    shape = getattr(prepared, "shape", None)
+    if isinstance(shape, (list, tuple)) and shape:
+        first_dimension = _coerce_int(shape[0])
+        if first_dimension is not None:
+            return first_dimension
+    try:
+        return len(prepared)  # type: ignore[arg-type]
+    except Exception:
+        return None
+
+
+def extract_sampled_position_rows(
+    position_source: object,
+    max_splats: int,
+    *,
+    total_splats: int | None = None,
+) -> tuple[list[tuple[float, float, float]], int, bool]:
+    if max_splats < 1:
+        raise InvalidParameterError("max_cluster_analysis_splats must be at least 1.")
+    prepared = _prepare_array_for_row_access(position_source)
+    detected_total = total_splats
+    if detected_total is None:
+        detected_total = get_position_source_count(prepared)
+    if detected_total is None or detected_total <= max_splats:
+        return _coerce_position_rows(prepared), 1, False
+    stride = max(1, math.ceil(detected_total / max_splats))
+    sampled_source = _slice_rows(prepared, stride, max_splats)
+    if sampled_source is None:
+        sampled_rows = sample_position_rows(_coerce_position_rows(prepared), max_splats)[0]
+        return sampled_rows, stride, False
+    sampled_rows = _coerce_position_rows(sampled_source)
+    if len(sampled_rows) > max_splats:
+        sampled_rows = sampled_rows[:max_splats]
+    return sampled_rows, stride, True
+
+
 def _coerce_position_rows(values: object) -> list[tuple[float, float, float]]:
     return _coerce_triplet_rows(values, "position")
+
+
+def _prepare_array_for_row_access(value: object) -> object:
+    current = value
+    for method_name in ("detach", "cpu"):
+        method = getattr(current, method_name, None)
+        if callable(method):
+            current = method()
+    return current
+
+
+def _slice_rows(
+    value: object,
+    stride: int,
+    max_splats: int,
+) -> object | None:
+    try:
+        sampled = value[::stride]  # type: ignore[index]
+    except Exception:
+        return None
+    try:
+        return sampled[:max_splats]  # type: ignore[index]
+    except Exception:
+        return sampled
+
+
+def _coerce_int(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except Exception:
+        return None
 
 
 def _coerce_triplet_rows(values: object, label: str) -> list[tuple[float, float, float]]:

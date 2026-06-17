@@ -40,6 +40,12 @@ class FakeClusterPreviewAdapter:
             refused=False,
             sampling_stride=1,
             message="Cluster analysis preview complete.",
+            used_native_sampling=True,
+            stats_elapsed_seconds=0.1,
+            read_means_elapsed_seconds=0.2,
+            sampling_elapsed_seconds=0.3,
+            cloud_build_elapsed_seconds=0.4,
+            clustering_elapsed_seconds=0.5,
         )
 
 

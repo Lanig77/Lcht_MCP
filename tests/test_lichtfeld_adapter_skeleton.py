@@ -51,6 +51,17 @@ class FakeTorchTensor:
     def __init__(self, values):
         self._values = values
 
+    @property
+    def shape(self):
+        if not isinstance(self._values, list):
+            return ()
+        if not self._values:
+            return (0,)
+        first_row = self._values[0]
+        if isinstance(first_row, list):
+            return (len(self._values), len(first_row))
+        return (len(self._values),)
+
     def detach(self):
         return self
 
@@ -59,6 +70,26 @@ class FakeTorchTensor:
 
     def numpy(self):
         return self._values
+
+    def __len__(self):
+        return len(self._values)
+
+    def __getitem__(self, item):
+        return FakeTorchTensor(self._values[item])
+
+
+class FakeSliceSamplingTensor(FakeTorchTensor):
+    def __init__(self, values, *, sampled: bool = False):
+        super().__init__(values)
+        self._sampled = sampled
+
+    def numpy(self):
+        if not self._sampled:
+            raise AssertionError("full tensor should not be materialized for sampled preview")
+        return self._values
+
+    def __getitem__(self, item):
+        return FakeSliceSamplingTensor(self._values[item], sampled=True)
 
 
 class FakeLfTensor:
@@ -344,23 +375,47 @@ def test_analyze_clusters_preview_builds_gaussian_cloud_snapshot_and_returns_sum
     assert summary.refused is False
     assert summary.sampling_stride == 1
     assert summary.message == "Cluster analysis preview complete."
+    assert summary.used_native_sampling is False
+    assert summary.stats_elapsed_seconds >= 0.0
+    assert summary.read_means_elapsed_seconds >= 0.0
+    assert summary.sampling_elapsed_seconds >= 0.0
+    assert summary.cloud_build_elapsed_seconds >= 0.0
+    assert summary.clustering_elapsed_seconds >= 0.0
 
 
 def test_analyze_clusters_preview_refuses_safely_above_limit_by_default(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
-    adapter_impl_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld.adapter")
-    adapter = adapter_module.LichtfeldPluginAdapter()
+    original_import_module = adapter_module.importlib.import_module
+
+    class FakeLargeMeansTensor:
+        shape = (200_000, 3)
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def __len__(self):
+            return 200_000
+
+        def __getitem__(self, item):
+            raise AssertionError("sampling should not run in refusal mode")
+
+        def numpy(self):
+            raise AssertionError("full tensor should not be materialized in refusal mode")
+
+    fake_scene = FakeScene(FakeModel(means=FakeTorchTensor([[0.0, 0.0, 0.0]])))
+    fake_scene._model.get_means = lambda: FakeLargeMeansTensor()
+    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+
     monkeypatch.setattr(
-        adapter,
-        "get_stats",
-        lambda: SimpleNamespace(splat_count=200_000),
-    )
-    monkeypatch.setattr(
-        adapter_impl_module,
-        "load_lichtfeld",
-        lambda: (_ for _ in ()).throw(AssertionError("scene lookup should be skipped")),
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
     )
 
+    adapter = adapter_module.LichtfeldPluginAdapter()
     summary = adapter.analyze_clusters_preview(
         distance_threshold=0.5,
         min_cluster_size=100,
@@ -374,6 +429,7 @@ def test_analyze_clusters_preview_refuses_safely_above_limit_by_default(monkeypa
     assert summary.approximate is False
     assert summary.refused is True
     assert "Refused cluster analysis preview" in summary.message
+    assert summary.stats_elapsed_seconds >= 0.0
 
 
 def test_analyze_clusters_preview_uses_sampled_approximate_mode_by_default_above_limit(
@@ -421,6 +477,7 @@ def test_analyze_clusters_preview_uses_sampled_approximate_mode_by_default_above
     assert summary.refused is False
     assert summary.sampling_stride == 2
     assert "approximate sampled mode" in summary.message
+    assert summary.used_native_sampling is True
 
 
 def test_analyze_clusters_preview_uses_sampled_approximate_mode_when_abort_is_disabled(
@@ -469,6 +526,45 @@ def test_analyze_clusters_preview_uses_sampled_approximate_mode_when_abort_is_di
     assert summary.refused is False
     assert summary.sampling_stride == 2
     assert "approximate sampled mode" in summary.message
+    assert summary.used_native_sampling is True
+
+
+def test_analyze_clusters_preview_samples_before_full_python_materialization(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeSliceSamplingTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [0.2, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [5.1, 5.0, 5.0],
+                    [5.2, 5.0, 5.0],
+                ]
+            )
+        )
+    )
+    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    summary = adapter.analyze_clusters_preview(
+        distance_threshold=0.5,
+        min_cluster_size=2,
+        max_cluster_analysis_splats=3,
+    )
+
+    assert summary.total_splats == 6
+    assert summary.analyzed_splats == 3
+    assert summary.approximate is True
+    assert summary.used_native_sampling is True
 
 
 def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):

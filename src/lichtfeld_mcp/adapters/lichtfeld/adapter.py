@@ -38,10 +38,14 @@ from .cameras import CameraOperations
 from .export import ExportOperations
 from .gaussian import (
     build_gaussian_cloud_from_positions,
+    extract_sampled_position_rows,
     extract_color_rows,
     extract_opacity_values,
     extract_position_rows,
     sample_position_rows,
+    _coerce_position_rows,
+    get_position_source_count,
+    resolve_position_source,
 )
 from .scene import build_scene_stats, notify_scene_changed
 from .selection import SelectionState
@@ -78,6 +82,12 @@ class ClusterAnalysisSummary:
     refused: bool
     sampling_stride: int
     message: str
+    used_native_sampling: bool
+    stats_elapsed_seconds: float
+    read_means_elapsed_seconds: float
+    sampling_elapsed_seconds: float
+    cloud_build_elapsed_seconds: float
+    clustering_elapsed_seconds: float
 
 
 class LichtfeldAdapter(AdapterContract):
@@ -134,13 +144,32 @@ class LichtfeldAdapter(AdapterContract):
         if max_cluster_analysis_splats < 1:
             raise InvalidParameterError("max_cluster_analysis_splats must be at least 1.")
 
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+
+        logger.info("LichtFeld cluster preview: before reading means")
+        read_means_started_at = perf_counter()
+        position_source = resolve_position_source(model)
+        read_means_elapsed_seconds = _elapsed_seconds(read_means_started_at)
+        logger.info(
+            "LichtFeld cluster preview: after reading means source_type=%s elapsed=%.3fs",
+            type(position_source).__name__,
+            read_means_elapsed_seconds,
+        )
+
         logger.info("LichtFeld cluster preview: before get_stats")
         stats_started_at = perf_counter()
-        stats = self.get_stats()
+        materialized_position_rows: list[tuple[float, float, float]] | None = None
+        total_splats = get_position_source_count(position_source)
+        if total_splats is None:
+            materialized_position_rows = _coerce_position_rows(position_source)
+            total_splats = len(materialized_position_rows)
+        stats_elapsed_seconds = _elapsed_seconds(stats_started_at)
         logger.info(
             "LichtFeld cluster preview: after get_stats total_splats=%s elapsed=%.3fs",
-            stats.splat_count,
-            _elapsed_seconds(stats_started_at),
+            total_splats,
+            stats_elapsed_seconds,
         )
         logger.info(
             "LichtFeld cluster preview: max_cluster_analysis_splats=%s "
@@ -150,11 +179,11 @@ class LichtfeldAdapter(AdapterContract):
         )
         if (
             abort_if_splat_count_above_limit
-            and stats.splat_count > max_cluster_analysis_splats
+            and total_splats > max_cluster_analysis_splats
         ):
             message = (
                 "Refused cluster analysis preview because "
-                f"splat_count={stats.splat_count} exceeds "
+                f"splat_count={total_splats} exceeds "
                 f"max_cluster_analysis_splats={max_cluster_analysis_splats}. "
                 "Disable the abort flag to run sampled approximate analysis instead."
             )
@@ -162,7 +191,7 @@ class LichtfeldAdapter(AdapterContract):
             return ClusterAnalysisSummary(
                 distance_threshold=distance_threshold,
                 min_cluster_size=min_cluster_size,
-                total_splats=stats.splat_count,
+                total_splats=total_splats,
                 analyzed_splats=0,
                 total_clusters=0,
                 largest_cluster_size=0,
@@ -173,40 +202,43 @@ class LichtfeldAdapter(AdapterContract):
                 refused=True,
                 sampling_stride=1,
                 message=message,
+                used_native_sampling=False,
+                stats_elapsed_seconds=stats_elapsed_seconds,
+                read_means_elapsed_seconds=read_means_elapsed_seconds,
+                sampling_elapsed_seconds=0.0,
+                cloud_build_elapsed_seconds=0.0,
+                clustering_elapsed_seconds=0.0,
             )
-
-        lichtfeld_module = load_lichtfeld()
-        scene = require_active_scene(lichtfeld_module)
-        model = require_combined_model(scene)
-
-        logger.info("LichtFeld cluster preview: before reading means")
-        read_means_started_at = perf_counter()
-        position_rows = extract_position_rows(model)
-        logger.info(
-            "LichtFeld cluster preview: after reading means total_positions=%s elapsed=%.3fs",
-            len(position_rows),
-            _elapsed_seconds(read_means_started_at),
-        )
 
         logger.info(
             "LichtFeld cluster preview: before sampling total_splats=%s max_cluster_analysis_splats=%s",
-            len(position_rows),
+            total_splats,
             max_cluster_analysis_splats,
         )
         sampling_started_at = perf_counter()
-        sampled_rows, sampling_stride = sample_position_rows(
-            position_rows,
-            max_cluster_analysis_splats,
-        )
-        approximate = len(sampled_rows) != len(position_rows)
+        if materialized_position_rows is not None:
+            sampled_rows, sampling_stride = sample_position_rows(
+                materialized_position_rows,
+                max_cluster_analysis_splats,
+            )
+            used_native_sampling = False
+        else:
+            sampled_rows, sampling_stride, used_native_sampling = extract_sampled_position_rows(
+                position_source,
+                max_cluster_analysis_splats,
+                total_splats=total_splats,
+            )
+        approximate = len(sampled_rows) != total_splats
+        sampling_elapsed_seconds = _elapsed_seconds(sampling_started_at)
         logger.info(
             "LichtFeld cluster preview: after sampling analyzed_splats=%s total_splats=%s "
-            "sampling_stride=%s approximate=%s elapsed=%.3fs",
+            "sampling_stride=%s approximate=%s native_sampling=%s elapsed=%.3fs",
             len(sampled_rows),
-            len(position_rows),
+            total_splats,
             sampling_stride,
             approximate,
-            _elapsed_seconds(sampling_started_at),
+            used_native_sampling,
+            sampling_elapsed_seconds,
         )
 
         logger.info(
@@ -215,10 +247,11 @@ class LichtfeldAdapter(AdapterContract):
         )
         cloud_build_started_at = perf_counter()
         cloud = build_gaussian_cloud_from_positions(sampled_rows)
+        cloud_build_elapsed_seconds = _elapsed_seconds(cloud_build_started_at)
         logger.info(
             "LichtFeld cluster preview: after building GaussianCloud splat_count=%s elapsed=%.3fs",
             cloud.count(),
-            _elapsed_seconds(cloud_build_started_at),
+            cloud_build_elapsed_seconds,
         )
 
         logger.info(
@@ -232,10 +265,11 @@ class LichtfeldAdapter(AdapterContract):
             distance_threshold=distance_threshold,
             min_cluster_size=1,
         )
+        clustering_elapsed_seconds = _elapsed_seconds(clustering_started_at)
         logger.info(
             "LichtFeld cluster preview: after clustering total_clusters=%s elapsed=%.3fs",
             len(clusters),
-            _elapsed_seconds(clustering_started_at),
+            clustering_elapsed_seconds,
         )
         largest = largest_cluster(clusters)
         small_clusters = clusters_smaller_than(clusters, min_cluster_size)
@@ -253,7 +287,7 @@ class LichtfeldAdapter(AdapterContract):
         return ClusterAnalysisSummary(
             distance_threshold=distance_threshold,
             min_cluster_size=min_cluster_size,
-            total_splats=len(position_rows),
+            total_splats=total_splats,
             analyzed_splats=cloud.count(),
             total_clusters=len(clusters),
             largest_cluster_size=0 if largest is None else largest.count,
@@ -266,6 +300,12 @@ class LichtfeldAdapter(AdapterContract):
             refused=False,
             sampling_stride=sampling_stride,
             message=message,
+            used_native_sampling=used_native_sampling,
+            stats_elapsed_seconds=stats_elapsed_seconds,
+            read_means_elapsed_seconds=read_means_elapsed_seconds,
+            sampling_elapsed_seconds=sampling_elapsed_seconds,
+            cloud_build_elapsed_seconds=cloud_build_elapsed_seconds,
+            clustering_elapsed_seconds=clustering_elapsed_seconds,
         )
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:
