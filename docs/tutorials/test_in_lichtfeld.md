@@ -2,7 +2,7 @@
 
 ## Goal
 
-This tutorial explains two safe ways to smoke-test the current LichtFeld adapter inside LichtFeld Studio:
+This tutorial explains two safe ways to validate the current LichtFeld adapter inside LichtFeld Studio:
 
 - an installable plugin package in [examples/lcht_mcp_test_plugin](</c:/Users/icks0/Documents/MCP GS/Lcht_MCP/examples/lcht_mcp_test_plugin>)
 - a standalone script in [examples/lichtfeld_plugin_test.py](</c:/Users/icks0/Documents/MCP GS/Lcht_MCP/examples/lichtfeld_plugin_test.py>)
@@ -14,11 +14,13 @@ Both options:
 - read scene stats with `get_stats()`
 - print the current splat count and bounding box
 - run a height selection
-- optionally delete the current selection
+- keep the main smoke test non-destructive
 
 ## Safety First
 
 `DELETE_SELECTED` is set to `False` by default.
+
+`ENABLE_SAFE_DELETE` is also set to `False` by default.
 
 The script never deletes anything unless you explicitly change:
 
@@ -27,6 +29,14 @@ DELETE_SELECTED = True
 ```
 
 Keep it `False` for initial validation.
+
+The guarded delete validation is a separate flow and remains disabled unless you explicitly change:
+
+```python
+ENABLE_SAFE_DELETE = True
+```
+
+Before enabling it, duplicate the source scene and test only on a copy.
 
 ## Recommended Option: Install The Plugin On Windows
 
@@ -109,6 +119,10 @@ Inside that panel, click:
 
 `Run Lcht MCP Test`
 
+The plugin also exposes a separate guarded destructive validation button:
+
+`Run Safe Delete Test`
+
 The panel button invokes the registered operator through:
 
 `lfs_plugins.lcht_mcp_test_plugin.operators.run_test.LCHTMCP_OT_run_test`
@@ -125,6 +139,13 @@ If you prefer to run the underlying function directly from Python:
 ```python
 from lcht_mcp_test_plugin.core.test_runner import run_lcht_mcp_test
 run_lcht_mcp_test()
+```
+
+For the guarded delete flow:
+
+```python
+from lcht_mcp_test_plugin.core.test_runner import run_safe_delete_test
+run_safe_delete_test()
 ```
 
 ## Change The Height Range
@@ -148,15 +169,44 @@ The plugin ships with:
 
 ```python
 DELETE_SELECTED = False
+ENABLE_SAFE_DELETE = False
 ```
 
 This prevents destructive operations during a first validation pass.
 
-Only change it to `True` after you confirm the height selection is targeting the expected splats.
+Only enable the guarded delete flow after you confirm the height selection is targeting the expected splats on a copied dataset.
+
+## Safe Delete Test
+
+`Run Lcht MCP Test` remains non-destructive.
+
+`Run Safe Delete Test` is a separate guarded workflow. When `ENABLE_SAFE_DELETE=False`:
+
+- the plugin logs that the delete test is disabled
+- no selection is deleted
+- the operator returns successfully
+
+When `ENABLE_SAFE_DELETE=True`, the plugin:
+
+1. reads initial stats
+2. selects a narrow default range:
+   `min_z = 1.0`, `max_z = 1.02`
+3. logs:
+   - `selected_count`
+   - percentage of total splats
+4. refuses to delete when any guard triggers:
+   - `selected_count == 0`
+   - `selected_count > 50_000`
+   - `selected_count / total > 0.05`
+5. deletes only if all guards pass
+6. logs final splat count and computed deleted count
+7. clears selection before exit when possible
+
+Always duplicate the scene and validate on a copy first.
 
 ## What The Plugin Does
 
-The plugin runs each step in its own `try/except` block and logs a clear message:
+The non-destructive smoke test runs each step in its own `try/except` block and logs a clear message:
 
 1. Configure `sys.path` for the local `src/` directory.
 2. Import and instantiate `LichtfeldAdapter`.
@@ -166,7 +216,9 @@ The plugin runs each step in its own `try/except` block and logs a clear message
    - `bounding_box` from `stats.bounds`
 5. Call `select_by_height(z_min=MIN_Z, z_max=MAX_Z)`.
 6. Print `selected_count`.
-7. Call `delete_selection()` only if `DELETE_SELECTED` was changed to `True`.
+7. Clear the selection before exit.
+
+The guarded delete flow also wraps each step in its own `try/except` block and only deletes after the hard safety thresholds pass.
 
 The plugin uses the same logging style as the official local plugin family:
 
@@ -183,9 +235,13 @@ lcht_mcp_test_plugin: Starting safe adapter smoke test with MIN_Z=0.0, MAX_Z=2.0
 lcht_mcp_test_plugin: LichtfeldAdapter instantiated from C:\Users\icks0\Documents\MCP GS\Lcht_MCP.
 lcht_mcp_test_plugin: splat_count=123456
 lcht_mcp_test_plugin: bounding_box=min=Vec3(x=-2.1, y=-1.0, z=0.0) max=Vec3(x=4.8, y=3.2, z=7.4)
-lcht_mcp_test_plugin: select_by_height range: min_z=0.0, max_z=2.0
+lcht_mcp_test_plugin: ----------------------------------------
+lcht_mcp_test_plugin: Selection range: min_z=0.0 max_z=2.0
 lcht_mcp_test_plugin: selected_count=8421
-lcht_mcp_test_plugin: delete_selection skipped because DELETE_SELECTED=False.
+lcht_mcp_test_plugin: percentage_of_total=6.820000%
+lcht_mcp_test_plugin: ----------------------------------------
+lcht_mcp_test_plugin: Selection cleared before exit.
+lcht_mcp_test_plugin: Validation complete. DELETE_SELECTED=False; selection cleared.
 ```
 
 Using the actual official plugin architecture, there is no separate dynamic button-registration log. The button becomes available because the panel class is registered during `on_load()`.

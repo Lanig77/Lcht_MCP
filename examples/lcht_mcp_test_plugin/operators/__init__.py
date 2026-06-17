@@ -11,6 +11,10 @@ from .diagnose_tensor_mask import (
     DIAGNOSE_TENSOR_MASK_OPERATOR_ID,
     LCHTMCP_OT_diagnose_tensor_mask,
 )
+from .run_safe_delete_test import (
+    LCHTMCP_OT_run_safe_delete_test,
+    RUN_SAFE_DELETE_TEST_OPERATOR_ID,
+)
 from .run_test import LCHTMCP_OT_run_test, RUN_TEST_OPERATOR_ID
 
 __all__ = [
@@ -20,6 +24,8 @@ __all__ = [
     "LCHTMCP_OT_diagnose_api",
     "LCHTMCP_OT_diagnose_native_selection",
     "LCHTMCP_OT_diagnose_tensor_mask",
+    "LCHTMCP_OT_run_safe_delete_test",
     "LCHTMCP_OT_run_test",
+    "RUN_SAFE_DELETE_TEST_OPERATOR_ID",
     "RUN_TEST_OPERATOR_ID",
 ]

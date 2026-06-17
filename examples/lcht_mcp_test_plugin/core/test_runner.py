@@ -15,6 +15,11 @@ PLUGIN_NAME = "lcht_mcp_test_plugin"
 MIN_Z = 0.0
 MAX_Z = 2.0
 DELETE_SELECTED = False
+ENABLE_SAFE_DELETE = False
+SAFE_DELETE_MIN_Z = 1.0
+SAFE_DELETE_MAX_Z = 1.02
+SAFE_DELETE_MAX_COUNT = 50_000
+SAFE_DELETE_MAX_RATIO = 0.05
 REPO_ROOT_HINT = Path.home() / "Documents" / "MCP GS" / "Lcht_MCP"
 SELECTION_RANGES: tuple[tuple[str, float | None, float | None], ...] = (
     ("range_1", 0.0, 2.0),
@@ -97,6 +102,12 @@ def _log_selection_report(
     _log_info("----------------------------------------")
 
 
+def _selected_percentage(selected_count: int, total_splats: int) -> float:
+    if total_splats <= 0:
+        return 0.0
+    return selected_count / total_splats
+
+
 def run_lcht_mcp_test() -> tuple[bool, str]:
     """Run a safe adapter smoke test inside LichtFeld Studio."""
     _log_info(
@@ -171,5 +182,127 @@ def run_lcht_mcp_test() -> tuple[bool, str]:
         return False, message
 
     message = "Validation complete. DELETE_SELECTED=False; selection cleared."
+    _log_info(message)
+    return True, message
+
+
+def run_safe_delete_test() -> tuple[bool, str]:
+    """Run a guarded destructive validation flow inside LichtFeld Studio."""
+    _log_info(
+        "Starting safe delete test with "
+        f"ENABLE_SAFE_DELETE={ENABLE_SAFE_DELETE}, "
+        f"range=({SAFE_DELETE_MIN_Z}, {SAFE_DELETE_MAX_Z})."
+    )
+
+    if not ENABLE_SAFE_DELETE:
+        message = (
+            "Safe delete test is disabled because ENABLE_SAFE_DELETE=False. "
+            "No destructive action was performed."
+        )
+        _log_info(message)
+        return True, message
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Safe delete adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    try:
+        initial_stats = adapter.get_stats()
+        initial_splat_count = initial_stats.splat_count
+        _log_info(f"initial_splat_count={initial_splat_count}")
+        _log_info(f"bounding_box={initial_stats.bounds}")
+    except Exception as exc:
+        message = f"Safe delete get_stats failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    try:
+        selection = adapter.select_by_height(
+            z_min=SAFE_DELETE_MIN_Z,
+            z_max=SAFE_DELETE_MAX_Z,
+        )
+        selected_percentage = _selected_percentage(
+            selection.selected_count,
+            initial_splat_count,
+        )
+        _log_info(f"selected_count={selection.selected_count}")
+        _log_info(f"percentage_of_total={selected_percentage * 100.0:.6f}%")
+    except Exception as exc:
+        message = f"Safe delete select_by_height failed: {exc}"
+        _log_error(message)
+        try:
+            _clear_selection()
+            _log_info("Selection cleared after safe delete selection failure.")
+        except Exception as clear_exc:
+            _log_error(f"Failed to clear selection after safe delete failure: {clear_exc}")
+        return False, message
+
+    try:
+        if selection.selected_count == 0:
+            raise RuntimeError("Safe delete refused: selected_count == 0.")
+        if selection.selected_count > SAFE_DELETE_MAX_COUNT:
+            raise RuntimeError(
+                "Safe delete refused: "
+                f"selected_count={selection.selected_count} exceeds "
+                f"SAFE_DELETE_MAX_COUNT={SAFE_DELETE_MAX_COUNT}."
+            )
+        if selected_percentage > SAFE_DELETE_MAX_RATIO:
+            raise RuntimeError(
+                "Safe delete refused: "
+                f"selected_ratio={selected_percentage:.6f} exceeds "
+                f"SAFE_DELETE_MAX_RATIO={SAFE_DELETE_MAX_RATIO:.6f}."
+            )
+    except Exception as exc:
+        message = str(exc)
+        _log_error(message)
+        try:
+            _clear_selection()
+            _log_info("Selection cleared after safe delete guard refusal.")
+        except Exception as clear_exc:
+            _log_error(f"Failed to clear selection after guard refusal: {clear_exc}")
+        return False, message
+
+    try:
+        delete_result = adapter.delete_selection()
+        _log_info(f"delete_selection ok={delete_result.ok} message={delete_result.message}")
+    except Exception as exc:
+        message = f"Safe delete delete_selection failed: {exc}"
+        _log_error(message)
+        try:
+            _clear_selection()
+            _log_info("Selection cleared after delete failure.")
+        except Exception as clear_exc:
+            _log_error(f"Failed to clear selection after delete failure: {clear_exc}")
+        return False, message
+
+    try:
+        final_stats = adapter.get_stats()
+        final_splat_count = final_stats.splat_count
+        deleted_count = initial_splat_count - final_splat_count
+        _log_info(f"final_splat_count={final_splat_count}")
+        _log_info(f"deleted_count={deleted_count}")
+    except Exception as exc:
+        message = f"Safe delete post-delete get_stats failed: {exc}"
+        _log_error(message)
+        try:
+            _clear_selection()
+            _log_info("Selection cleared after post-delete stats failure.")
+        except Exception as clear_exc:
+            _log_error(f"Failed to clear selection after post-delete stats failure: {clear_exc}")
+        return False, message
+
+    try:
+        _clear_selection()
+        _log_info("Selection cleared before safe delete exit.")
+    except Exception as exc:
+        message = f"Safe delete selection clear failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    message = "Safe delete validation complete."
     _log_info(message)
     return True, message

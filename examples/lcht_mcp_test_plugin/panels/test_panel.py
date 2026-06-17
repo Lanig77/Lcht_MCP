@@ -4,10 +4,11 @@
 
 import lichtfeld as lf
 
-from ..core.test_runner import DELETE_SELECTED, MAX_Z, MIN_Z
+from ..core.test_runner import DELETE_SELECTED, ENABLE_SAFE_DELETE, MAX_Z, MIN_Z
 from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
 from ..operators.diagnose_native_selection import DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID
 from ..operators.diagnose_tensor_mask import DIAGNOSE_TENSOR_MASK_OPERATOR_ID
+from ..operators.run_safe_delete_test import RUN_SAFE_DELETE_TEST_OPERATOR_ID
 from ..operators.run_test import RUN_TEST_OPERATOR_ID
 
 
@@ -39,6 +40,15 @@ class LchtMcpTestPanel(lf.ui.Panel):
             f"Delete Selected: {'ON' if DELETE_SELECTED else 'OFF'}",
             delete_color,
         )
+        safe_delete_color = (
+            (1.0, 0.4, 0.4, 1.0)
+            if ENABLE_SAFE_DELETE
+            else (0.4, 1.0, 0.4, 1.0)
+        )
+        layout.text_colored(
+            f"Enable Safe Delete: {'ON' if ENABLE_SAFE_DELETE else 'OFF'}",
+            safe_delete_color,
+        )
         layout.text_colored(
             "Check the LichtFeld log for splat_count, bounding_box and selected_count.",
             theme.palette.text_dim,
@@ -59,6 +69,12 @@ class LchtMcpTestPanel(lf.ui.Panel):
 
         if layout.button_styled("Run Lcht MCP Test##run", "primary", (-1, 34 * scale)):
             lf.ui.ops.invoke(RUN_TEST_OPERATOR_ID)
+        if layout.button_styled(
+            "Run Safe Delete Test##safe_delete",
+            "warning",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(RUN_SAFE_DELETE_TEST_OPERATOR_ID)
         if layout.button_styled(
             "Diagnose LichtFeld API##diagnose",
             "secondary",
