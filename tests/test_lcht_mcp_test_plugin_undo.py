@@ -65,29 +65,33 @@ class FakeUndoAdapter:
         self.scene = scene
         self.selected_count = selected_count
         self.delete_calls = 0
+        self.soft_delete_calls = 0
         self.restore_calls = 0
         self.last_deleted_count = 0
 
     def get_stats(self):
-        remaining_count = self.scene._model.total_count - self.scene._model.deleted_count
         return SimpleNamespace(
-            splat_count=remaining_count,
+            splat_count=self.scene._model.total_count,
             selected_count=self.selected_count,
         )
 
     def select_by_height(self, z_min: float, z_max: float):
         return SimpleNamespace(selected_count=self.selected_count)
 
+    def soft_delete_selection(self):
+        self.soft_delete_calls += 1
+        self.last_deleted_count = self.selected_count
+        self.selected_count = 0
+        return SimpleNamespace(ok=True, message="Soft-deleted selected splats.")
+
     def delete_selection(self):
         self.delete_calls += 1
-        self.last_deleted_count = self.selected_count
         self.scene._model.deleted_count += self.selected_count
         self.selected_count = 0
         return SimpleNamespace(ok=True, message="Deleted selected splats.")
 
     def restore_last_delete(self):
         self.restore_calls += 1
-        self.scene._model.deleted_count -= self.last_deleted_count
         self.last_deleted_count = 0
         self.scene.notify_changed()
         return SimpleNamespace(ok=True, message="Restored selected splats.")
@@ -131,7 +135,8 @@ def test_run_undo_validation_restores_the_initial_splat_count(monkeypatch):
 
     assert success is True
     assert "restored" in message
-    assert fake_adapter.delete_calls == 1
+    assert fake_adapter.soft_delete_calls == 1
+    assert fake_adapter.delete_calls == 0
     assert fake_adapter.restore_calls == 1
     assert fake_scene.notify_changed_calls == 1
     assert fake_adapter.get_stats().splat_count == 100

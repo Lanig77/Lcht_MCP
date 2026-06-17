@@ -104,6 +104,66 @@ def _selected_percentage(selected_count: int, total_splats: int) -> float:
     return selected_count / total_splats
 
 
+def _materialize_sequence(value: object) -> list[object] | None:
+    current = value
+    for method_name in ("detach", "cpu"):
+        method = getattr(current, method_name, None)
+        if callable(method):
+            current = method()
+    numpy_method = getattr(current, "numpy", None)
+    if callable(numpy_method):
+        current = numpy_method()
+    tolist_method = getattr(current, "tolist", None)
+    if callable(tolist_method):
+        current = tolist_method()
+    try:
+        return list(current)
+    except TypeError:
+        return None
+
+
+def _log_soft_delete_runtime_state() -> None:
+    try:
+        get_scene = getattr(lf, "get_scene", None)
+        if not callable(get_scene):
+            _log_info("Soft delete state inspection skipped: lichtfeld.get_scene() is unavailable.")
+            return
+        scene = get_scene()
+        if scene is None:
+            _log_info("Soft delete state inspection skipped: no active scene.")
+            return
+        combined_model = getattr(scene, "combined_model", None)
+        if not callable(combined_model):
+            _log_info("Soft delete state inspection skipped: combined_model() is unavailable.")
+            return
+        model = combined_model()
+        if model is None:
+            _log_info("Soft delete state inspection skipped: no combined model.")
+            return
+
+        has_deleted_mask = getattr(model, "has_deleted_mask", None)
+        if callable(has_deleted_mask):
+            try:
+                _log_info(f"model.has_deleted_mask()={has_deleted_mask()}")
+            except Exception as exc:
+                _log_info(f"model.has_deleted_mask() failed: {exc}")
+
+        deleted_mask = getattr(model, "deleted", None)
+        if deleted_mask is None:
+            _log_info("model.deleted is unavailable.")
+            return
+        deleted_items = _materialize_sequence(deleted_mask)
+        if deleted_items is None:
+            _log_info(f"model.deleted type={type(deleted_mask).__name__}; deleted_count unavailable.")
+            return
+        deleted_count = sum(bool(item) for item in deleted_items)
+        _log_info(
+            f"model.deleted type={type(deleted_mask).__name__} deleted_count={deleted_count}"
+        )
+    except Exception as exc:
+        _log_info(f"Soft delete state inspection failed: {exc}")
+
+
 def _restore_deleted_splats(adapter) -> None:
     restore_last_delete = getattr(adapter, "restore_last_delete", None)
     if not callable(restore_last_delete):
@@ -432,33 +492,46 @@ def run_undo_validation() -> tuple[bool, str]:
         return False, message
 
     try:
-        delete_result = adapter.delete_selection()
-        _log_info(f"delete_selection ok={delete_result.ok} message={delete_result.message}")
-        if not delete_result.ok:
-            raise RuntimeError(delete_result.message)
+        soft_delete_selection = getattr(adapter, "soft_delete_selection", None)
+        if not callable(soft_delete_selection):
+            raise RuntimeError(
+                "LichtFeldAdapter does not expose soft_delete_selection() for undo validation."
+            )
+        soft_delete_result = soft_delete_selection()
+        _log_info(
+            f"soft_delete_selection ok={soft_delete_result.ok} message={soft_delete_result.message}"
+        )
+        if not soft_delete_result.ok:
+            raise RuntimeError(soft_delete_result.message)
     except Exception as exc:
-        message = f"Undo validation delete_selection failed: {exc}"
+        message = f"Undo validation soft_delete_selection failed: {exc}"
         _log_error(message)
         try:
             _clear_selection()
-            _log_info("Selection cleared after undo validation delete failure.")
+            _log_info("Selection cleared after undo validation soft delete failure.")
         except Exception as clear_exc:
-            _log_error(f"Failed to clear selection after undo delete failure: {clear_exc}")
+            _log_error(f"Failed to clear selection after undo soft delete failure: {clear_exc}")
         return False, message
 
     try:
-        deleted_stats = adapter.get_stats()
-        deleted_count = initial_splat_count - deleted_stats.splat_count
-        _log_info(f"deleted_count={deleted_count}")
-        _log_info(f"current_splat_count={deleted_stats.splat_count}")
+        soft_deleted_stats = adapter.get_stats()
+        soft_deleted_count = initial_splat_count - soft_deleted_stats.splat_count
+        _log_info(f"post_soft_delete_splat_count={soft_deleted_stats.splat_count}")
+        if soft_deleted_stats.splat_count == initial_splat_count:
+            _log_info(
+                "Soft delete did not change splat_count; inspecting native deleted state if available."
+            )
+            _log_soft_delete_runtime_state()
+        else:
+            _log_info(f"soft_deleted_count={soft_deleted_count}")
     except Exception as exc:
-        message = f"Undo validation post-delete get_stats failed: {exc}"
+        message = f"Undo validation post-soft-delete get_stats failed: {exc}"
         _log_error(message)
         try:
             _clear_selection()
-            _log_info("Selection cleared after undo validation post-delete failure.")
+            _log_info("Selection cleared after undo validation post-soft-delete failure.")
         except Exception as clear_exc:
-            _log_error(f"Failed to clear selection after undo post-delete failure: {clear_exc}")
+            _log_error(f"Failed to clear selection after undo post-soft-delete failure: {clear_exc}")
         return False, message
 
     try:

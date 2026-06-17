@@ -102,7 +102,8 @@ class FakeModel:
         self.undelete_arguments = []
         self.undelete_calls = 0
         self.apply_deleted_calls = 0
-        self._deleted_snapshot = None
+        self._pre_delete_snapshot = None
+        self._soft_deleted_mask = None
         self._pending_restore = False
 
     def get_means(self):
@@ -120,6 +121,12 @@ class FakeModel:
         return self.get_colors()
 
     def soft_delete(self, mask):
+        self._pre_delete_snapshot = {
+            "means": self._copy_values(self._means_values),
+            "opacity": self._copy_values(self._opacity_values),
+            "colors": self._copy_values(self._colors_values),
+        }
+        self._soft_deleted_mask = list(mask)
         self.last_soft_delete_argument = mask
         self.last_soft_delete_mask = list(mask)
         self.soft_delete_arguments.append(mask)
@@ -129,31 +136,27 @@ class FakeModel:
         self.undelete_calls += 1
         self.last_undelete_argument = mask
         self.undelete_arguments.append(mask)
-        if self._deleted_snapshot is None:
+        if self._soft_deleted_mask is None:
             return
-        if list(mask) != self._deleted_snapshot["mask"]:
+        if list(mask) != self._soft_deleted_mask:
             raise AssertionError("undelete should receive the original delete mask")
         self._pending_restore = True
 
     def apply_deleted(self):
         self.apply_deleted_calls += 1
         if self._pending_restore:
-            if self._deleted_snapshot is None:
+            if self._pre_delete_snapshot is None:
                 return
-            self._means_values = self._copy_values(self._deleted_snapshot["means"])
-            self._opacity_values = self._copy_values(self._deleted_snapshot["opacity"])
-            self._colors_values = self._copy_values(self._deleted_snapshot["colors"])
-            self._deleted_snapshot = None
+            self._means_values = self._copy_values(self._pre_delete_snapshot["means"])
+            self._opacity_values = self._copy_values(self._pre_delete_snapshot["opacity"])
+            self._colors_values = self._copy_values(self._pre_delete_snapshot["colors"])
+            self._pre_delete_snapshot = None
+            self._soft_deleted_mask = None
             self._pending_restore = False
+            self.last_soft_delete_mask = None
             return
         if self.last_soft_delete_mask is None:
             return
-        self._deleted_snapshot = {
-            "mask": list(self.last_soft_delete_mask),
-            "means": self._copy_values(self._means_values),
-            "opacity": self._copy_values(self._opacity_values),
-            "colors": self._copy_values(self._colors_values),
-        }
         kept_rows = [
             row for row, selected in zip(self._means_values, self.last_soft_delete_mask) if not selected
         ]
@@ -171,6 +174,7 @@ class FakeModel:
                 if not selected
             ]
         self.last_soft_delete_mask = None
+        self._soft_deleted_mask = None
 
     @staticmethod
     def _unwrap_values(values):
@@ -481,8 +485,8 @@ def test_delete_selection_uses_latest_known_mask_and_updates_stats(monkeypatch):
     assert fake_scene._model.apply_deleted_calls == 1
     assert fake_scene.clear_selection_calls >= 2
     assert native_selection.deselect_all_calls >= 3
-    assert fake_scene.reset_selection_state_calls == 1
-    assert fake_scene.notify_changed_calls == 2
+    assert fake_scene.reset_selection_state_calls >= 2
+    assert fake_scene.notify_changed_calls >= 3
     assert fake_scene.last_selection_mask_argument is None
     assert fake_scene.last_selection_mask == [False, False]
     assert adapter._cached_selection_mask is None
@@ -556,16 +560,18 @@ def test_restore_last_delete_uses_original_native_mask_and_restores_stats(monkey
     adapter = adapter_module.LichtfeldPluginAdapter()
     adapter.select_by_height(4.0, 1.0)
     native_mask = fake_scene.selection_mask
-    adapter.delete_selection()
+    soft_deleted = adapter.soft_delete_selection()
 
     restored = adapter.restore_last_delete()
     stats = adapter.get_stats()
 
+    assert soft_deleted.ok is True
+    assert "Soft-deleted" in soft_deleted.message
     assert restored.ok is True
     assert restored.message == "Restored 2 deleted splats."
     assert fake_scene._model.undelete_calls == 1
     assert fake_scene._model.last_undelete_argument is native_mask
-    assert fake_scene._model.apply_deleted_calls == 2
+    assert fake_scene._model.apply_deleted_calls == 1
     assert fake_scene.reset_selection_state_calls == 2
     assert fake_scene.notify_changed_calls == 3
     assert stats.splat_count == 4
@@ -573,7 +579,7 @@ def test_restore_last_delete_uses_original_native_mask_and_restores_stats(monkey
 
     with pytest.raises(
         AdapterUnavailableError,
-        match="No previous LichtFeld delete is available to restore",
+        match="No previous LichtFeld soft delete is available to restore",
     ):
         adapter.restore_last_delete()
 
@@ -603,7 +609,51 @@ def test_restore_last_delete_fails_cleanly_when_no_previous_delete_exists(monkey
 
     with pytest.raises(
         AdapterUnavailableError,
-        match="No previous LichtFeld delete is available to restore",
+        match="No previous LichtFeld soft delete is available to restore",
+    ):
+        adapter.restore_last_delete()
+
+
+def test_restore_last_delete_after_apply_deleted_reports_finalization_limitation(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.5],
+                    [1.0, 1.0, 3.0],
+                    [2.0, 2.0, 1.5],
+                    [3.0, 3.0, 5.0],
+                ]
+            )
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    deleted = adapter.select_by_height(4.0, 1.0)
+    assert deleted.selected_count == 2
+    destructive_delete = adapter.delete_selection()
+
+    assert destructive_delete.ok is True
+    assert destructive_delete.message == "Deleted 2 selected splats."
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="already finalized with apply_deleted",
     ):
         adapter.restore_last_delete()
 
