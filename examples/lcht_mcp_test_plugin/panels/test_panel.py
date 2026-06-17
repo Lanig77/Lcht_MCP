@@ -27,6 +27,7 @@ from ..operators.runtime_controls import (
 )
 from ..operators.run_safe_delete_test import RUN_SAFE_DELETE_TEST_OPERATOR_ID
 from ..operators.run_test import RUN_TEST_OPERATOR_ID
+from ..operators.run_undo_validation import RUN_UNDO_VALIDATION_OPERATOR_ID
 
 
 class LchtMcpTestPanel(lf.ui.Panel):
@@ -159,6 +160,12 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 34 * scale),
         ):
             lf.ui.ops.invoke(RUN_SAFE_DELETE_TEST_OPERATOR_ID)
+        if layout.button_styled(
+            "Run Undo Validation##undo_validation",
+            "warning",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(RUN_UNDO_VALIDATION_OPERATOR_ID)
         if layout.button_styled(
             "Diagnose LichtFeld API##diagnose",
             "secondary",

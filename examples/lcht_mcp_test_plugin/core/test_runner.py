@@ -103,6 +103,41 @@ def _selected_percentage(selected_count: int, total_splats: int) -> float:
     return selected_count / total_splats
 
 
+def _restore_deleted_splats() -> None:
+    get_scene = getattr(lf, "get_scene", None)
+    if not callable(get_scene):
+        raise RuntimeError("LichtFeld runtime does not expose get_scene() for undo validation.")
+
+    scene = get_scene()
+    if scene is None:
+        raise RuntimeError("LichtFeld runtime returned no active scene for undo validation.")
+
+    combined_model = getattr(scene, "combined_model", None)
+    if not callable(combined_model):
+        raise RuntimeError("Active LichtFeld scene does not expose combined_model() for undo validation.")
+
+    model = combined_model()
+    if model is None:
+        raise RuntimeError("Active LichtFeld scene returned no combined model for undo validation.")
+
+    undelete = getattr(model, "undelete", None)
+    if not callable(undelete):
+        raise RuntimeError("Active LichtFeld combined model does not expose undelete() for undo validation.")
+
+    undelete()
+    _log_info("model.undelete() executed.")
+
+    apply_deleted = getattr(model, "apply_deleted", None)
+    if callable(apply_deleted):
+        apply_deleted()
+        _log_info("model.apply_deleted() executed after undelete().")
+
+    notify_changed = getattr(scene, "notify_changed", None)
+    if callable(notify_changed):
+        notify_changed()
+        _log_info("scene.notify_changed() executed after undelete().")
+
+
 def run_lcht_mcp_test() -> tuple[bool, str]:
     """Run a safe adapter smoke test inside LichtFeld Studio."""
     config = snapshot_runtime_config()
@@ -315,5 +350,163 @@ def run_safe_delete_test() -> tuple[bool, str]:
         return False, message
 
     message = "Safe delete validation complete."
+    _log_info(message)
+    return True, message
+
+
+def run_undo_validation() -> tuple[bool, str]:
+    """Delete and immediately restore a tiny selection to validate undelete."""
+    config = snapshot_runtime_config()
+    _log_info(
+        "Starting undo validation with "
+        f"ENABLE_SAFE_DELETE={config.enable_safe_delete}, "
+        f"CONFIRM_SAFE_DELETE={config.confirm_safe_delete}, "
+        f"range=({config.safe_delete_min_z}, {config.safe_delete_max_z}), "
+        "thresholds=("
+        f"max_count={config.max_deletable_splats}, "
+        f"max_ratio={config.max_deletable_percentage:.6f})."
+    )
+
+    if not config.enable_safe_delete:
+        message = (
+            "Undo validation is disabled because ENABLE_SAFE_DELETE=False. "
+            "No destructive action was performed."
+        )
+        _log_info(message)
+        return True, message
+
+    if not config.confirm_safe_delete:
+        message = (
+            "Undo validation is armed but not confirmed because "
+            "ENABLE_SAFE_DELETE=True and CONFIRM_SAFE_DELETE=False. "
+            "No destructive action was performed."
+        )
+        _log_info(message)
+        return True, message
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Undo validation adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    try:
+        initial_stats = adapter.get_stats()
+        initial_splat_count = initial_stats.splat_count
+        _log_info(f"initial_splat_count={initial_splat_count}")
+        _log_info(f"initial_selected_count={initial_stats.selected_count}")
+    except Exception as exc:
+        message = f"Undo validation get_stats failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    try:
+        selection = adapter.select_by_height(
+            z_min=config.safe_delete_min_z,
+            z_max=config.safe_delete_max_z,
+        )
+        selected_percentage = _selected_percentage(
+            selection.selected_count,
+            initial_splat_count,
+        )
+        _log_info(f"selected_count={selection.selected_count}")
+        _log_info(f"selected_percentage={selected_percentage * 100.0:.6f}%")
+    except Exception as exc:
+        message = f"Undo validation select_by_height failed: {exc}"
+        _log_error(message)
+        try:
+            _clear_selection()
+            _log_info("Selection cleared after undo validation selection failure.")
+        except Exception as clear_exc:
+            _log_error(f"Failed to clear selection after undo validation failure: {clear_exc}")
+        return False, message
+
+    try:
+        if selection.selected_count == 0:
+            raise RuntimeError("Undo validation refused: selected_count == 0.")
+        if selection.selected_count > config.max_deletable_splats:
+            raise RuntimeError(
+                "Undo validation refused: "
+                f"selected_count={selection.selected_count} exceeds "
+                f"SAFE_DELETE_MAX_COUNT={config.max_deletable_splats}."
+            )
+        if selected_percentage > config.max_deletable_percentage:
+            raise RuntimeError(
+                "Undo validation refused: "
+                f"selected_ratio={selected_percentage:.6f} exceeds "
+                f"SAFE_DELETE_MAX_RATIO={config.max_deletable_percentage:.6f}."
+            )
+    except Exception as exc:
+        message = str(exc)
+        _log_error(message)
+        try:
+            _clear_selection()
+            _log_info("Selection cleared after undo validation guard refusal.")
+        except Exception as clear_exc:
+            _log_error(f"Failed to clear selection after undo guard refusal: {clear_exc}")
+        return False, message
+
+    try:
+        delete_result = adapter.delete_selection()
+        _log_info(f"delete_selection ok={delete_result.ok} message={delete_result.message}")
+        if not delete_result.ok:
+            raise RuntimeError(delete_result.message)
+    except Exception as exc:
+        message = f"Undo validation delete_selection failed: {exc}"
+        _log_error(message)
+        try:
+            _clear_selection()
+            _log_info("Selection cleared after undo validation delete failure.")
+        except Exception as clear_exc:
+            _log_error(f"Failed to clear selection after undo delete failure: {clear_exc}")
+        return False, message
+
+    try:
+        deleted_stats = adapter.get_stats()
+        deleted_count = initial_splat_count - deleted_stats.splat_count
+        _log_info(f"deleted_count={deleted_count}")
+        _log_info(f"current_splat_count={deleted_stats.splat_count}")
+    except Exception as exc:
+        message = f"Undo validation post-delete get_stats failed: {exc}"
+        _log_error(message)
+        try:
+            _clear_selection()
+            _log_info("Selection cleared after undo validation post-delete failure.")
+        except Exception as clear_exc:
+            _log_error(f"Failed to clear selection after undo post-delete failure: {clear_exc}")
+        return False, message
+
+    try:
+        _restore_deleted_splats()
+        restored_stats = adapter.get_stats()
+        _log_info(f"final_splat_count={restored_stats.splat_count}")
+        _log_info(f"final_selected_count={restored_stats.selected_count}")
+        if restored_stats.splat_count != initial_splat_count:
+            raise RuntimeError(
+                "Undo validation failed: "
+                f"final_splat_count={restored_stats.splat_count} does not match "
+                f"initial_splat_count={initial_splat_count}."
+            )
+    except Exception as exc:
+        message = f"Undo validation restore failed: {exc}"
+        _log_error(message)
+        try:
+            _clear_selection()
+            _log_info("Selection cleared after undo validation restore failure.")
+        except Exception as clear_exc:
+            _log_error(f"Failed to clear selection after undo restore failure: {clear_exc}")
+        return False, message
+
+    try:
+        _clear_selection()
+        _log_info("Selection cleared before undo validation exit.")
+    except Exception as exc:
+        message = f"Undo validation selection clear failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    message = "Undo validation complete. Original splat count restored."
     _log_info(message)
     return True, message

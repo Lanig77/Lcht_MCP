@@ -48,6 +48,10 @@ from .run_safe_delete_test import (
     RUN_SAFE_DELETE_TEST_OPERATOR_ID,
 )
 from .run_test import LCHTMCP_OT_run_test, RUN_TEST_OPERATOR_ID
+from .run_undo_validation import (
+    LCHTMCP_OT_run_undo_validation,
+    RUN_UNDO_VALIDATION_OPERATOR_ID,
+)
 
 __all__ = [
     "ARM_SAFE_DELETE_OPERATOR_ID",
@@ -80,6 +84,7 @@ __all__ = [
     "LCHTMCP_OT_max_deletable_splats_up",
     "LCHTMCP_OT_run_safe_delete_test",
     "LCHTMCP_OT_run_test",
+    "LCHTMCP_OT_run_undo_validation",
     "LCHTMCP_OT_safe_delete_max_z_down",
     "LCHTMCP_OT_safe_delete_max_z_up",
     "LCHTMCP_OT_safe_delete_min_z_down",
@@ -90,4 +95,5 @@ __all__ = [
     "LCHTMCP_OT_smoke_min_z_up",
     "RUN_SAFE_DELETE_TEST_OPERATOR_ID",
     "RUN_TEST_OPERATOR_ID",
+    "RUN_UNDO_VALIDATION_OPERATOR_ID",
 ]

@@ -43,6 +43,12 @@ def snapshot_runtime_config() -> RuntimeConfig:
     return replace(_runtime_config)
 
 
+def reset_runtime_config() -> None:
+    """Restore the runtime config to its default values."""
+    global _runtime_config
+    _runtime_config = RuntimeConfig()
+
+
 def arm_safe_delete() -> None:
     """Enable safe delete while keeping confirmation explicit."""
     _runtime_config.enable_safe_delete = True

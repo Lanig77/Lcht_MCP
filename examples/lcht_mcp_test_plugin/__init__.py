@@ -27,6 +27,7 @@ from .operators.runtime_controls import (
 )
 from .operators.run_safe_delete_test import LCHTMCP_OT_run_safe_delete_test
 from .operators.run_test import LCHTMCP_OT_run_test
+from .operators.run_undo_validation import LCHTMCP_OT_run_undo_validation
 
 _classes = [
     LchtMcpTestPanel,
@@ -35,6 +36,7 @@ _classes = [
     LCHTMCP_OT_disarm_safe_delete,
     LCHTMCP_OT_run_test,
     LCHTMCP_OT_run_safe_delete_test,
+    LCHTMCP_OT_run_undo_validation,
     LCHTMCP_OT_diagnose_api,
     LCHTMCP_OT_diagnose_native_selection,
     LCHTMCP_OT_diagnose_tensor_mask,
