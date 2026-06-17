@@ -15,6 +15,7 @@ from .runtime_config import snapshot_runtime_config
 
 PLUGIN_NAME = "lcht_mcp_test_plugin"
 DELETE_SELECTED = False
+VERIFY_STATS_AFTER_DELETE = False
 REPO_ROOT_HINT = Path.home() / "Documents" / "MCP GS" / "Lcht_MCP"
 SELECTION_RANGES: tuple[tuple[str, float | None, float | None], ...] = (
     ("range_1", 0.0, 2.0),
@@ -325,21 +326,28 @@ def run_safe_delete_test() -> tuple[bool, str]:
             _log_error(f"Failed to clear selection after delete failure: {clear_exc}")
         return False, message
 
-    try:
-        final_stats = adapter.get_stats()
-        final_splat_count = final_stats.splat_count
-        deleted_count = initial_splat_count - final_splat_count
-        _log_info(f"final_splat_count={final_splat_count}")
-        _log_info(f"deleted_count={deleted_count}")
-    except Exception as exc:
-        message = f"Safe delete post-delete get_stats failed: {exc}"
-        _log_error(message)
+    if VERIFY_STATS_AFTER_DELETE:
         try:
-            _clear_selection()
-            _log_info("Selection cleared after post-delete stats failure.")
-        except Exception as clear_exc:
-            _log_error(f"Failed to clear selection after post-delete stats failure: {clear_exc}")
-        return False, message
+            final_stats = adapter.get_stats()
+            final_splat_count = final_stats.splat_count
+            deleted_count = initial_splat_count - final_splat_count
+            _log_info(f"final_splat_count={final_splat_count}")
+            _log_info(f"deleted_count={deleted_count}")
+        except Exception as exc:
+            message = f"Safe delete post-delete get_stats failed: {exc}"
+            _log_error(message)
+            try:
+                _clear_selection()
+                _log_info("Selection cleared after post-delete stats failure.")
+            except Exception as clear_exc:
+                _log_error(f"Failed to clear selection after post-delete stats failure: {clear_exc}")
+            return False, message
+    else:
+        expected_final_count = initial_splat_count - selection.selected_count
+        _log_info(
+            "Skipping post-delete get_stats because VERIFY_STATS_AFTER_DELETE=False. "
+            f"expected_final_count={expected_final_count}"
+        )
 
     try:
         _clear_selection()

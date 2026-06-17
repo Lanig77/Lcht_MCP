@@ -205,6 +205,27 @@ class SelectionState:
                 setattr(scene, attribute_name, list(cleared_mask))
                 return
 
+    def clear_selection_via_scene(self, scene: object) -> bool:
+        clear_selection = getattr(scene, "clear_selection", None)
+        if not callable(clear_selection):
+            return False
+        clear_selection()
+        return True
+
+    def deselect_all(self, lf_module: object) -> bool:
+        deselect_all = getattr(lf_module, "deselect_all", None)
+        if not callable(deselect_all):
+            return False
+        deselect_all()
+        return True
+
+    def reset_selection_state(self, scene: object) -> bool:
+        reset_selection_state = getattr(scene, "reset_selection_state", None)
+        if not callable(reset_selection_state):
+            return False
+        reset_selection_state()
+        return True
+
     def read_scene_selection_mask(
         self,
         scene: object,
@@ -275,23 +296,18 @@ class SelectionState:
         lf_module: object,
         errors: list[str],
     ) -> bool:
-        deselect_all = getattr(lf_module, "deselect_all", None)
-        if callable(deselect_all):
-            try:
-                deselect_all()
-                return True
-            except Exception as exc:
-                errors.append(f"lichtfeld.deselect_all(): {exc}")
+        cleared = False
+        try:
+            cleared = self.clear_selection_via_scene(scene) or cleared
+        except Exception as exc:
+            errors.append(f"scene.clear_selection(): {exc}")
 
-        clear_selection = getattr(scene, "clear_selection", None)
-        if callable(clear_selection):
-            try:
-                clear_selection()
-                return True
-            except Exception as exc:
-                errors.append(f"scene.clear_selection(): {exc}")
+        try:
+            cleared = self.deselect_all(lf_module) or cleared
+        except Exception as exc:
+            errors.append(f"lichtfeld.deselect_all(): {exc}")
 
-        return False
+        return cleared
 
     def _native_selection_error(
         self,

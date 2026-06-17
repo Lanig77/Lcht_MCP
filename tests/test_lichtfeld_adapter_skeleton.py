@@ -161,6 +161,8 @@ class FakeScene:
         self.selection_mask = FakeLfTensor([False] * mask_length)
         self.last_selection_mask = list(self.selection_mask)
         self.notify_changed_calls = 0
+        self.clear_selection_calls = 0
+        self.reset_selection_state_calls = 0
 
     def combined_model(self):
         return self._model
@@ -172,6 +174,19 @@ class FakeScene:
 
     def get_selection_mask(self):
         return self.last_selection_mask
+
+    def clear_selection(self):
+        self.clear_selection_calls += 1
+        mask_length = len(self._model._means_values) if self._model is not None else 0
+        cleared_mask = FakeLfTensor([False] * mask_length)
+        self.selection_mask = cleared_mask
+        self.last_selection_mask = list(cleared_mask)
+
+    def reset_selection_state(self):
+        self.reset_selection_state_calls += 1
+        self.selection_mask = None
+        self.last_selection_mask_argument = None
+        self.last_selection_mask = None
 
     def notify_changed(self):
         self.notify_changed_calls += 1
@@ -402,7 +417,12 @@ def test_delete_selection_uses_latest_known_mask_and_updates_stats(monkeypatch):
             opacity=FakeTorchTensor([0.1, 0.2, 0.3, 0.4]),
         )
     )
-    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -423,8 +443,11 @@ def test_delete_selection_uses_latest_known_mask_and_updates_stats(monkeypatch):
     assert isinstance(fake_scene._model.last_soft_delete_argument, FakeLfTensor)
     assert fake_scene._model.last_soft_delete_argument is native_mask
     assert fake_scene._model.apply_deleted_calls == 1
+    assert fake_scene.clear_selection_calls >= 2
+    assert native_selection.deselect_all_calls >= 3
+    assert fake_scene.reset_selection_state_calls == 1
     assert fake_scene.notify_changed_calls == 2
-    assert isinstance(fake_scene.last_selection_mask_argument, FakeLfTensor)
+    assert fake_scene.last_selection_mask_argument is None
     assert fake_scene.last_selection_mask == [False, False]
     assert adapter._cached_selection_mask is None
     assert stats.splat_count == 2

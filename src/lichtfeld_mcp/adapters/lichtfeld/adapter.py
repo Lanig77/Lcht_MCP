@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter as AdapterContract
 from lichtfeld_mcp.core.constraints import (
     validate_color_tolerance,
@@ -31,6 +33,16 @@ from .scene import build_scene_stats, notify_scene_changed
 from .selection import SelectionState
 from .training import TrainingOperations
 from .utils import load_lichtfeld, not_implemented, require_active_scene, require_combined_model
+
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_length(value: object) -> str:
+    try:
+        return str(len(value))  # type: ignore[arg-type]
+    except Exception:
+        return "unknown"
 
 
 class LichtfeldAdapter(AdapterContract):
@@ -194,8 +206,8 @@ class LichtfeldAdapter(AdapterContract):
         lichtfeld_module = load_lichtfeld()
         scene = require_active_scene(lichtfeld_module)
         model = require_combined_model(scene)
-        splat_count = len(extract_position_rows(model))
-        selection_mask = self._selection.current_selection_mask(scene, splat_count)
+        initial_count = len(extract_position_rows(model))
+        selection_mask = self._selection.current_selection_mask(scene, initial_count)
         if selection_mask is None or not any(selection_mask):
             self._selection.clear_cache()
             return ToolResult(ok=False, message="No active selection available to delete.")
@@ -212,24 +224,77 @@ class LichtfeldAdapter(AdapterContract):
                 "Active LichtFeld combined model does not expose soft_delete for deletion."
             )
 
-        # Current LichtFeld mapping:
-        # - model.soft_delete(mask)
-        # - model.apply_deleted() when available to commit pending deletions
+        selected_count = sum(selection_mask)
+        logger.info(
+            "LichtFeld delete_selection: initial_count=%s selected_count=%s native_mask_type=%s native_mask_len=%s",
+            initial_count,
+            selected_count,
+            type(native_selection_mask).__name__,
+            _safe_length(native_selection_mask),
+        )
+        logger.info("LichtFeld delete_selection: before model.soft_delete()")
         soft_delete(native_selection_mask)
+        logger.info("LichtFeld delete_selection: after model.soft_delete()")
+
+        self._log_delete_cleanup_step(
+            "scene.clear_selection()",
+            lambda: self._selection.clear_selection_via_scene(scene),
+        )
+        self._log_delete_cleanup_step(
+            "lichtfeld.deselect_all()",
+            lambda: self._selection.deselect_all(lichtfeld_module),
+        )
+
         apply_deleted = getattr(model, "apply_deleted", None)
         if callable(apply_deleted):
+            logger.info("LichtFeld delete_selection: before model.apply_deleted()")
             apply_deleted()
+            logger.info(
+                "LichtFeld delete_selection: after model.apply_deleted() remaining_count=%s",
+                len(extract_position_rows(model)),
+            )
+        else:
+            logger.info("LichtFeld delete_selection: model.apply_deleted() skipped")
 
-        remaining_count = len(extract_position_rows(model))
-        self._selection.clear_scene_selection_mask(
-            scene,
-            remaining_count,
-            lichtfeld_module,
-            model=model,
+        self._log_delete_cleanup_step(
+            "scene.reset_selection_state()",
+            lambda: self._selection.reset_selection_state(scene),
+        )
+        self._log_delete_cleanup_step(
+            "scene.clear_selection() post-apply",
+            lambda: self._selection.clear_selection_via_scene(scene),
+        )
+        self._log_delete_cleanup_step(
+            "lichtfeld.deselect_all() post-apply",
+            lambda: self._selection.deselect_all(lichtfeld_module),
         )
         self._selection.clear_cache()
-        notify_scene_changed(scene)
-        return ToolResult(message=f"Deleted {sum(selection_mask)} selected splats.")
+        self._log_delete_cleanup_step(
+            "scene.notify_changed()",
+            lambda: self._notify_scene_changed(scene),
+        )
+        return ToolResult(message=f"Deleted {selected_count} selected splats.")
+
+    @staticmethod
+    def _notify_scene_changed(scene: object) -> bool:
+        notify_changed = getattr(scene, "notify_changed", None)
+        if not callable(notify_changed):
+            return False
+        notify_changed()
+        return True
+
+    @staticmethod
+    def _log_delete_cleanup_step(label: str, action) -> None:
+        logger.info("LichtFeld delete_selection: before %s", label)
+        try:
+            invoked = action()
+        except Exception as exc:
+            logger.warning("LichtFeld delete_selection: %s failed: %s", label, exc)
+            return
+        if invoked:
+            logger.info("LichtFeld delete_selection: after %s", label)
+            return
+        logger.info("LichtFeld delete_selection: %s skipped", label)
 
     def crop_by_box(self, box: Box3D, keep_inside: bool = True) -> ToolResult:
         load_lichtfeld()
