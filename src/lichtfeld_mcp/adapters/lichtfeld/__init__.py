@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import importlib
 
-from .adapter import LichtfeldAdapter, LichtfeldPluginAdapter
+from .adapter import ClusterAnalysisSummary, LichtfeldAdapter, LichtfeldPluginAdapter
 
 _IMPORTLIB = importlib
 
-__all__ = ["LichtfeldAdapter", "LichtfeldPluginAdapter"]
+__all__ = ["ClusterAnalysisSummary", "LichtfeldAdapter", "LichtfeldPluginAdapter"]

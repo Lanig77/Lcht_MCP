@@ -174,6 +174,56 @@ def _restore_deleted_splats(adapter) -> None:
         raise RuntimeError(restore_result.message)
 
 
+def run_cluster_analysis_preview() -> tuple[bool, str]:
+    """Run a non-destructive cluster analysis summary on the active LichtFeld scene."""
+    config = snapshot_runtime_config()
+    _log_info(
+        "Starting cluster analysis preview with "
+        f"distance_threshold={config.cluster_distance_threshold:.4f}, "
+        f"min_cluster_size={config.cluster_min_cluster_size}."
+    )
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cluster analysis adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    analyze_clusters_preview = getattr(adapter, "analyze_clusters_preview", None)
+    if not callable(analyze_clusters_preview):
+        message = "LichtfeldAdapter does not expose analyze_clusters_preview()."
+        _log_error(message)
+        return False, message
+
+    try:
+        summary = analyze_clusters_preview(
+            distance_threshold=config.cluster_distance_threshold,
+            min_cluster_size=config.cluster_min_cluster_size,
+        )
+    except Exception as exc:
+        message = f"Cluster analysis preview failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    _log_info(f"total_splats={summary.total_splats}")
+    _log_info(f"total_clusters={summary.total_clusters}")
+    _log_info(f"largest_cluster_size={summary.largest_cluster_size}")
+    _log_info(f"clusters_smaller_than_threshold={summary.small_cluster_count}")
+    _log_info(
+        "candidate_floating_clusters="
+        f"{summary.candidate_floating_cluster_count}"
+    )
+    _log_info(
+        "candidate_floating_splats="
+        f"{summary.candidate_floating_splat_count}"
+    )
+    message = "Cluster analysis preview complete."
+    _log_info(message)
+    return True, message
+
+
 def run_lcht_mcp_test() -> tuple[bool, str]:
     """Run a safe adapter smoke test inside LichtFeld Studio."""
     config = snapshot_runtime_config()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from lichtfeld_mcp.core.gaussian import Gaussian, GaussianId, Position3D
+from lichtfeld_mcp.core.gaussian_cloud import GaussianCloud
 from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 from lichtfeld_mcp.schemas.common import Box3D, Vec3
 
@@ -95,6 +97,18 @@ def get_sh_degree(model: object, scene: object) -> int:
             if isinstance(value, int):
                 return value
     return 0
+
+
+def build_gaussian_cloud_snapshot(model: object) -> GaussianCloud:
+    position_rows = extract_position_rows(model)
+    gaussians = [
+        Gaussian(
+            id=GaussianId(index),
+            position=Position3D(x=row[0], y=row[1], z=row[2]),
+        )
+        for index, row in enumerate(position_rows)
+    ]
+    return GaussianCloud(gaussians=gaussians, splat_count=len(gaussians))
 
 
 def _coerce_position_rows(values: object) -> list[tuple[float, float, float]]:

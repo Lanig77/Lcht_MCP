@@ -8,10 +8,14 @@ import lichtfeld as lf
 from lfs_plugins.types import Event, Operator
 
 from ..core.runtime_config import (
+    CLUSTER_DISTANCE_STEP,
+    CLUSTER_MIN_SIZE_STEP,
     MAX_RATIO_STEP,
     MAX_SPLATS_STEP,
     SAFE_DELETE_Z_STEP,
     SMOKE_Z_STEP,
+    adjust_cluster_distance_threshold,
+    adjust_cluster_min_cluster_size,
     adjust_max_deletable_percentage,
     adjust_max_deletable_splats,
     adjust_safe_delete_max_z,
@@ -85,6 +89,22 @@ MAX_DELETABLE_PERCENTAGE_UP_OPERATOR_ID = (
     "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
     "LCHTMCP_OT_max_deletable_percentage_up"
 )
+CLUSTER_DISTANCE_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_cluster_distance_down"
+)
+CLUSTER_DISTANCE_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_cluster_distance_up"
+)
+CLUSTER_MIN_SIZE_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_cluster_min_size_down"
+)
+CLUSTER_MIN_SIZE_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_cluster_min_size_up"
+)
 
 
 def _log_runtime_state(action: str) -> None:
@@ -97,7 +117,9 @@ def _log_runtime_state(action: str) -> None:
         f"smoke_test_range=({config.smoke_test_min_z:.4f}, {config.smoke_test_max_z:.4f}), "
         f"safe_delete_range=({config.safe_delete_min_z:.4f}, {config.safe_delete_max_z:.4f}), "
         f"max_deletable_splats={config.max_deletable_splats}, "
-        f"max_deletable_percentage={config.max_deletable_percentage:.4f}"
+        f"max_deletable_percentage={config.max_deletable_percentage:.4f}, "
+        f"cluster_distance_threshold={config.cluster_distance_threshold:.4f}, "
+        f"cluster_min_cluster_size={config.cluster_min_cluster_size}"
     )
 
 
@@ -254,3 +276,39 @@ class LCHTMCP_OT_max_deletable_percentage_up(_ConfigOperator):
 
     def _apply(self) -> None:
         adjust_max_deletable_percentage(MAX_RATIO_STEP)
+
+
+class LCHTMCP_OT_cluster_distance_down(_ConfigOperator):
+    label = "Cluster Distance -"
+    description = "Decrease the cluster distance threshold"
+    action_label = f"Decreased cluster distance by {CLUSTER_DISTANCE_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_cluster_distance_threshold(-CLUSTER_DISTANCE_STEP)
+
+
+class LCHTMCP_OT_cluster_distance_up(_ConfigOperator):
+    label = "Cluster Distance +"
+    description = "Increase the cluster distance threshold"
+    action_label = f"Increased cluster distance by {CLUSTER_DISTANCE_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_cluster_distance_threshold(CLUSTER_DISTANCE_STEP)
+
+
+class LCHTMCP_OT_cluster_min_size_down(_ConfigOperator):
+    label = "Cluster Min Size -"
+    description = "Decrease the cluster minimum size threshold"
+    action_label = f"Decreased cluster min size by {CLUSTER_MIN_SIZE_STEP}"
+
+    def _apply(self) -> None:
+        adjust_cluster_min_cluster_size(-CLUSTER_MIN_SIZE_STEP)
+
+
+class LCHTMCP_OT_cluster_min_size_up(_ConfigOperator):
+    label = "Cluster Min Size +"
+    description = "Increase the cluster minimum size threshold"
+    action_label = f"Increased cluster min size by {CLUSTER_MIN_SIZE_STEP}"
+
+    def _apply(self) -> None:
+        adjust_cluster_min_cluster_size(CLUSTER_MIN_SIZE_STEP)

@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter as AdapterContract
+from lichtfeld_mcp.core.cluster_analysis import (
+    analyze_clusters,
+    clusters_outside_largest,
+    clusters_smaller_than,
+    largest_cluster,
+)
 from lichtfeld_mcp.core.constraints import (
     validate_color_tolerance,
     validate_rgb_color,
@@ -28,7 +35,12 @@ from lichtfeld_mcp.schemas.common import (
 
 from .cameras import CameraOperations
 from .export import ExportOperations
-from .gaussian import extract_color_rows, extract_opacity_values, extract_position_rows
+from .gaussian import (
+    build_gaussian_cloud_snapshot,
+    extract_color_rows,
+    extract_opacity_values,
+    extract_position_rows,
+)
 from .scene import build_scene_stats, notify_scene_changed
 from .selection import SelectionState
 from .training import TrainingOperations
@@ -43,6 +55,18 @@ def _safe_length(value: object) -> str:
         return str(len(value))  # type: ignore[arg-type]
     except Exception:
         return "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class ClusterAnalysisSummary:
+    distance_threshold: float
+    min_cluster_size: int
+    total_splats: int
+    total_clusters: int
+    largest_cluster_size: int
+    small_cluster_count: int
+    candidate_floating_cluster_count: int
+    candidate_floating_splat_count: int
 
 
 class LichtfeldAdapter(AdapterContract):
@@ -88,6 +112,40 @@ class LichtfeldAdapter(AdapterContract):
 
     def get_scene_stats(self) -> SceneStats:
         return self.get_stats()
+
+    def analyze_clusters_preview(
+        self,
+        distance_threshold: float,
+        min_cluster_size: int = 1,
+    ) -> ClusterAnalysisSummary:
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        cloud = build_gaussian_cloud_snapshot(model)
+        clusters = analyze_clusters(
+            cloud,
+            distance_threshold=distance_threshold,
+            min_cluster_size=1,
+        )
+        largest = largest_cluster(clusters)
+        small_clusters = clusters_smaller_than(clusters, min_cluster_size)
+        candidate_floating_clusters = [
+            cluster
+            for cluster in clusters_outside_largest(clusters)
+            if cluster.count < min_cluster_size
+        ]
+        return ClusterAnalysisSummary(
+            distance_threshold=distance_threshold,
+            min_cluster_size=min_cluster_size,
+            total_splats=cloud.count(),
+            total_clusters=len(clusters),
+            largest_cluster_size=0 if largest is None else largest.count,
+            small_cluster_count=len(small_clusters),
+            candidate_floating_cluster_count=len(candidate_floating_clusters),
+            candidate_floating_splat_count=sum(
+                cluster.count for cluster in candidate_floating_clusters
+            ),
+        )
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:
         load_lichtfeld()

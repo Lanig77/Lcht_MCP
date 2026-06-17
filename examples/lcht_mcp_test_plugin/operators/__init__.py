@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Operators for the Lcht_MCP test plugin."""
 
+from .analyze_clusters import ANALYZE_CLUSTERS_OPERATOR_ID, LCHTMCP_OT_analyze_clusters
 from .diagnose_api import DIAGNOSE_API_OPERATOR_ID, LCHTMCP_OT_diagnose_api
 from .diagnose_native_selection import (
     DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID,
@@ -13,6 +14,10 @@ from .diagnose_tensor_mask import (
 )
 from .runtime_controls import (
     ARM_SAFE_DELETE_OPERATOR_ID,
+    CLUSTER_DISTANCE_DOWN_OPERATOR_ID,
+    CLUSTER_DISTANCE_UP_OPERATOR_ID,
+    CLUSTER_MIN_SIZE_DOWN_OPERATOR_ID,
+    CLUSTER_MIN_SIZE_UP_OPERATOR_ID,
     CONFIRM_SAFE_DELETE_OPERATOR_ID,
     DISARM_SAFE_DELETE_OPERATOR_ID,
     MAX_DELETABLE_PERCENTAGE_DOWN_OPERATOR_ID,
@@ -28,6 +33,10 @@ from .runtime_controls import (
     SMOKE_MIN_Z_DOWN_OPERATOR_ID,
     SMOKE_MIN_Z_UP_OPERATOR_ID,
     LCHTMCP_OT_arm_safe_delete,
+    LCHTMCP_OT_cluster_distance_down,
+    LCHTMCP_OT_cluster_distance_up,
+    LCHTMCP_OT_cluster_min_size_down,
+    LCHTMCP_OT_cluster_min_size_up,
     LCHTMCP_OT_confirm_safe_delete,
     LCHTMCP_OT_disarm_safe_delete,
     LCHTMCP_OT_max_deletable_percentage_down,
@@ -55,7 +64,12 @@ from .run_undo_validation import (
 
 __all__ = [
     "ARM_SAFE_DELETE_OPERATOR_ID",
+    "ANALYZE_CLUSTERS_OPERATOR_ID",
     "CONFIRM_SAFE_DELETE_OPERATOR_ID",
+    "CLUSTER_DISTANCE_DOWN_OPERATOR_ID",
+    "CLUSTER_DISTANCE_UP_OPERATOR_ID",
+    "CLUSTER_MIN_SIZE_DOWN_OPERATOR_ID",
+    "CLUSTER_MIN_SIZE_UP_OPERATOR_ID",
     "DIAGNOSE_API_OPERATOR_ID",
     "DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID",
     "DIAGNOSE_TENSOR_MASK_OPERATOR_ID",
@@ -72,7 +86,12 @@ __all__ = [
     "SMOKE_MAX_Z_UP_OPERATOR_ID",
     "SMOKE_MIN_Z_DOWN_OPERATOR_ID",
     "SMOKE_MIN_Z_UP_OPERATOR_ID",
+    "LCHTMCP_OT_analyze_clusters",
     "LCHTMCP_OT_arm_safe_delete",
+    "LCHTMCP_OT_cluster_distance_down",
+    "LCHTMCP_OT_cluster_distance_up",
+    "LCHTMCP_OT_cluster_min_size_down",
+    "LCHTMCP_OT_cluster_min_size_up",
     "LCHTMCP_OT_confirm_safe_delete",
     "LCHTMCP_OT_diagnose_api",
     "LCHTMCP_OT_diagnose_native_selection",

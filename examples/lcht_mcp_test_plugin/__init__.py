@@ -4,11 +4,16 @@
 
 import lichtfeld as lf
 
+from .operators.analyze_clusters import LCHTMCP_OT_analyze_clusters
 from .panels.test_panel import LchtMcpTestPanel
 from .operators.diagnose_api import LCHTMCP_OT_diagnose_api
 from .operators.diagnose_native_selection import LCHTMCP_OT_diagnose_native_selection
 from .operators.diagnose_tensor_mask import LCHTMCP_OT_diagnose_tensor_mask
 from .operators.runtime_controls import (
+    LCHTMCP_OT_cluster_distance_down,
+    LCHTMCP_OT_cluster_distance_up,
+    LCHTMCP_OT_cluster_min_size_down,
+    LCHTMCP_OT_cluster_min_size_up,
     LCHTMCP_OT_arm_safe_delete,
     LCHTMCP_OT_confirm_safe_delete,
     LCHTMCP_OT_disarm_safe_delete,
@@ -31,6 +36,7 @@ from .operators.run_undo_validation import LCHTMCP_OT_run_undo_validation
 
 _classes = [
     LchtMcpTestPanel,
+    LCHTMCP_OT_analyze_clusters,
     LCHTMCP_OT_arm_safe_delete,
     LCHTMCP_OT_confirm_safe_delete,
     LCHTMCP_OT_disarm_safe_delete,
@@ -52,6 +58,10 @@ _classes = [
     LCHTMCP_OT_max_deletable_splats_up,
     LCHTMCP_OT_max_deletable_percentage_down,
     LCHTMCP_OT_max_deletable_percentage_up,
+    LCHTMCP_OT_cluster_distance_down,
+    LCHTMCP_OT_cluster_distance_up,
+    LCHTMCP_OT_cluster_min_size_down,
+    LCHTMCP_OT_cluster_min_size_up,
 ]
 
 

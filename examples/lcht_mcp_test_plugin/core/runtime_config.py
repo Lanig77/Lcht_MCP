@@ -11,6 +11,8 @@ SMOKE_Z_STEP = 0.05
 SAFE_DELETE_Z_STEP = 0.01
 MAX_SPLATS_STEP = 1_000
 MAX_RATIO_STEP = 0.01
+CLUSTER_DISTANCE_STEP = 0.05
+CLUSTER_MIN_SIZE_STEP = 50
 
 
 @dataclass(slots=True)
@@ -25,6 +27,8 @@ class RuntimeConfig:
     safe_delete_max_z: float = 1.02
     max_deletable_splats: int = 50_000
     max_deletable_percentage: float = 0.05
+    cluster_distance_threshold: float = 0.10
+    cluster_min_cluster_size: int = 100
 
 
 _runtime_config = RuntimeConfig()
@@ -98,3 +102,17 @@ def adjust_max_deletable_percentage(delta: float) -> None:
     """Adjust the maximum deletable ratio threshold."""
     updated_ratio = _runtime_config.max_deletable_percentage + delta
     _runtime_config.max_deletable_percentage = _round_ratio(min(1.0, max(0.0, updated_ratio)))
+
+
+def adjust_cluster_distance_threshold(delta: float) -> None:
+    """Adjust the cluster analysis distance threshold."""
+    updated_distance = _runtime_config.cluster_distance_threshold + delta
+    _runtime_config.cluster_distance_threshold = _round_z(max(0.01, updated_distance))
+
+
+def adjust_cluster_min_cluster_size(delta: int) -> None:
+    """Adjust the cluster analysis minimum cluster size."""
+    _runtime_config.cluster_min_cluster_size = max(
+        1,
+        _runtime_config.cluster_min_cluster_size + delta,
+    )

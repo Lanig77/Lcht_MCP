@@ -306,6 +306,41 @@ def test_get_stats_uses_active_lichtfeld_scene_and_computes_bounds(monkeypatch):
     assert stats.opacity_mean == 0.6
 
 
+def test_analyze_clusters_preview_builds_gaussian_cloud_snapshot_and_returns_summary(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.2, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [5.2, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    summary = adapter.analyze_clusters_preview(distance_threshold=0.5, min_cluster_size=2)
+
+    assert summary.total_splats == 5
+    assert summary.total_clusters == 3
+    assert summary.largest_cluster_size == 2
+    assert summary.small_cluster_count == 1
+    assert summary.candidate_floating_cluster_count == 1
+    assert summary.candidate_floating_splat_count == 1
+
+
 def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module

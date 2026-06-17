@@ -8,8 +8,13 @@ from ..core.runtime_config import snapshot_runtime_config
 from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
 from ..operators.diagnose_native_selection import DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID
 from ..operators.diagnose_tensor_mask import DIAGNOSE_TENSOR_MASK_OPERATOR_ID
+from ..operators.analyze_clusters import ANALYZE_CLUSTERS_OPERATOR_ID
 from ..operators.runtime_controls import (
     ARM_SAFE_DELETE_OPERATOR_ID,
+    CLUSTER_DISTANCE_DOWN_OPERATOR_ID,
+    CLUSTER_DISTANCE_UP_OPERATOR_ID,
+    CLUSTER_MIN_SIZE_DOWN_OPERATOR_ID,
+    CLUSTER_MIN_SIZE_UP_OPERATOR_ID,
     CONFIRM_SAFE_DELETE_OPERATOR_ID,
     DISARM_SAFE_DELETE_OPERATOR_ID,
     MAX_DELETABLE_PERCENTAGE_DOWN_OPERATOR_ID,
@@ -79,6 +84,14 @@ class LchtMcpTestPanel(lf.ui.Panel):
         layout.label(
             "Max Deletable Percentage: "
             f"{config.max_deletable_percentage * 100.0:.2f}%"
+        )
+        layout.label(
+            "Cluster Distance Threshold: "
+            f"{config.cluster_distance_threshold:.2f}"
+        )
+        layout.label(
+            "Cluster Min Size: "
+            f"{config.cluster_min_cluster_size}"
         )
         layout.text_colored(
             "Check the LichtFeld log for splat_count, bounding_box and selected_count.",
@@ -152,6 +165,33 @@ class LchtMcpTestPanel(lf.ui.Panel):
             lf.ui.ops.invoke(MAX_DELETABLE_PERCENTAGE_UP_OPERATOR_ID)
 
         layout.spacing()
+        layout.label("Cluster Analysis Controls")
+        if layout.button_styled(
+            "Cluster Distance -##cluster_distance_down",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(CLUSTER_DISTANCE_DOWN_OPERATOR_ID)
+        if layout.button_styled(
+            "Cluster Distance +##cluster_distance_up",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(CLUSTER_DISTANCE_UP_OPERATOR_ID)
+        if layout.button_styled(
+            "Cluster Min Size -##cluster_min_size_down",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(CLUSTER_MIN_SIZE_DOWN_OPERATOR_ID)
+        if layout.button_styled(
+            "Cluster Min Size +##cluster_min_size_up",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(CLUSTER_MIN_SIZE_UP_OPERATOR_ID)
+
+        layout.spacing()
         if layout.button_styled("Run Lcht MCP Test##run", "primary", (-1, 34 * scale)):
             lf.ui.ops.invoke(RUN_TEST_OPERATOR_ID)
         if layout.button_styled(
@@ -160,6 +200,12 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 34 * scale),
         ):
             lf.ui.ops.invoke(RUN_SAFE_DELETE_TEST_OPERATOR_ID)
+        if layout.button_styled(
+            "Analyze Clusters##analyze_clusters",
+            "secondary",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(ANALYZE_CLUSTERS_OPERATOR_ID)
         if layout.button_styled(
             "Run Undo Validation##undo_validation",
             "warning",
