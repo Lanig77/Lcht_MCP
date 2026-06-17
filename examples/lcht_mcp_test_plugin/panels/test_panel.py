@@ -6,6 +6,7 @@ import lichtfeld as lf
 
 from ..core.test_runner import DELETE_SELECTED, MAX_Z, MIN_Z
 from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
+from ..operators.diagnose_native_selection import DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID
 from ..operators.diagnose_tensor_mask import DIAGNOSE_TENSOR_MASK_OPERATOR_ID
 from ..operators.run_test import RUN_TEST_OPERATOR_ID
 
@@ -50,6 +51,10 @@ class LchtMcpTestPanel(lf.ui.Panel):
             "Use Diagnose Tensor Mask Construction to test native selection tensor creation.",
             theme.palette.text_dim,
         )
+        layout.text_colored(
+            "Use Diagnose Native Selection API to try index-based selection entry points.",
+            theme.palette.text_dim,
+        )
         layout.spacing()
 
         if layout.button_styled("Run Lcht MCP Test##run", "primary", (-1, 34 * scale)):
@@ -66,3 +71,9 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 34 * scale),
         ):
             lf.ui.ops.invoke(DIAGNOSE_TENSOR_MASK_OPERATOR_ID)
+        if layout.button_styled(
+            "Diagnose Native Selection API##native",
+            "secondary",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID)

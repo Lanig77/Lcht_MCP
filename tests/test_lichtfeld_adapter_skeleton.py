@@ -181,6 +181,31 @@ class FakeSceneWithoutSelectionApi:
         return self._model
 
 
+class FakeNativeSelectionApi:
+    def __init__(self, scene, *, reject_indices: bool = False):
+        self.scene = scene
+        self.reject_indices = reject_indices
+        self.deselect_all_calls = 0
+        self.add_to_selection_calls: list[list[int]] = []
+
+    def deselect_all(self):
+        self.deselect_all_calls += 1
+        cleared_mask = [False] * len(self.scene._model._means_values)
+        self.scene.last_selection_mask = list(cleared_mask)
+        self.scene.selection_mask = FakeLfTensor(cleared_mask)
+
+    def add_to_selection(self, indices):
+        if self.reject_indices:
+            raise TypeError("expected native selection object, got Python indices")
+        selected_indices = [int(index) for index in indices]
+        self.add_to_selection_calls.append(selected_indices)
+        mask = [False] * len(self.scene._model._means_values)
+        for index in selected_indices:
+            mask[index] = True
+        self.scene.last_selection_mask = list(mask)
+        self.scene.selection_mask = FakeLfTensor(mask)
+
+
 def test_get_stats_uses_active_lichtfeld_scene_and_computes_bounds(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
@@ -277,7 +302,13 @@ def test_select_by_height_normalizes_range_and_applies_expected_mask(monkeypatch
             )
         )
     )
-    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -290,7 +321,9 @@ def test_select_by_height_normalizes_range_and_applies_expected_mask(monkeypatch
 
     assert result.selected_count == 2
     assert result.selection_mode == "replace"
-    assert isinstance(fake_scene.last_selection_mask_argument, FakeLfTensor)
+    assert native_selection.deselect_all_calls == 1
+    assert native_selection.add_to_selection_calls == [[1, 2]]
+    assert fake_scene.last_selection_mask_argument is None
     assert fake_scene.last_selection_mask == [False, True, True, False]
     assert fake_scene.notify_changed_calls == 1
     assert adapter.get_stats().selected_count == 2
@@ -300,7 +333,6 @@ def test_select_by_height_raises_clear_error_when_selection_api_is_missing(monke
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
     fake_module = SimpleNamespace(
-        Tensor=FakeLfTensor,
         get_scene=lambda: FakeSceneWithoutSelectionApi(
             FakeModel(
                 means=FakeTorchTensor(
@@ -323,7 +355,7 @@ def test_select_by_height_raises_clear_error_when_selection_api_is_missing(monke
 
     with pytest.raises(
         AdapterUnavailableError,
-        match="set_selection_mask",
+        match="native selection API could not accept Python index lists",
     ):
         adapter.select_by_height(0.0, 2.0)
 
@@ -700,7 +732,7 @@ def test_get_stats_raises_clear_error_when_scene_is_invalid(monkeypatch):
 def test_select_by_height_raises_clear_error_when_tensor_conversion_is_unavailable(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
-    fake_scene = FakeScene(
+    fake_scene = FakeSceneWithoutSelectionApi(
         FakeModel(
             means=FakeTorchTensor(
                 [
@@ -710,7 +742,12 @@ def test_select_by_height_raises_clear_error_when_tensor_conversion_is_unavailab
             )
         )
     )
-    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
+    native_selection = FakeNativeSelectionApi(fake_scene, reject_indices=True)
+    fake_module = SimpleNamespace(
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -719,12 +756,11 @@ def test_select_by_height_raises_clear_error_when_tensor_conversion_is_unavailab
     )
 
     adapter = adapter_module.LichtfeldPluginAdapter()
-    fake_scene.selection_mask = None
     fake_scene.last_selection_mask = None
 
     with pytest.raises(
         AdapterUnavailableError,
-        match="does not expose a Tensor construction strategy compatible with selection masks",
+        match="expected native selection object, got Python indices",
     ):
         adapter.select_by_height(0.0, 2.0)
 

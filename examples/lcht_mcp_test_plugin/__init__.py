@@ -6,6 +6,7 @@ import lichtfeld as lf
 
 from .panels.test_panel import LchtMcpTestPanel
 from .operators.diagnose_api import LCHTMCP_OT_diagnose_api
+from .operators.diagnose_native_selection import LCHTMCP_OT_diagnose_native_selection
 from .operators.diagnose_tensor_mask import LCHTMCP_OT_diagnose_tensor_mask
 from .operators.run_test import LCHTMCP_OT_run_test
 
@@ -13,6 +14,7 @@ _classes = [
     LchtMcpTestPanel,
     LCHTMCP_OT_run_test,
     LCHTMCP_OT_diagnose_api,
+    LCHTMCP_OT_diagnose_native_selection,
     LCHTMCP_OT_diagnose_tensor_mask,
 ]
 

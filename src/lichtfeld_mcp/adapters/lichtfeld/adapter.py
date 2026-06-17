@@ -96,12 +96,25 @@ class LichtfeldAdapter(AdapterContract):
             height_mask,
             normalized_mode,
         )
-        self._selection.apply_scene_selection_mask(
-            scene,
-            selection_mask,
-            lichtfeld_module,
-            model=model,
-        )
+        selected_indices = self._selection.selected_indices(selection_mask)
+        try:
+            self._selection.apply_native_selection(
+                scene,
+                selected_indices,
+                lichtfeld_module,
+            )
+        except AdapterUnavailableError as exc:
+            try:
+                self._selection.apply_scene_selection_mask(
+                    scene,
+                    selection_mask,
+                    lichtfeld_module,
+                    model=model,
+                )
+            except AdapterUnavailableError as tensor_exc:
+                raise AdapterUnavailableError(
+                    f"{exc} Tensor fallback also failed: {tensor_exc}"
+                ) from tensor_exc
         self._selection.cache_mask(selection_mask)
         notify_scene_changed(scene)
         return SelectionResult(

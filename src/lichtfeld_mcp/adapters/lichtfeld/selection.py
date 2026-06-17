@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import inspect
 
 from lichtfeld_mcp.core.constraints import validate_color_tolerance, validate_rgb_color
 from lichtfeld_mcp.core.requests import HeightRange
@@ -29,10 +30,10 @@ class SelectionState:
         return list(self._cached_mask)
 
     def current_selection_mask(self, scene: object, expected_length: int) -> list[bool] | None:
-        mask = self.read_scene_selection_mask(scene, expected_length)
+        mask = self.cached_mask(expected_length)
         if mask is not None:
             return mask
-        return self.cached_mask(expected_length)
+        return self.read_scene_selection_mask(scene, expected_length)
 
     def get_selected_count(self, scene: object, expected_length: int) -> int:
         mask = self.current_selection_mask(scene, expected_length)
@@ -102,6 +103,54 @@ class SelectionState:
         if mode == "add":
             return [current or selected for current, selected in zip(current_mask, selection_mask)]
         return [current and not selected for current, selected in zip(current_mask, selection_mask)]
+
+    def selected_indices(self, selection_mask: list[bool]) -> list[int]:
+        return [index for index, selected in enumerate(selection_mask) if selected]
+
+    def apply_native_selection(
+        self,
+        scene: object,
+        indices: list[int],
+        lf_module: object,
+    ) -> None:
+        errors: list[str] = []
+        cleared = self._clear_native_selection(scene, lf_module, errors)
+
+        if not indices:
+            if cleared:
+                return
+            raise self._native_selection_error(scene, lf_module, errors)
+
+        set_selection = getattr(scene, "set_selection", None)
+        if callable(set_selection):
+            for label, payload in (
+                ("scene.set_selection(list)", list(indices)),
+                ("scene.set_selection(tuple)", tuple(indices)),
+            ):
+                try:
+                    set_selection(payload)
+                    return
+                except Exception as exc:
+                    errors.append(f"{label}: {exc}")
+
+        add_to_selection = getattr(lf_module, "add_to_selection", None)
+        if callable(add_to_selection):
+            if not cleared:
+                errors.append(
+                    "lichtfeld.add_to_selection skipped because selection could not be cleared first"
+                )
+            else:
+                for label, payload in (
+                    ("lichtfeld.add_to_selection(list)", list(indices)),
+                    ("lichtfeld.add_to_selection(tuple)", tuple(indices)),
+                ):
+                    try:
+                        add_to_selection(payload)
+                        return
+                    except Exception as exc:
+                        errors.append(f"{label}: {exc}")
+
+        raise self._native_selection_error(scene, lf_module, errors)
 
     def apply_scene_selection_mask(
         self,
@@ -197,3 +246,50 @@ class SelectionState:
         if max_opacity is not None and opacity > max_opacity:
             return False
         return True
+
+    @staticmethod
+    def _callable_signature(value: object) -> str:
+        try:
+            return str(inspect.signature(value))
+        except (TypeError, ValueError):
+            return "<signature unavailable>"
+
+    def _clear_native_selection(
+        self,
+        scene: object,
+        lf_module: object,
+        errors: list[str],
+    ) -> bool:
+        deselect_all = getattr(lf_module, "deselect_all", None)
+        if callable(deselect_all):
+            try:
+                deselect_all()
+                return True
+            except Exception as exc:
+                errors.append(f"lichtfeld.deselect_all(): {exc}")
+
+        clear_selection = getattr(scene, "clear_selection", None)
+        if callable(clear_selection):
+            try:
+                clear_selection()
+                return True
+            except Exception as exc:
+                errors.append(f"scene.clear_selection(): {exc}")
+
+        return False
+
+    def _native_selection_error(
+        self,
+        scene: object,
+        lf_module: object,
+        errors: list[str],
+    ) -> AdapterUnavailableError:
+        set_selection = getattr(scene, "set_selection", None)
+        add_to_selection = getattr(lf_module, "add_to_selection", None)
+        details = "; ".join(errors) if errors else "no compatible native selection entry point found"
+        return AdapterUnavailableError(
+            "LichtFeld native selection API could not accept Python index lists. "
+            f"scene.set_selection signature={self._callable_signature(set_selection)}; "
+            f"lichtfeld.add_to_selection signature={self._callable_signature(add_to_selection)}. "
+            f"Failures: {details}. Run Diagnose Native Selection API for runtime details."
+        )

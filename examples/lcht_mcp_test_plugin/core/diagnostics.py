@@ -55,6 +55,12 @@ TENSOR_METHOD_NAMES = (
     "bool",
     "__setitem__",
 )
+NATIVE_SELECTION_NAMES = (
+    "add_to_selection",
+    "deselect_all",
+    "selection",
+    "has_selection",
+)
 
 
 def _log_info(message: str) -> None:
@@ -101,6 +107,16 @@ def _safe_signature(value: object) -> str:
         return str(inspect.signature(value))
     except (TypeError, ValueError) as exc:
         return f"<signature unavailable: {exc}>"
+
+
+def _log_callable_details(label: str, value: object) -> None:
+    if value is None:
+        _log_info(f"{label}: missing")
+        return
+    _log_info(
+        f"{label}: type={_type_name(value)} callable={callable(value)} "
+        f"signature={_safe_signature(value)} repr={_safe_repr(value)}"
+    )
 
 
 def _safe_scalar_metadata(label: str, value: object) -> None:
@@ -325,6 +341,57 @@ def _log_tensor_runtime_diagnostics(scene: object | None, model: object | None) 
                 _log_tensor_details("model.get_means()", means)
 
 
+def _log_native_selection_runtime_diagnostics(scene: object | None) -> None:
+    for attribute_name in NATIVE_SELECTION_NAMES:
+        _log_callable_details(f"lichtfeld.{attribute_name}", getattr(lf, attribute_name, None))
+        value = getattr(lf, attribute_name, None)
+        if value is not None and not callable(value):
+            _log_public_attributes(f"lichtfeld.{attribute_name}", value)
+
+    if scene is None:
+        return
+
+    for attribute_name in ("set_selection", "clear_selection", "selection", "selection_groups"):
+        value = getattr(scene, attribute_name, None)
+        _log_callable_details(f"scene.{attribute_name}", value)
+        if value is not None and not callable(value):
+            _log_public_attributes(f"scene.{attribute_name}", value)
+
+
+def _restore_native_selection_state(
+    scene: object,
+    original_scene_selection: object | None,
+    original_top_selection: object | None,
+    had_selection: bool | None,
+) -> None:
+    set_selection = getattr(scene, "set_selection", None)
+    clear_selection = getattr(scene, "clear_selection", None)
+    deselect_all = getattr(lf, "deselect_all", None)
+
+    if callable(set_selection):
+        for candidate in (original_scene_selection, original_top_selection):
+            if candidate is None:
+                continue
+            try:
+                set_selection(candidate)
+                _log_info("native selection restore via scene.set_selection(...) succeeded")
+                return
+            except Exception as exc:  # pragma: no cover - defensive runtime probe
+                _log_error(f"scene.set_selection(restore) failed: {exc}")
+
+    if had_selection is False:
+        if callable(clear_selection):
+            clear_selection()
+            _log_info("native selection cleared via scene.clear_selection()")
+            return
+        if callable(deselect_all):
+            deselect_all()
+            _log_info("native selection cleared via lichtfeld.deselect_all()")
+            return
+
+    raise RuntimeError("could not restore original native selection state")
+
+
 def _configure_repo_import_path() -> None:
     from .test_runner import _configure_import_path
 
@@ -442,6 +509,85 @@ def run_tensor_mask_construction_diagnostics() -> tuple[bool, str]:
     return True, "tensor mask diagnostic completed"
 
 
+def run_native_selection_api_diagnostics() -> tuple[bool, str]:
+    """Try native selection entry points with a tiny selection and then restore state."""
+    scene = _safe_get_scene()
+    model = _safe_get_model(scene)
+    if scene is None or model is None:
+        message = "active scene/model unavailable for native selection diagnostics"
+        _log_error(message)
+        return False, message
+
+    _log_native_selection_runtime_diagnostics(scene)
+
+    try:
+        from lichtfeld_mcp.adapters.lichtfeld.gaussian import extract_position_rows
+    except Exception as exc:
+        message = f"could not import gaussian helpers: {exc}"
+        _log_error(message)
+        return False, message
+
+    position_rows = extract_position_rows(model)
+    if not position_rows:
+        message = "no splats available for native selection diagnostics"
+        _log_error(message)
+        return False, message
+
+    original_scene_selection = getattr(scene, "selection", None)
+    original_top_selection = getattr(lf, "selection", None)
+    has_selection = getattr(lf, "has_selection", None)
+    had_selection: bool | None = None
+    if callable(has_selection):
+        try:
+            had_selection = bool(has_selection())
+        except Exception as exc:  # pragma: no cover - defensive runtime probe
+            _log_error(f"lichtfeld.has_selection() failed: {exc}")
+
+    trial_indices = [0]
+    _log_info(f"native trial_indices={trial_indices}")
+
+    attempts: list[tuple[str, callable]] = []
+    clear_selection = getattr(scene, "clear_selection", None)
+    deselect_all = getattr(lf, "deselect_all", None)
+    set_selection = getattr(scene, "set_selection", None)
+    add_to_selection = getattr(lf, "add_to_selection", None)
+
+    if callable(clear_selection):
+        attempts.append(("scene.clear_selection()", clear_selection))
+    if callable(deselect_all):
+        attempts.append(("lichtfeld.deselect_all()", deselect_all))
+    if callable(set_selection):
+        attempts.append(("scene.set_selection([0])", lambda: set_selection(list(trial_indices))))
+        attempts.append(("scene.set_selection((0,))", lambda: set_selection(tuple(trial_indices))))
+    if callable(add_to_selection):
+        attempts.append(("lichtfeld.add_to_selection([0])", lambda: add_to_selection(list(trial_indices))))
+        attempts.append(("lichtfeld.add_to_selection((0,))", lambda: add_to_selection(tuple(trial_indices))))
+
+    success = False
+    for label, attempt in attempts:
+        try:
+            attempt()
+            _log_info(f"{label}: succeeded")
+            success = True
+        except Exception as exc:  # pragma: no cover - defensive runtime probe
+            _log_error(f"{label}: failed: {exc}")
+
+    try:
+        _restore_native_selection_state(
+            scene,
+            original_scene_selection,
+            original_top_selection,
+            had_selection,
+        )
+    except Exception as exc:  # pragma: no cover - defensive runtime probe
+        _log_error(f"native selection restore failed: {exc}")
+        return False, f"native selection restore failed: {exc}"
+
+    if not success:
+        return False, "no native selection API strategy succeeded"
+    return True, "native selection diagnostic completed"
+
+
 def run_lcht_mcp_diagnostics() -> tuple[bool, str]:
     """Log the active LichtFeld Studio Python API surface without mutating state."""
     visited: set[int] = set()
@@ -454,6 +600,7 @@ def run_lcht_mcp_diagnostics() -> tuple[bool, str]:
         scene = _safe_get_scene()
         model = _safe_get_model(scene)
         _log_tensor_runtime_diagnostics(scene, model)
+        _log_native_selection_runtime_diagnostics(scene)
     except Exception as exc:  # pragma: no cover - defensive runtime probe
         message = f"diagnostic failed: {exc}"
         _log_error(message)
