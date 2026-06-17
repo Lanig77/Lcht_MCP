@@ -33,3 +33,20 @@ The architecture separates responsibilities so that each layer stays narrow:
 - adapters isolate engine-specific implementation details.
 
 This separation is what allows the project to evolve from a deterministic mock backend to a real Gaussian Splatting engine without rewriting the MCP surface.
+
+## Architecture documents
+
+The architecture documentation is organized as a set of focused companion
+documents:
+
+- `01_runtime_architecture.md`
+- `02_scene_service.md`
+- `03_adapters.md`
+- `04_domain_model.md`
+- `05_lichtfeld_plugin_adapter.md`
+- `06_query_dsl.md`
+- `07_cluster_analysis.md`
+- `08_large_scene_guidelines.md`
+
+`08_large_scene_guidelines.md` is the permanent scalability baseline for all
+future implementations that must operate on production-scale Gaussian scenes.
