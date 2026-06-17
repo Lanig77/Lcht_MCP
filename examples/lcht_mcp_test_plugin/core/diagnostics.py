@@ -12,6 +12,7 @@ import lichtfeld as lf
 
 LOG_PREFIX = "lcht_mcp_diag"
 MAX_PROBE_DEPTH = 2
+MAX_REPR_LENGTH = 200
 CANDIDATE_NAMES = (
     "scene",
     "current_scene",
@@ -39,6 +40,21 @@ LIKELY_ACCESS_PATH_NAMES = (
     "gaussians",
 )
 SAFE_NO_ARG_CALL_NAMES = frozenset(CANDIDATE_NAMES + LIKELY_ACCESS_PATH_NAMES)
+TENSOR_METHOD_NAMES = (
+    "clone",
+    "copy",
+    "to",
+    "cpu",
+    "numpy",
+    "fill",
+    "zeros",
+    "ones",
+    "from_list",
+    "from_numpy",
+    "astype",
+    "bool",
+    "__setitem__",
+)
 
 
 def _log_info(message: str) -> None:
@@ -68,6 +84,60 @@ def _log_public_attributes(label: str, value: object) -> None:
     names = _public_attribute_names(value)
     joined = ", ".join(names) if names else "<none>"
     _log_info(f"{label} public_attrs[{len(names)}]: {joined}")
+
+
+def _safe_repr(value: object) -> str:
+    try:
+        text = repr(value)
+    except Exception as exc:  # pragma: no cover - defensive runtime probe
+        return f"<repr failed: {exc}>"
+    if len(text) > MAX_REPR_LENGTH:
+        return f"{text[:MAX_REPR_LENGTH]}..."
+    return text
+
+
+def _safe_signature(value: object) -> str:
+    try:
+        return str(inspect.signature(value))
+    except (TypeError, ValueError) as exc:
+        return f"<signature unavailable: {exc}>"
+
+
+def _safe_scalar_metadata(label: str, value: object) -> None:
+    shape = getattr(value, "shape", None)
+    if shape is not None:
+        _log_info(f"{label} shape={shape}")
+    count = getattr(value, "count", None)
+    if callable(count):
+        try:
+            _log_info(f"{label} count()={count()}")
+        except Exception as exc:  # pragma: no cover - defensive runtime probe
+            _log_error(f"{label} count() failed: {exc}")
+    elif count is not None and not callable(count):
+        _log_info(f"{label} count={count}")
+    try:
+        _log_info(f"{label} len={len(value)}")
+    except Exception:
+        pass
+
+
+def _log_tensor_capabilities(label: str, value: object) -> None:
+    for method_name in TENSOR_METHOD_NAMES:
+        exists = hasattr(value, method_name)
+        if not exists:
+            _log_info(f"{label}.{method_name}: missing")
+            continue
+        member = getattr(value, method_name)
+        _log_info(
+            f"{label}.{method_name}: exists type={_type_name(member)} callable={callable(member)}"
+        )
+
+
+def _log_tensor_details(label: str, value: object) -> None:
+    _log_info(f"{label}: type={_type_name(value)} repr={_safe_repr(value)}")
+    _log_public_attributes(label, value)
+    _safe_scalar_metadata(label, value)
+    _log_tensor_capabilities(label, value)
 
 
 def _should_probe_object(value: object) -> bool:
@@ -195,6 +265,183 @@ def _probe_object(path: str, value: object, visited: set[int], depth: int) -> No
     _probe_likely_members(path, value, visited, depth)
 
 
+def _safe_get_scene() -> object | None:
+    get_scene = getattr(lf, "get_scene", None)
+    if not callable(get_scene):
+        _log_info("lichtfeld.get_scene: missing or not callable")
+        return None
+    try:
+        scene = get_scene()
+    except Exception as exc:  # pragma: no cover - defensive runtime probe
+        _log_error(f"lichtfeld.get_scene() failed: {exc}")
+        return None
+    _log_info(f"lichtfeld.get_scene() -> type={_type_name(scene)}")
+    return scene
+
+
+def _safe_get_model(scene: object | None) -> object | None:
+    if scene is None:
+        return None
+    combined_model = getattr(scene, "combined_model", None)
+    if not callable(combined_model):
+        _log_info("scene.combined_model: missing or not callable")
+        return None
+    try:
+        model = combined_model()
+    except Exception as exc:  # pragma: no cover - defensive runtime probe
+        _log_error(f"scene.combined_model() failed: {exc}")
+        return None
+    _log_info(f"scene.combined_model() -> type={_type_name(model)}")
+    return model
+
+
+def _log_tensor_runtime_diagnostics(scene: object | None, model: object | None) -> None:
+    tensor_type = getattr(lf, "Tensor", None)
+    if tensor_type is None:
+        _log_info("lichtfeld.Tensor: missing")
+    else:
+        _log_info(
+            "lichtfeld.Tensor: "
+            f"type={_type_name(tensor_type)} repr={_safe_repr(tensor_type)} "
+            f"signature={_safe_signature(tensor_type)}"
+        )
+        _log_public_attributes("lichtfeld.Tensor", tensor_type)
+        _log_tensor_capabilities("lichtfeld.Tensor", tensor_type)
+
+    if scene is not None and hasattr(scene, "selection_mask"):
+        _log_tensor_details("scene.selection_mask", getattr(scene, "selection_mask"))
+
+    if model is not None and hasattr(model, "deleted"):
+        _log_tensor_details("model.deleted", getattr(model, "deleted"))
+
+    if model is not None:
+        get_means = getattr(model, "get_means", None)
+        if callable(get_means):
+            try:
+                means = get_means()
+            except Exception as exc:  # pragma: no cover - defensive runtime probe
+                _log_error(f"model.get_means() failed: {exc}")
+            else:
+                _log_tensor_details("model.get_means()", means)
+
+
+def _configure_repo_import_path() -> None:
+    from .test_runner import _configure_import_path
+
+    _configure_import_path()
+
+
+def _build_tensor_clone(mask: list[bool], template: object) -> object:
+    clone = None
+    for method_name in ("clone", "copy"):
+        method = getattr(template, method_name, None)
+        if callable(method):
+            clone = method()
+            break
+    if clone is None:
+        raise RuntimeError("template does not support clone() or copy()")
+
+    fill = getattr(clone, "fill", None)
+    if callable(fill):
+        try:
+            fill(False)
+        except TypeError:
+            fill(0)
+
+    set_item = getattr(clone, "__setitem__", None)
+    if not callable(set_item):
+        raise RuntimeError("template clone does not support __setitem__")
+    for index, value in enumerate(mask):
+        set_item(index, bool(value))
+    return clone
+
+
+def run_tensor_mask_construction_diagnostics() -> tuple[bool, str]:
+    """Try safe tensor-mask construction strategies and restore the scene afterwards."""
+    try:
+        _configure_repo_import_path()
+        from lichtfeld_mcp.adapters.lichtfeld.utils import coerce_boolean_mask, to_lf_selection_mask
+    except Exception as exc:
+        message = f"adapter helper import failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    scene = _safe_get_scene()
+    model = _safe_get_model(scene)
+    if scene is None:
+        message = "no active scene available for tensor-mask diagnostics"
+        _log_error(message)
+        return False, message
+
+    original_selection = getattr(scene, "selection_mask", None)
+    original_mask = coerce_boolean_mask(original_selection) if original_selection is not None else []
+    mask_length = len(original_mask)
+    if mask_length == 0 and model is not None and hasattr(model, "deleted"):
+        original_mask = coerce_boolean_mask(getattr(model, "deleted"))
+        mask_length = len(original_mask)
+    if mask_length == 0:
+        message = "could not determine selection mask length from scene.selection_mask or model.deleted"
+        _log_error(message)
+        return False, message
+
+    trial_mask = [False] * mask_length
+    if mask_length > 0:
+        trial_mask[0] = True
+    _log_info(f"trial_mask length={mask_length} selected_count={sum(trial_mask)}")
+
+    strategies: list[tuple[str, object]] = []
+    if original_selection is not None:
+        strategies.append(("scene.selection_mask clone", original_selection))
+    if model is not None and hasattr(model, "deleted"):
+        strategies.append(("model.deleted clone", getattr(model, "deleted")))
+
+    success = False
+    for strategy_name, template in strategies:
+        try:
+            candidate = _build_tensor_clone(trial_mask, template)
+            _log_info(f"{strategy_name}: tensor clone strategy constructed type={_type_name(candidate)}")
+            scene.set_selection_mask(candidate)
+            _log_info(f"{strategy_name}: scene.set_selection_mask(...) succeeded")
+            success = True
+            break
+        except Exception as exc:  # pragma: no cover - defensive runtime probe
+            _log_error(f"{strategy_name}: failed: {exc}")
+
+    for strategy_name, builder in (
+        (
+            "adapter.to_lf_selection_mask",
+            lambda: to_lf_selection_mask(trial_mask, lf, scene=scene, model=model),
+        ),
+        ("lichtfeld.Tensor(mask)", lambda: lf.Tensor(trial_mask)),
+        ("lichtfeld.Tensor(data=mask)", lambda: lf.Tensor(data=trial_mask)),
+    ):
+        try:
+            candidate = builder()
+            _log_info(f"{strategy_name}: constructed type={_type_name(candidate)}")
+            scene.set_selection_mask(candidate)
+            _log_info(f"{strategy_name}: scene.set_selection_mask(...) succeeded")
+            success = True
+            break
+        except Exception as exc:  # pragma: no cover - defensive runtime probe
+            _log_error(f"{strategy_name}: failed: {exc}")
+
+    try:
+        if original_selection is not None:
+            scene.set_selection_mask(original_selection)
+            _log_info("original scene.selection_mask restored")
+        else:
+            restored = to_lf_selection_mask(original_mask, lf, scene=scene, model=model)
+            scene.set_selection_mask(restored)
+            _log_info("original selection state rebuilt and restored")
+    except Exception as exc:  # pragma: no cover - defensive runtime probe
+        _log_error(f"restore failed: {exc}")
+        return False, f"restore failed: {exc}"
+
+    if not success:
+        return False, "no tensor mask construction strategy succeeded"
+    return True, "tensor mask diagnostic completed"
+
+
 def run_lcht_mcp_diagnostics() -> tuple[bool, str]:
     """Log the active LichtFeld Studio Python API surface without mutating state."""
     visited: set[int] = set()
@@ -204,6 +451,9 @@ def run_lcht_mcp_diagnostics() -> tuple[bool, str]:
         _probe_object("lichtfeld", lf, visited, depth=0)
         for attribute_name in CANDIDATE_NAMES:
             _probe_candidate_attribute(lf, "lichtfeld", attribute_name, visited, depth=0)
+        scene = _safe_get_scene()
+        model = _safe_get_model(scene)
+        _log_tensor_runtime_diagnostics(scene, model)
     except Exception as exc:  # pragma: no cover - defensive runtime probe
         message = f"diagnostic failed: {exc}"
         _log_error(message)

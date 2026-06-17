@@ -102,8 +102,98 @@ def coerce_boolean_mask(value: object) -> list[bool]:
     return [bool(item) for item in items]
 
 
-def to_lf_selection_mask(mask: object, lf_module: object) -> object:
+def _tensor_template_candidates(scene: object | None, model: object | None) -> list[object]:
+    candidates: list[object] = []
+    for owner, names in (
+        (scene, ("selection_mask", "get_selection_mask")),
+        (model, ("deleted", "get_deleted_mask", "has_deleted_mask")),
+    ):
+        if owner is None:
+            continue
+        for attribute_name in names:
+            candidate = getattr(owner, attribute_name, None)
+            if callable(candidate):
+                try:
+                    candidate = candidate()
+                except Exception:
+                    continue
+            if candidate is not None:
+                candidates.append(candidate)
+    return candidates
+
+
+def _is_tensor_template_candidate(candidate: object) -> bool:
+    if isinstance(candidate, (list, tuple, set, frozenset, dict, str, bytes)):
+        return False
+    return any(hasattr(candidate, attribute_name) for attribute_name in ("clone", "fill", "tolist"))
+
+
+def _clone_tensor_candidate(candidate: object) -> object | None:
+    if not _is_tensor_template_candidate(candidate):
+        return None
+    for method_name in ("clone", "copy"):
+        method = getattr(candidate, method_name, None)
+        if not callable(method):
+            continue
+        return method()
+    return None
+
+
+def _populate_tensor_mask(target: object, normalized_mask: list[bool]) -> object:
+    fill = getattr(target, "fill", None)
+    if callable(fill):
+        try:
+            fill(False)
+        except TypeError:
+            fill(0)
+
+    set_item = getattr(target, "__setitem__", None)
+    if not callable(set_item):
+        raise AdapterUnavailableError(
+            "LichtFeld Tensor mask template does not support item assignment."
+        )
+    for index, value in enumerate(normalized_mask):
+        set_item(index, bool(value))
+    return target
+
+
+def _build_mask_from_template(
+    normalized_mask: list[bool],
+    *,
+    scene: object | None,
+    model: object | None,
+) -> object | None:
+    for candidate in _tensor_template_candidates(scene, model):
+        cloned = _clone_tensor_candidate(candidate)
+        if cloned is None:
+            continue
+        try:
+            populated = _populate_tensor_mask(cloned, normalized_mask)
+        except (AdapterUnavailableError, IndexError, KeyError, TypeError, ValueError):
+            continue
+        candidate_mask = coerce_boolean_mask(populated)
+        if len(candidate_mask) != len(normalized_mask):
+            continue
+        return populated
+    return None
+
+
+def to_lf_selection_mask(
+    mask: object,
+    lf_module: object,
+    *,
+    scene: object | None = None,
+    model: object | None = None,
+) -> object:
     normalized_mask = coerce_boolean_mask(mask)
+    template_mask = _build_mask_from_template(
+        normalized_mask,
+        scene=scene,
+        model=model,
+    )
+    if template_mask is not None:
+        return template_mask
+
     tensor_factory = getattr(lf_module, "Tensor", None)
     if callable(tensor_factory):
         for attempt in (
@@ -129,8 +219,8 @@ def to_lf_selection_mask(mask: object, lf_module: object) -> object:
             ) from exc
 
     raise AdapterUnavailableError(
-        "LichtFeld Studio Python plugin API does not expose a Tensor constructor "
-        "compatible with selection masks."
+        "LichtFeld Studio Python plugin API does not expose a Tensor construction "
+        "strategy compatible with selection masks."
     )
 
 

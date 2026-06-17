@@ -108,24 +108,33 @@ class SelectionState:
         scene: object,
         mask: list[bool],
         lf_module: object,
+        model: object | None = None,
     ) -> None:
         setter = getattr(scene, "set_selection_mask", None)
         if not callable(setter):
             raise AdapterUnavailableError(
                 "Active LichtFeld scene does not expose set_selection_mask for selection updates."
             )
-        setter(to_lf_selection_mask(mask, lf_module))
+        setter(to_lf_selection_mask(mask, lf_module, scene=scene, model=model))
 
     def clear_scene_selection_mask(
         self,
         scene: object,
         expected_length: int,
         lf_module: object,
+        model: object | None = None,
     ) -> None:
         cleared_mask = [False] * expected_length
         setter = getattr(scene, "set_selection_mask", None)
         if callable(setter):
-            setter(to_lf_selection_mask(cleared_mask, lf_module))
+            setter(
+                to_lf_selection_mask(
+                    cleared_mask,
+                    lf_module,
+                    scene=scene,
+                    model=model,
+                )
+            )
             return
         for attribute_name in ("selection_mask", "_selection_mask", "last_selection_mask"):
             if hasattr(scene, attribute_name):

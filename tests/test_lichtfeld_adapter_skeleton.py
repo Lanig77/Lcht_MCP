@@ -68,6 +68,18 @@ class FakeLfTensor:
             source = []
         self._values = [bool(item) for item in source]
 
+    def clone(self):
+        return FakeLfTensor(self._values)
+
+    def copy(self):
+        return FakeLfTensor(self._values)
+
+    def fill(self, value):
+        self._values = [bool(value)] * len(self._values)
+
+    def __setitem__(self, index, value):
+        self._values[index] = bool(value)
+
     def tolist(self):
         return list(self._values)
 
@@ -141,7 +153,9 @@ class FakeScene:
         self.path = path
         self._model = model
         self.last_selection_mask_argument = None
-        self.last_selection_mask = None
+        mask_length = len(model._means_values) if model is not None else 0
+        self.selection_mask = FakeLfTensor([False] * mask_length)
+        self.last_selection_mask = list(self.selection_mask)
         self.notify_changed_calls = 0
 
     def combined_model(self):
@@ -149,6 +163,7 @@ class FakeScene:
 
     def set_selection_mask(self, mask):
         self.last_selection_mask_argument = mask
+        self.selection_mask = mask
         self.last_selection_mask = list(mask)
 
     def get_selection_mask(self):
@@ -704,9 +719,43 @@ def test_select_by_height_raises_clear_error_when_tensor_conversion_is_unavailab
     )
 
     adapter = adapter_module.LichtfeldPluginAdapter()
+    fake_scene.selection_mask = None
+    fake_scene.last_selection_mask = None
 
     with pytest.raises(
         AdapterUnavailableError,
-        match="does not expose a Tensor constructor compatible with selection masks",
+        match="does not expose a Tensor construction strategy compatible with selection masks",
     ):
         adapter.select_by_height(0.0, 2.0)
+
+
+def test_select_by_height_uses_model_deleted_tensor_when_scene_selection_mask_is_missing(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.5],
+                    [1.0, 1.0, 3.0],
+                    [2.0, 2.0, 1.5],
+                ]
+            )
+        )
+    )
+    fake_scene.selection_mask = None
+    fake_scene._model.deleted = FakeLfTensor([False, False, False])
+    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    result = adapter.select_by_height(1.0, 4.0)
+
+    assert result.selected_count == 2
+    assert isinstance(fake_scene.last_selection_mask_argument, FakeLfTensor)
+    assert fake_scene.last_selection_mask == [False, True, True]

@@ -96,7 +96,12 @@ class LichtfeldAdapter(AdapterContract):
             height_mask,
             normalized_mode,
         )
-        self._selection.apply_scene_selection_mask(scene, selection_mask, lichtfeld_module)
+        self._selection.apply_scene_selection_mask(
+            scene,
+            selection_mask,
+            lichtfeld_module,
+            model=model,
+        )
         self._selection.cache_mask(selection_mask)
         notify_scene_changed(scene)
         return SelectionResult(
@@ -119,7 +124,12 @@ class LichtfeldAdapter(AdapterContract):
             min_opacity=min_opacity,
             max_opacity=max_opacity,
         )
-        self._selection.apply_scene_selection_mask(scene, selection_mask, lichtfeld_module)
+        self._selection.apply_scene_selection_mask(
+            scene,
+            selection_mask,
+            lichtfeld_module,
+            model=model,
+        )
         self._selection.cache_mask(selection_mask)
         notify_scene_changed(scene)
         return SelectionResult(
@@ -153,7 +163,12 @@ class LichtfeldAdapter(AdapterContract):
             color_mask,
             normalized_mode,
         )
-        self._selection.apply_scene_selection_mask(scene, selection_mask, lichtfeld_module)
+        self._selection.apply_scene_selection_mask(
+            scene,
+            selection_mask,
+            lichtfeld_module,
+            model=model,
+        )
         self._selection.cache_mask(selection_mask)
         notify_scene_changed(scene)
         return SelectionResult(
@@ -187,7 +202,12 @@ class LichtfeldAdapter(AdapterContract):
             apply_deleted()
 
         remaining_count = len(extract_position_rows(model))
-        self._selection.clear_scene_selection_mask(scene, remaining_count, lichtfeld_module)
+        self._selection.clear_scene_selection_mask(
+            scene,
+            remaining_count,
+            lichtfeld_module,
+            model=model,
+        )
         self._selection.clear_cache()
         notify_scene_changed(scene)
         return ToolResult(message=f"Deleted {sum(selection_mask)} selected splats.")
