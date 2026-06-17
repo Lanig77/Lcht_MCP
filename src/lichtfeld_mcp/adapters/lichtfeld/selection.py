@@ -41,6 +41,21 @@ class SelectionState:
             return 0
         return sum(mask)
 
+    def read_native_selection_mask(self, scene: object) -> object | None:
+        for attribute_name in ("selection_mask", "_selection_mask", "get_selection_mask"):
+            candidate = getattr(scene, attribute_name, None)
+            if callable(candidate):
+                try:
+                    candidate = candidate()
+                except Exception:
+                    continue
+            if candidate is None:
+                continue
+            if isinstance(candidate, (list, tuple)):
+                continue
+            return candidate
+        return None
+
     def build_height_mask(
         self,
         position_rows: list[tuple[float, float, float]],

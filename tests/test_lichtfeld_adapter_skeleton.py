@@ -95,7 +95,9 @@ class FakeModel:
         self._opacity_values = self._unwrap_values(opacity if opacity is not None else [])
         self._colors_values = self._unwrap_values(colors) if colors is not None else None
         self.last_soft_delete_mask = None
+        self.last_soft_delete_argument = None
         self.soft_delete_masks = []
+        self.soft_delete_arguments = []
         self.apply_deleted_calls = 0
 
     def get_means(self):
@@ -113,7 +115,9 @@ class FakeModel:
         return self.get_colors()
 
     def soft_delete(self, mask):
+        self.last_soft_delete_argument = mask
         self.last_soft_delete_mask = list(mask)
+        self.soft_delete_arguments.append(mask)
         self.soft_delete_masks.append(list(mask))
 
     def apply_deleted(self):
@@ -408,6 +412,7 @@ def test_delete_selection_uses_latest_known_mask_and_updates_stats(monkeypatch):
 
     adapter = adapter_module.LichtfeldPluginAdapter()
     adapter.select_by_height(4.0, 1.0)
+    native_mask = fake_scene.selection_mask
 
     deleted = adapter.delete_selection()
     stats = adapter.get_stats()
@@ -415,6 +420,8 @@ def test_delete_selection_uses_latest_known_mask_and_updates_stats(monkeypatch):
     assert deleted.ok is True
     assert deleted.message == "Deleted 2 selected splats."
     assert fake_scene._model.soft_delete_masks == [[False, True, True, False]]
+    assert isinstance(fake_scene._model.last_soft_delete_argument, FakeLfTensor)
+    assert fake_scene._model.last_soft_delete_argument is native_mask
     assert fake_scene._model.apply_deleted_calls == 1
     assert fake_scene.notify_changed_calls == 2
     assert isinstance(fake_scene.last_selection_mask_argument, FakeLfTensor)
@@ -455,6 +462,48 @@ def test_delete_selection_returns_explicit_result_when_no_selection_exists(monke
     assert deleted.message == "No active selection available to delete."
     assert fake_scene._model.last_soft_delete_mask is None
     assert adapter._cached_selection_mask is None
+
+
+def test_delete_selection_raises_clear_error_when_native_selection_mask_is_unavailable(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.5],
+                    [1.0, 1.0, 3.0],
+                    [2.0, 2.0, 1.5],
+                    [3.0, 3.0, 5.0],
+                ]
+            )
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.select_by_height(4.0, 1.0)
+    fake_scene.selection_mask = None
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="no native scene.selection_mask Tensor is available for deletion",
+    ):
+        adapter.delete_selection()
+
+    assert fake_scene._model.last_soft_delete_argument is None
 
 
 def test_select_by_opacity_uses_get_opacity_and_applies_expected_mask(monkeypatch):

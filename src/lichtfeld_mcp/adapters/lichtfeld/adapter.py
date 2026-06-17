@@ -199,6 +199,12 @@ class LichtfeldAdapter(AdapterContract):
         if selection_mask is None or not any(selection_mask):
             self._selection.clear_cache()
             return ToolResult(ok=False, message="No active selection available to delete.")
+        native_selection_mask = self._selection.read_native_selection_mask(scene)
+        if native_selection_mask is None:
+            raise AdapterUnavailableError(
+                "Active LichtFeld selection exists, but no native scene.selection_mask Tensor "
+                "is available for deletion."
+            )
 
         soft_delete = getattr(model, "soft_delete", None)
         if not callable(soft_delete):
@@ -209,7 +215,7 @@ class LichtfeldAdapter(AdapterContract):
         # Current LichtFeld mapping:
         # - model.soft_delete(mask)
         # - model.apply_deleted() when available to commit pending deletions
-        soft_delete(selection_mask)
+        soft_delete(native_selection_mask)
         apply_deleted = getattr(model, "apply_deleted", None)
         if callable(apply_deleted):
             apply_deleted()
