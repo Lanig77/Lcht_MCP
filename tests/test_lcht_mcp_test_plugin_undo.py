@@ -42,15 +42,6 @@ class FakeUndoModel:
     def __init__(self, total_count: int):
         self.total_count = total_count
         self.deleted_count = 0
-        self.undelete_calls = 0
-        self.apply_deleted_calls = 0
-
-    def undelete(self):
-        self.undelete_calls += 1
-        self.deleted_count = 0
-
-    def apply_deleted(self):
-        self.apply_deleted_calls += 1
 
 
 class FakeUndoScene:
@@ -74,6 +65,8 @@ class FakeUndoAdapter:
         self.scene = scene
         self.selected_count = selected_count
         self.delete_calls = 0
+        self.restore_calls = 0
+        self.last_deleted_count = 0
 
     def get_stats(self):
         remaining_count = self.scene._model.total_count - self.scene._model.deleted_count
@@ -87,9 +80,17 @@ class FakeUndoAdapter:
 
     def delete_selection(self):
         self.delete_calls += 1
+        self.last_deleted_count = self.selected_count
         self.scene._model.deleted_count += self.selected_count
         self.selected_count = 0
         return SimpleNamespace(ok=True, message="Deleted selected splats.")
+
+    def restore_last_delete(self):
+        self.restore_calls += 1
+        self.scene._model.deleted_count -= self.last_deleted_count
+        self.last_deleted_count = 0
+        self.scene.notify_changed()
+        return SimpleNamespace(ok=True, message="Restored selected splats.")
 
 
 def _load_runner_modules(monkeypatch):
@@ -123,15 +124,7 @@ def test_run_undo_validation_restores_the_initial_splat_count(monkeypatch):
     fake_model = FakeUndoModel(total_count=100)
     fake_scene = FakeUndoScene(fake_model)
     fake_adapter = FakeUndoAdapter(fake_scene, selected_count=3)
-    deselect_all_calls = {"count": 0}
-
     test_runner.lf.get_scene = lambda: fake_scene
-
-    def fake_deselect_all():
-        deselect_all_calls["count"] += 1
-        fake_adapter.selected_count = 0
-
-    test_runner.lf.deselect_all = fake_deselect_all
     monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
 
     success, message = test_runner.run_undo_validation()
@@ -139,9 +132,7 @@ def test_run_undo_validation_restores_the_initial_splat_count(monkeypatch):
     assert success is True
     assert "restored" in message
     assert fake_adapter.delete_calls == 1
-    assert fake_model.undelete_calls == 1
-    assert fake_model.apply_deleted_calls == 1
+    assert fake_adapter.restore_calls == 1
     assert fake_scene.notify_changed_calls == 1
-    assert deselect_all_calls["count"] == 1
     assert fake_adapter.get_stats().splat_count == 100
     assert fake_adapter.get_stats().selected_count == 0

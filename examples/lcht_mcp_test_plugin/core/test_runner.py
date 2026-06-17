@@ -104,39 +104,14 @@ def _selected_percentage(selected_count: int, total_splats: int) -> float:
     return selected_count / total_splats
 
 
-def _restore_deleted_splats() -> None:
-    get_scene = getattr(lf, "get_scene", None)
-    if not callable(get_scene):
-        raise RuntimeError("LichtFeld runtime does not expose get_scene() for undo validation.")
-
-    scene = get_scene()
-    if scene is None:
-        raise RuntimeError("LichtFeld runtime returned no active scene for undo validation.")
-
-    combined_model = getattr(scene, "combined_model", None)
-    if not callable(combined_model):
-        raise RuntimeError("Active LichtFeld scene does not expose combined_model() for undo validation.")
-
-    model = combined_model()
-    if model is None:
-        raise RuntimeError("Active LichtFeld scene returned no combined model for undo validation.")
-
-    undelete = getattr(model, "undelete", None)
-    if not callable(undelete):
-        raise RuntimeError("Active LichtFeld combined model does not expose undelete() for undo validation.")
-
-    undelete()
-    _log_info("model.undelete() executed.")
-
-    apply_deleted = getattr(model, "apply_deleted", None)
-    if callable(apply_deleted):
-        apply_deleted()
-        _log_info("model.apply_deleted() executed after undelete().")
-
-    notify_changed = getattr(scene, "notify_changed", None)
-    if callable(notify_changed):
-        notify_changed()
-        _log_info("scene.notify_changed() executed after undelete().")
+def _restore_deleted_splats(adapter) -> None:
+    restore_last_delete = getattr(adapter, "restore_last_delete", None)
+    if not callable(restore_last_delete):
+        raise RuntimeError("LichtFeldAdapter does not expose restore_last_delete() for undo validation.")
+    restore_result = restore_last_delete()
+    _log_info(f"restore_last_delete ok={restore_result.ok} message={restore_result.message}")
+    if not restore_result.ok:
+        raise RuntimeError(restore_result.message)
 
 
 def run_lcht_mcp_test() -> tuple[bool, str]:
@@ -487,7 +462,7 @@ def run_undo_validation() -> tuple[bool, str]:
         return False, message
 
     try:
-        _restore_deleted_splats()
+        _restore_deleted_splats(adapter)
         restored_stats = adapter.get_stats()
         _log_info(f"final_splat_count={restored_stats.splat_count}")
         _log_info(f"final_selected_count={restored_stats.selected_count}")

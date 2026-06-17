@@ -53,6 +53,8 @@ class LichtfeldAdapter(AdapterContract):
         self._training = TrainingOperations()
         self._export = ExportOperations()
         self._cameras = CameraOperations()
+        self._last_delete_mask: object | None = None
+        self._last_delete_count = 0
 
     @property
     def _cached_selection_mask(self) -> list[bool] | None:
@@ -233,7 +235,12 @@ class LichtfeldAdapter(AdapterContract):
             _safe_length(native_selection_mask),
         )
         logger.info("LichtFeld delete_selection: before model.soft_delete()")
-        soft_delete(native_selection_mask)
+        self._store_last_delete(native_selection_mask, selected_count)
+        try:
+            soft_delete(native_selection_mask)
+        except Exception:
+            self._clear_last_delete()
+            raise
         logger.info("LichtFeld delete_selection: after model.soft_delete()")
 
         self._log_delete_cleanup_step(
@@ -274,6 +281,69 @@ class LichtfeldAdapter(AdapterContract):
             lambda: self._notify_scene_changed(scene),
         )
         return ToolResult(message=f"Deleted {selected_count} selected splats.")
+
+    def restore_last_delete(self) -> ToolResult:
+        if self._last_delete_mask is None or self._last_delete_count <= 0:
+            raise AdapterUnavailableError("No previous LichtFeld delete is available to restore.")
+
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        undelete = getattr(model, "undelete", None)
+        if not callable(undelete):
+            raise AdapterUnavailableError(
+                "Active LichtFeld combined model does not expose undelete(mask) for restore."
+            )
+
+        logger.info(
+            "LichtFeld restore_last_delete: deleted_count=%s native_mask_type=%s native_mask_len=%s",
+            self._last_delete_count,
+            type(self._last_delete_mask).__name__,
+            _safe_length(self._last_delete_mask),
+        )
+        logger.info("LichtFeld restore_last_delete: before model.undelete()")
+        undelete(self._last_delete_mask)
+        logger.info("LichtFeld restore_last_delete: after model.undelete()")
+
+        apply_deleted = getattr(model, "apply_deleted", None)
+        if callable(apply_deleted):
+            logger.info("LichtFeld restore_last_delete: before model.apply_deleted()")
+            apply_deleted()
+            logger.info(
+                "LichtFeld restore_last_delete: after model.apply_deleted() splat_count=%s",
+                len(extract_position_rows(model)),
+            )
+        else:
+            logger.info("LichtFeld restore_last_delete: model.apply_deleted() skipped")
+
+        self._log_delete_cleanup_step(
+            "scene.reset_selection_state()",
+            lambda: self._selection.reset_selection_state(scene),
+        )
+        self._log_delete_cleanup_step(
+            "scene.clear_selection() post-undelete",
+            lambda: self._selection.clear_selection_via_scene(scene),
+        )
+        self._log_delete_cleanup_step(
+            "lichtfeld.deselect_all() post-undelete",
+            lambda: self._selection.deselect_all(lichtfeld_module),
+        )
+        self._selection.clear_cache()
+        self._log_delete_cleanup_step(
+            "scene.notify_changed()",
+            lambda: self._notify_scene_changed(scene),
+        )
+        restored_count = self._last_delete_count
+        self._clear_last_delete()
+        return ToolResult(message=f"Restored {restored_count} deleted splats.")
+
+    def _store_last_delete(self, native_mask: object, deleted_count: int) -> None:
+        self._last_delete_mask = native_mask
+        self._last_delete_count = deleted_count
+
+    def _clear_last_delete(self) -> None:
+        self._last_delete_mask = None
+        self._last_delete_count = 0
 
     @staticmethod
     def _notify_scene_changed(scene: object) -> bool:
