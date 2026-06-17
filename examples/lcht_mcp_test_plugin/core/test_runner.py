@@ -178,7 +178,7 @@ def run_cluster_analysis_preview() -> tuple[bool, str]:
     """Run a non-destructive cluster analysis summary on the active LichtFeld scene."""
     config = snapshot_runtime_config()
     _log_info(
-        "Starting cluster analysis preview with "
+        "Starting sampled cluster analysis preview with "
         f"distance_threshold={config.cluster_distance_threshold:.4f}, "
         f"min_cluster_size={config.cluster_min_cluster_size}, "
         f"max_cluster_analysis_splats={config.max_cluster_analysis_splats}, "

@@ -124,16 +124,20 @@ class LichtfeldAdapter(AdapterContract):
         distance_threshold: float,
         min_cluster_size: int = 1,
         max_cluster_analysis_splats: int = 100_000,
-        abort_if_splat_count_above_limit: bool = True,
+        abort_if_splat_count_above_limit: bool = False,
     ) -> ClusterAnalysisSummary:
         if max_cluster_analysis_splats < 1:
             raise InvalidParameterError("max_cluster_analysis_splats must be at least 1.")
 
+        logger.info("LichtFeld cluster preview: before get_stats")
         stats = self.get_stats()
         logger.info(
-            "LichtFeld cluster preview: total_splats=%s max_cluster_analysis_splats=%s "
-            "abort_if_splat_count_above_limit=%s",
+            "LichtFeld cluster preview: after get_stats total_splats=%s",
             stats.splat_count,
+        )
+        logger.info(
+            "LichtFeld cluster preview: max_cluster_analysis_splats=%s "
+            "abort_if_splat_count_above_limit=%s",
             max_cluster_analysis_splats,
             abort_if_splat_count_above_limit,
         )
@@ -175,19 +179,24 @@ class LichtfeldAdapter(AdapterContract):
             len(position_rows),
         )
 
+        logger.info(
+            "LichtFeld cluster preview: before sampling total_splats=%s max_cluster_analysis_splats=%s",
+            len(position_rows),
+            max_cluster_analysis_splats,
+        )
         sampled_rows, sampling_stride = sample_position_rows(
             position_rows,
             max_cluster_analysis_splats,
         )
         approximate = len(sampled_rows) != len(position_rows)
-        if approximate:
-            logger.info(
-                "LichtFeld cluster preview: sampled approximate analysis with stride=%s "
-                "analyzed_splats=%s total_splats=%s",
-                sampling_stride,
-                len(sampled_rows),
-                len(position_rows),
-            )
+        logger.info(
+            "LichtFeld cluster preview: after sampling analyzed_splats=%s total_splats=%s "
+            "sampling_stride=%s approximate=%s",
+            len(sampled_rows),
+            len(position_rows),
+            sampling_stride,
+            approximate,
+        )
 
         logger.info(
             "LichtFeld cluster preview: before building GaussianCloud analyzed_splats=%s",

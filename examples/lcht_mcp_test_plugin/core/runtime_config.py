@@ -31,7 +31,7 @@ class RuntimeConfig:
     cluster_distance_threshold: float = 0.10
     cluster_min_cluster_size: int = 100
     max_cluster_analysis_splats: int = 100_000
-    abort_if_splat_count_above_limit: bool = True
+    abort_if_splat_count_above_limit: bool = False
 
 
 _runtime_config = RuntimeConfig()

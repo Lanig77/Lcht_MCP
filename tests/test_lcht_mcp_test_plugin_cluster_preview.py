@@ -48,7 +48,6 @@ def test_run_cluster_analysis_preview_uses_runtime_config_and_returns_success(mo
     runtime_config.adjust_cluster_distance_threshold(0.05)
     runtime_config.adjust_cluster_min_cluster_size(25)
     runtime_config.adjust_max_cluster_analysis_splats(20_000)
-    runtime_config.disable_cluster_analysis_abort()
     fake_adapter = FakeClusterPreviewAdapter()
     monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
 

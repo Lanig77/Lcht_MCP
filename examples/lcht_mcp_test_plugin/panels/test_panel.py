@@ -56,6 +56,10 @@ class LchtMcpTestPanel(lf.ui.Panel):
             "Safe smoke test for the LichtFeld adapter.",
             theme.palette.text_dim,
         )
+        layout.text_colored(
+            "Sampled preview, approximate on large scenes.",
+            theme.palette.text_dim,
+        )
         layout.spacing()
 
         safe_delete_color = (
@@ -107,8 +111,8 @@ class LchtMcpTestPanel(lf.ui.Panel):
             else (1.0, 0.75, 0.4, 1.0)
         )
         layout.text_colored(
-            "Abort Above Limit: "
-            f"{'ON' if config.abort_if_splat_count_above_limit else 'OFF (sampled approximate mode)'}",
+            "Abort Above Limit Instead Of Sampling: "
+            f"{'ON' if config.abort_if_splat_count_above_limit else 'OFF'}",
             cluster_abort_color,
         )
         layout.text_colored(
@@ -183,7 +187,7 @@ class LchtMcpTestPanel(lf.ui.Panel):
             lf.ui.ops.invoke(MAX_DELETABLE_PERCENTAGE_UP_OPERATOR_ID)
 
         layout.spacing()
-        layout.label("Cluster Analysis Controls")
+        layout.label("Cluster Analysis Controls - Sampled preview, approximate on large scenes")
         if layout.button_styled(
             "Cluster Distance -##cluster_distance_down",
             "secondary",
@@ -221,7 +225,7 @@ class LchtMcpTestPanel(lf.ui.Panel):
         ):
             lf.ui.ops.invoke(MAX_CLUSTER_ANALYSIS_SPLATS_UP_OPERATOR_ID)
         if layout.button_styled(
-            "Abort Above Limit##cluster_abort_on",
+            "Abort Instead Of Sampling##cluster_abort_on",
             "secondary",
             (-1, 28 * scale),
         ):
