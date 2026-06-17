@@ -71,9 +71,11 @@ def extract_opacity_values(model: object) -> list[float]:
 
 def extract_color_rows(model: object) -> list[tuple[float, float, float]]:
     colors = None
-    get_colors = getattr(model, "get_colors", None)
-    if callable(get_colors):
-        colors = get_colors()
+    for method_name in ("get_colors_rgb", "get_colors"):
+        get_colors = getattr(model, method_name, None)
+        if callable(get_colors):
+            colors = get_colors()
+            break
     if colors is None:
         for attribute_name in ("colors", "colors_raw", "rgb", "rgb_raw"):
             if hasattr(model, attribute_name):

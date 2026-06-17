@@ -25,28 +25,41 @@ def load_lichtfeld() -> object:
 
 
 def require_active_scene(lichtfeld_module: object) -> object:
-    for attribute_name in (
-        "scene",
-        "current_scene",
-        "active_scene",
-        "get_scene",
-        "get_current_scene",
-        "get_active_scene",
-    ):
-        candidate = getattr(lichtfeld_module, attribute_name, None)
-        if callable(candidate):
-            candidate = candidate()
-        if candidate is not None:
-            return candidate
-    raise AdapterUnavailableError(
-        "No active LichtFeld scene is available from the Python plugin API."
-    )
+    get_scene = getattr(lichtfeld_module, "get_scene", None)
+    if not callable(get_scene):
+        raise AdapterUnavailableError(
+            "LichtFeld Studio Python plugin API does not expose get_scene()."
+        )
+    try:
+        scene = get_scene()
+    except Exception as exc:
+        raise AdapterUnavailableError(
+            "LichtFeld Studio get_scene() failed to provide an active scene."
+        ) from exc
+    if scene is None:
+        raise AdapterUnavailableError(
+            "No active LichtFeld scene is available from lichtfeld.get_scene()."
+        )
+    combined_model = getattr(scene, "combined_model", None)
+    if not callable(combined_model):
+        raise AdapterUnavailableError(
+            "Active LichtFeld scene is invalid: combined_model() is not available."
+        )
+    return scene
 
 
 def require_combined_model(scene: object) -> object:
     combined_model = getattr(scene, "combined_model", None)
-    if callable(combined_model):
+    if not callable(combined_model):
+        raise AdapterUnavailableError(
+            "Active LichtFeld scene is invalid: combined_model() is not available."
+        )
+    try:
         combined_model = combined_model()
+    except Exception as exc:
+        raise AdapterUnavailableError(
+            "Active LichtFeld scene combined_model() failed."
+        ) from exc
     if combined_model is None:
         raise AdapterUnavailableError(
             "No active LichtFeld combined model is available for statistics."

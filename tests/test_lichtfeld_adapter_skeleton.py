@@ -83,6 +83,9 @@ class FakeModel:
             return None
         return FakeTorchTensor(self._colors_values)
 
+    def get_colors_rgb(self):
+        return self.get_colors()
+
     def soft_delete(self, mask):
         self.last_soft_delete_mask = list(mask)
         self.soft_delete_masks.append(list(mask))
@@ -151,7 +154,7 @@ def test_get_stats_uses_active_lichtfeld_scene_and_computes_bounds(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
     fake_module = SimpleNamespace(
-        scene=FakeScene(
+        get_scene=lambda: FakeScene(
             FakeModel(
                 means=FakeTorchTensor(
                     [
@@ -190,7 +193,7 @@ def test_get_stats_uses_active_lichtfeld_scene_and_computes_bounds(monkeypatch):
 def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
-    fake_module = SimpleNamespace(scene=None)
+    fake_module = SimpleNamespace(get_scene=lambda: None)
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -210,7 +213,7 @@ def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):
 def test_get_stats_raises_clear_error_when_no_combined_model_exists(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
-    fake_module = SimpleNamespace(scene=FakeScene(model=None))
+    fake_module = SimpleNamespace(get_scene=lambda: FakeScene(model=None))
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -242,7 +245,7 @@ def test_select_by_height_normalizes_range_and_applies_expected_mask(monkeypatch
             )
         )
     )
-    fake_module = SimpleNamespace(scene=fake_scene)
+    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -264,7 +267,7 @@ def test_select_by_height_raises_clear_error_when_selection_api_is_missing(monke
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
     fake_module = SimpleNamespace(
-        scene=FakeSceneWithoutSelectionApi(
+        get_scene=lambda: FakeSceneWithoutSelectionApi(
             FakeModel(
                 means=FakeTorchTensor(
                     [
@@ -329,7 +332,7 @@ def test_delete_selection_uses_latest_known_mask_and_updates_stats(monkeypatch):
             opacity=FakeTorchTensor([0.1, 0.2, 0.3, 0.4]),
         )
     )
-    fake_module = SimpleNamespace(scene=fake_scene)
+    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -369,7 +372,7 @@ def test_delete_selection_returns_explicit_result_when_no_selection_exists(monke
             )
         )
     )
-    fake_module = SimpleNamespace(scene=fake_scene)
+    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -402,7 +405,7 @@ def test_select_by_opacity_uses_get_opacity_and_applies_expected_mask(monkeypatc
             opacity=FakeTorchTensor([0.1, 0.5, 0.9]),
         )
     )
-    fake_module = SimpleNamespace(scene=fake_scene)
+    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -437,7 +440,7 @@ def test_select_by_opacity_falls_back_to_opacity_attribute_and_normalizes_range(
             opacity=FakeTorchTensor([0.15, 0.4, 0.75, 0.95]),
         )
     )
-    fake_module = SimpleNamespace(scene=fake_scene)
+    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -462,7 +465,7 @@ def test_select_by_opacity_rejects_invalid_requested_range(monkeypatch):
             opacity=FakeTorchTensor([0.5]),
         )
     )
-    fake_module = SimpleNamespace(scene=fake_scene)
+    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -493,7 +496,7 @@ def test_select_by_opacity_rejects_invalid_model_opacity_values(monkeypatch):
             opacity=FakeTorchTensor([0.2, 1.5]),
         )
     )
-    fake_module = SimpleNamespace(scene=fake_scene)
+    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -530,7 +533,7 @@ def test_select_by_color_uses_get_colors_with_float_values_and_tolerance(monkeyp
             ),
         )
     )
-    fake_module = SimpleNamespace(scene=fake_scene)
+    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -571,7 +574,7 @@ def test_select_by_color_falls_back_to_color_attribute_with_int_values(monkeypat
             attribute_name="rgb_raw",
         )
     )
-    fake_module = SimpleNamespace(scene=fake_scene)
+    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -596,7 +599,7 @@ def test_select_by_color_rejects_invalid_rgb_and_tolerance(monkeypatch):
             colors=FakeTorchTensor([[1.0, 0.0, 0.0]]),
         )
     )
-    fake_module = SimpleNamespace(scene=fake_scene)
+    fake_module = SimpleNamespace(get_scene=lambda: fake_scene)
 
     monkeypatch.setattr(
         adapter_module.importlib,
@@ -611,3 +614,47 @@ def test_select_by_color_rejects_invalid_rgb_and_tolerance(monkeypatch):
 
     with pytest.raises(InvalidParameterError, match="tolerance must be between 0 and 255"):
         adapter.select_by_color(0, 0, 0, tolerance=-1)
+
+
+def test_get_stats_raises_clear_error_when_get_scene_fails(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+
+    def fail_get_scene():
+        raise RuntimeError("runtime unavailable")
+
+    fake_module = SimpleNamespace(get_scene=fail_get_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="get_scene\\(\\) failed to provide an active scene",
+    ):
+        adapter.get_stats()
+
+
+def test_get_stats_raises_clear_error_when_scene_is_invalid(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_module = SimpleNamespace(get_scene=lambda: SimpleNamespace(name="invalid"))
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="Active LichtFeld scene is invalid: combined_model\\(\\) is not available",
+    ):
+        adapter.get_stats()
