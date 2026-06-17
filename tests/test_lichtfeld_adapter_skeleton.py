@@ -334,11 +334,94 @@ def test_analyze_clusters_preview_builds_gaussian_cloud_snapshot_and_returns_sum
     summary = adapter.analyze_clusters_preview(distance_threshold=0.5, min_cluster_size=2)
 
     assert summary.total_splats == 5
+    assert summary.analyzed_splats == 5
     assert summary.total_clusters == 3
     assert summary.largest_cluster_size == 2
     assert summary.small_cluster_count == 1
     assert summary.candidate_floating_cluster_count == 1
     assert summary.candidate_floating_splat_count == 1
+    assert summary.approximate is False
+    assert summary.refused is False
+    assert summary.sampling_stride == 1
+    assert summary.message == "Cluster analysis preview complete."
+
+
+def test_analyze_clusters_preview_refuses_safely_above_limit_by_default(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    adapter_impl_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld.adapter")
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    monkeypatch.setattr(
+        adapter,
+        "get_stats",
+        lambda: SimpleNamespace(splat_count=200_000),
+    )
+    monkeypatch.setattr(
+        adapter_impl_module,
+        "load_lichtfeld",
+        lambda: (_ for _ in ()).throw(AssertionError("scene lookup should be skipped")),
+    )
+
+    summary = adapter.analyze_clusters_preview(
+        distance_threshold=0.5,
+        min_cluster_size=100,
+        max_cluster_analysis_splats=100_000,
+        abort_if_splat_count_above_limit=True,
+    )
+
+    assert summary.total_splats == 200_000
+    assert summary.analyzed_splats == 0
+    assert summary.total_clusters == 0
+    assert summary.approximate is False
+    assert summary.refused is True
+    assert "Refused cluster analysis preview" in summary.message
+
+
+def test_analyze_clusters_preview_uses_sampled_approximate_mode_when_abort_is_disabled(
+    monkeypatch,
+):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [0.2, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [5.1, 5.0, 5.0],
+                    [5.2, 5.0, 5.0],
+                ]
+            )
+        )
+    )
+    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    summary = adapter.analyze_clusters_preview(
+        distance_threshold=0.5,
+        min_cluster_size=2,
+        max_cluster_analysis_splats=3,
+        abort_if_splat_count_above_limit=False,
+    )
+
+    assert summary.total_splats == 6
+    assert summary.analyzed_splats == 3
+    assert summary.total_clusters == 2
+    assert summary.largest_cluster_size == 2
+    assert summary.small_cluster_count == 1
+    assert summary.candidate_floating_cluster_count == 1
+    assert summary.candidate_floating_splat_count == 1
+    assert summary.approximate is True
+    assert summary.refused is False
+    assert summary.sampling_stride == 2
+    assert "approximate sampled mode" in summary.message
 
 
 def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):

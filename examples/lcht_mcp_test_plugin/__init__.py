@@ -14,7 +14,11 @@ from .operators.runtime_controls import (
     LCHTMCP_OT_cluster_distance_up,
     LCHTMCP_OT_cluster_min_size_down,
     LCHTMCP_OT_cluster_min_size_up,
+    LCHTMCP_OT_disable_cluster_analysis_abort,
     LCHTMCP_OT_arm_safe_delete,
+    LCHTMCP_OT_enable_cluster_analysis_abort,
+    LCHTMCP_OT_max_cluster_analysis_splats_down,
+    LCHTMCP_OT_max_cluster_analysis_splats_up,
     LCHTMCP_OT_confirm_safe_delete,
     LCHTMCP_OT_disarm_safe_delete,
     LCHTMCP_OT_max_deletable_percentage_down,
@@ -62,6 +66,10 @@ _classes = [
     LCHTMCP_OT_cluster_distance_up,
     LCHTMCP_OT_cluster_min_size_down,
     LCHTMCP_OT_cluster_min_size_up,
+    LCHTMCP_OT_max_cluster_analysis_splats_down,
+    LCHTMCP_OT_max_cluster_analysis_splats_up,
+    LCHTMCP_OT_enable_cluster_analysis_abort,
+    LCHTMCP_OT_disable_cluster_analysis_abort,
 ]
 
 

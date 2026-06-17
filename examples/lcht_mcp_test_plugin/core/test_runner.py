@@ -180,7 +180,10 @@ def run_cluster_analysis_preview() -> tuple[bool, str]:
     _log_info(
         "Starting cluster analysis preview with "
         f"distance_threshold={config.cluster_distance_threshold:.4f}, "
-        f"min_cluster_size={config.cluster_min_cluster_size}."
+        f"min_cluster_size={config.cluster_min_cluster_size}, "
+        f"max_cluster_analysis_splats={config.max_cluster_analysis_splats}, "
+        "abort_if_splat_count_above_limit="
+        f"{config.abort_if_splat_count_above_limit}."
     )
 
     try:
@@ -201,13 +204,33 @@ def run_cluster_analysis_preview() -> tuple[bool, str]:
         summary = analyze_clusters_preview(
             distance_threshold=config.cluster_distance_threshold,
             min_cluster_size=config.cluster_min_cluster_size,
+            max_cluster_analysis_splats=config.max_cluster_analysis_splats,
+            abort_if_splat_count_above_limit=config.abort_if_splat_count_above_limit,
         )
     except Exception as exc:
         message = f"Cluster analysis preview failed: {exc}"
         _log_error(message)
         return False, message
 
+    if summary.refused:
+        _log_info(summary.message)
+        return True, summary.message
+
     _log_info(f"total_splats={summary.total_splats}")
+    _log_info(f"analyzed_splats={summary.analyzed_splats}")
+    if summary.approximate:
+        sampling_ratio = (
+            0.0
+            if summary.total_splats <= 0
+            else summary.analyzed_splats / summary.total_splats
+        )
+        _log_info(
+            "approximate_analysis=True "
+            f"sampling_stride={summary.sampling_stride} "
+            f"sampling_ratio={sampling_ratio:.6f}"
+        )
+    else:
+        _log_info("approximate_analysis=False")
     _log_info(f"total_clusters={summary.total_clusters}")
     _log_info(f"largest_cluster_size={summary.largest_cluster_size}")
     _log_info(f"clusters_smaller_than_threshold={summary.small_cluster_count}")
@@ -219,7 +242,7 @@ def run_cluster_analysis_preview() -> tuple[bool, str]:
         "candidate_floating_splats="
         f"{summary.candidate_floating_splat_count}"
     )
-    message = "Cluster analysis preview complete."
+    message = summary.message
     _log_info(message)
     return True, message
 

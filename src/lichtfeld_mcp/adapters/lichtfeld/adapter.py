@@ -19,7 +19,7 @@ from lichtfeld_mcp.core.constraints import (
 )
 from lichtfeld_mcp.core.requests import HeightRange
 from lichtfeld_mcp.core.validation import normalize_scene_path
-from lichtfeld_mcp.errors import AdapterUnavailableError
+from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 from lichtfeld_mcp.schemas.common import (
     Box3D,
     ExportResult,
@@ -36,10 +36,11 @@ from lichtfeld_mcp.schemas.common import (
 from .cameras import CameraOperations
 from .export import ExportOperations
 from .gaussian import (
-    build_gaussian_cloud_snapshot,
+    build_gaussian_cloud_from_positions,
     extract_color_rows,
     extract_opacity_values,
     extract_position_rows,
+    sample_position_rows,
 )
 from .scene import build_scene_stats, notify_scene_changed
 from .selection import SelectionState
@@ -62,11 +63,16 @@ class ClusterAnalysisSummary:
     distance_threshold: float
     min_cluster_size: int
     total_splats: int
+    analyzed_splats: int
     total_clusters: int
     largest_cluster_size: int
     small_cluster_count: int
     candidate_floating_cluster_count: int
     candidate_floating_splat_count: int
+    approximate: bool
+    refused: bool
+    sampling_stride: int
+    message: str
 
 
 class LichtfeldAdapter(AdapterContract):
@@ -117,15 +123,95 @@ class LichtfeldAdapter(AdapterContract):
         self,
         distance_threshold: float,
         min_cluster_size: int = 1,
+        max_cluster_analysis_splats: int = 100_000,
+        abort_if_splat_count_above_limit: bool = True,
     ) -> ClusterAnalysisSummary:
+        if max_cluster_analysis_splats < 1:
+            raise InvalidParameterError("max_cluster_analysis_splats must be at least 1.")
+
+        stats = self.get_stats()
+        logger.info(
+            "LichtFeld cluster preview: total_splats=%s max_cluster_analysis_splats=%s "
+            "abort_if_splat_count_above_limit=%s",
+            stats.splat_count,
+            max_cluster_analysis_splats,
+            abort_if_splat_count_above_limit,
+        )
+        if (
+            abort_if_splat_count_above_limit
+            and stats.splat_count > max_cluster_analysis_splats
+        ):
+            message = (
+                "Refused cluster analysis preview because "
+                f"splat_count={stats.splat_count} exceeds "
+                f"max_cluster_analysis_splats={max_cluster_analysis_splats}. "
+                "Disable the abort flag to run sampled approximate analysis instead."
+            )
+            logger.info("LichtFeld cluster preview: %s", message)
+            return ClusterAnalysisSummary(
+                distance_threshold=distance_threshold,
+                min_cluster_size=min_cluster_size,
+                total_splats=stats.splat_count,
+                analyzed_splats=0,
+                total_clusters=0,
+                largest_cluster_size=0,
+                small_cluster_count=0,
+                candidate_floating_cluster_count=0,
+                candidate_floating_splat_count=0,
+                approximate=False,
+                refused=True,
+                sampling_stride=1,
+                message=message,
+            )
+
         lichtfeld_module = load_lichtfeld()
         scene = require_active_scene(lichtfeld_module)
         model = require_combined_model(scene)
-        cloud = build_gaussian_cloud_snapshot(model)
+
+        logger.info("LichtFeld cluster preview: before reading means")
+        position_rows = extract_position_rows(model)
+        logger.info(
+            "LichtFeld cluster preview: after reading means total_positions=%s",
+            len(position_rows),
+        )
+
+        sampled_rows, sampling_stride = sample_position_rows(
+            position_rows,
+            max_cluster_analysis_splats,
+        )
+        approximate = len(sampled_rows) != len(position_rows)
+        if approximate:
+            logger.info(
+                "LichtFeld cluster preview: sampled approximate analysis with stride=%s "
+                "analyzed_splats=%s total_splats=%s",
+                sampling_stride,
+                len(sampled_rows),
+                len(position_rows),
+            )
+
+        logger.info(
+            "LichtFeld cluster preview: before building GaussianCloud analyzed_splats=%s",
+            len(sampled_rows),
+        )
+        cloud = build_gaussian_cloud_from_positions(sampled_rows)
+        logger.info(
+            "LichtFeld cluster preview: after building GaussianCloud splat_count=%s",
+            cloud.count(),
+        )
+
+        logger.info(
+            "LichtFeld cluster preview: before clustering approximate=%s sampling_stride=%s",
+            approximate,
+            sampling_stride,
+        )
         clusters = analyze_clusters(
             cloud,
             distance_threshold=distance_threshold,
             min_cluster_size=1,
+        )
+        logger.info(
+            "LichtFeld cluster preview: after clustering total_clusters=%s",
+            len(clusters),
         )
         largest = largest_cluster(clusters)
         small_clusters = clusters_smaller_than(clusters, min_cluster_size)
@@ -134,10 +220,17 @@ class LichtfeldAdapter(AdapterContract):
             for cluster in clusters_outside_largest(clusters)
             if cluster.count < min_cluster_size
         ]
+        if approximate:
+            message = (
+                "Cluster analysis preview complete in approximate sampled mode."
+            )
+        else:
+            message = "Cluster analysis preview complete."
         return ClusterAnalysisSummary(
             distance_threshold=distance_threshold,
             min_cluster_size=min_cluster_size,
-            total_splats=cloud.count(),
+            total_splats=len(position_rows),
+            analyzed_splats=cloud.count(),
             total_clusters=len(clusters),
             largest_cluster_size=0 if largest is None else largest.count,
             small_cluster_count=len(small_clusters),
@@ -145,6 +238,10 @@ class LichtfeldAdapter(AdapterContract):
             candidate_floating_splat_count=sum(
                 cluster.count for cluster in candidate_floating_clusters
             ),
+            approximate=approximate,
+            refused=False,
+            sampling_stride=sampling_stride,
+            message=message,
         )
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:
@@ -533,4 +630,4 @@ class LichtfeldAdapter(AdapterContract):
 
 LichtfeldPluginAdapter = LichtfeldAdapter
 
-__all__ = ["LichtfeldAdapter", "LichtfeldPluginAdapter"]
+__all__ = ["ClusterAnalysisSummary", "LichtfeldAdapter", "LichtfeldPluginAdapter"]

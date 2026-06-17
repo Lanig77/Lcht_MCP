@@ -16,7 +16,11 @@ from ..operators.runtime_controls import (
     CLUSTER_MIN_SIZE_DOWN_OPERATOR_ID,
     CLUSTER_MIN_SIZE_UP_OPERATOR_ID,
     CONFIRM_SAFE_DELETE_OPERATOR_ID,
+    DISABLE_CLUSTER_ANALYSIS_ABORT_OPERATOR_ID,
     DISARM_SAFE_DELETE_OPERATOR_ID,
+    ENABLE_CLUSTER_ANALYSIS_ABORT_OPERATOR_ID,
+    MAX_CLUSTER_ANALYSIS_SPLATS_DOWN_OPERATOR_ID,
+    MAX_CLUSTER_ANALYSIS_SPLATS_UP_OPERATOR_ID,
     MAX_DELETABLE_PERCENTAGE_DOWN_OPERATOR_ID,
     MAX_DELETABLE_PERCENTAGE_UP_OPERATOR_ID,
     MAX_DELETABLE_SPLATS_DOWN_OPERATOR_ID,
@@ -92,6 +96,20 @@ class LchtMcpTestPanel(lf.ui.Panel):
         layout.label(
             "Cluster Min Size: "
             f"{config.cluster_min_cluster_size}"
+        )
+        layout.label(
+            "Cluster Max Analysis Splats: "
+            f"{config.max_cluster_analysis_splats}"
+        )
+        cluster_abort_color = (
+            (0.4, 1.0, 0.4, 1.0)
+            if config.abort_if_splat_count_above_limit
+            else (1.0, 0.75, 0.4, 1.0)
+        )
+        layout.text_colored(
+            "Abort Above Limit: "
+            f"{'ON' if config.abort_if_splat_count_above_limit else 'OFF (sampled approximate mode)'}",
+            cluster_abort_color,
         )
         layout.text_colored(
             "Check the LichtFeld log for splat_count, bounding_box and selected_count.",
@@ -190,6 +208,30 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 28 * scale),
         ):
             lf.ui.ops.invoke(CLUSTER_MIN_SIZE_UP_OPERATOR_ID)
+        if layout.button_styled(
+            "Cluster Max Splats -##cluster_max_splats_down",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(MAX_CLUSTER_ANALYSIS_SPLATS_DOWN_OPERATOR_ID)
+        if layout.button_styled(
+            "Cluster Max Splats +##cluster_max_splats_up",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(MAX_CLUSTER_ANALYSIS_SPLATS_UP_OPERATOR_ID)
+        if layout.button_styled(
+            "Abort Above Limit##cluster_abort_on",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(ENABLE_CLUSTER_ANALYSIS_ABORT_OPERATOR_ID)
+        if layout.button_styled(
+            "Allow Sampled Mode##cluster_abort_off",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(DISABLE_CLUSTER_ANALYSIS_ABORT_OPERATOR_ID)
 
         layout.spacing()
         if layout.button_styled("Run Lcht MCP Test##run", "primary", (-1, 34 * scale)):

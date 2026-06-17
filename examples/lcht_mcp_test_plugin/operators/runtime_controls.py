@@ -8,12 +8,14 @@ import lichtfeld as lf
 from lfs_plugins.types import Event, Operator
 
 from ..core.runtime_config import (
+    CLUSTER_ANALYSIS_SPLATS_STEP,
     CLUSTER_DISTANCE_STEP,
     CLUSTER_MIN_SIZE_STEP,
     MAX_RATIO_STEP,
     MAX_SPLATS_STEP,
     SAFE_DELETE_Z_STEP,
     SMOKE_Z_STEP,
+    adjust_max_cluster_analysis_splats,
     adjust_cluster_distance_threshold,
     adjust_cluster_min_cluster_size,
     adjust_max_deletable_percentage,
@@ -23,6 +25,8 @@ from ..core.runtime_config import (
     adjust_smoke_test_max_z,
     adjust_smoke_test_min_z,
     arm_safe_delete,
+    disable_cluster_analysis_abort,
+    enable_cluster_analysis_abort,
     confirm_safe_delete,
     disarm_safe_delete,
     snapshot_runtime_config,
@@ -105,6 +109,22 @@ CLUSTER_MIN_SIZE_UP_OPERATOR_ID = (
     "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
     "LCHTMCP_OT_cluster_min_size_up"
 )
+MAX_CLUSTER_ANALYSIS_SPLATS_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_max_cluster_analysis_splats_down"
+)
+MAX_CLUSTER_ANALYSIS_SPLATS_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_max_cluster_analysis_splats_up"
+)
+ENABLE_CLUSTER_ANALYSIS_ABORT_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_enable_cluster_analysis_abort"
+)
+DISABLE_CLUSTER_ANALYSIS_ABORT_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_disable_cluster_analysis_abort"
+)
 
 
 def _log_runtime_state(action: str) -> None:
@@ -119,7 +139,10 @@ def _log_runtime_state(action: str) -> None:
         f"max_deletable_splats={config.max_deletable_splats}, "
         f"max_deletable_percentage={config.max_deletable_percentage:.4f}, "
         f"cluster_distance_threshold={config.cluster_distance_threshold:.4f}, "
-        f"cluster_min_cluster_size={config.cluster_min_cluster_size}"
+        f"cluster_min_cluster_size={config.cluster_min_cluster_size}, "
+        f"max_cluster_analysis_splats={config.max_cluster_analysis_splats}, "
+        "abort_if_splat_count_above_limit="
+        f"{config.abort_if_splat_count_above_limit}"
     )
 
 
@@ -312,3 +335,39 @@ class LCHTMCP_OT_cluster_min_size_up(_ConfigOperator):
 
     def _apply(self) -> None:
         adjust_cluster_min_cluster_size(CLUSTER_MIN_SIZE_STEP)
+
+
+class LCHTMCP_OT_max_cluster_analysis_splats_down(_ConfigOperator):
+    label = "Cluster Max Splats -"
+    description = "Decrease the cluster analysis splat limit"
+    action_label = f"Decreased cluster analysis splat limit by {CLUSTER_ANALYSIS_SPLATS_STEP}"
+
+    def _apply(self) -> None:
+        adjust_max_cluster_analysis_splats(-CLUSTER_ANALYSIS_SPLATS_STEP)
+
+
+class LCHTMCP_OT_max_cluster_analysis_splats_up(_ConfigOperator):
+    label = "Cluster Max Splats +"
+    description = "Increase the cluster analysis splat limit"
+    action_label = f"Increased cluster analysis splat limit by {CLUSTER_ANALYSIS_SPLATS_STEP}"
+
+    def _apply(self) -> None:
+        adjust_max_cluster_analysis_splats(CLUSTER_ANALYSIS_SPLATS_STEP)
+
+
+class LCHTMCP_OT_enable_cluster_analysis_abort(_ConfigOperator):
+    label = "Abort Above Limit"
+    description = "Refuse cluster analysis above the configured splat limit"
+    action_label = "Enabled cluster analysis abort-above-limit safety gate"
+
+    def _apply(self) -> None:
+        enable_cluster_analysis_abort()
+
+
+class LCHTMCP_OT_disable_cluster_analysis_abort(_ConfigOperator):
+    label = "Allow Sampled Mode"
+    description = "Allow sampled approximate cluster analysis above the limit"
+    action_label = "Disabled cluster analysis abort-above-limit safety gate"
+
+    def _apply(self) -> None:
+        disable_cluster_analysis_abort()

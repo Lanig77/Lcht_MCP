@@ -13,6 +13,7 @@ MAX_SPLATS_STEP = 1_000
 MAX_RATIO_STEP = 0.01
 CLUSTER_DISTANCE_STEP = 0.05
 CLUSTER_MIN_SIZE_STEP = 50
+CLUSTER_ANALYSIS_SPLATS_STEP = 10_000
 
 
 @dataclass(slots=True)
@@ -29,6 +30,8 @@ class RuntimeConfig:
     max_deletable_percentage: float = 0.05
     cluster_distance_threshold: float = 0.10
     cluster_min_cluster_size: int = 100
+    max_cluster_analysis_splats: int = 100_000
+    abort_if_splat_count_above_limit: bool = True
 
 
 _runtime_config = RuntimeConfig()
@@ -116,3 +119,21 @@ def adjust_cluster_min_cluster_size(delta: int) -> None:
         1,
         _runtime_config.cluster_min_cluster_size + delta,
     )
+
+
+def adjust_max_cluster_analysis_splats(delta: int) -> None:
+    """Adjust the maximum splat count allowed for cluster analysis."""
+    _runtime_config.max_cluster_analysis_splats = max(
+        1,
+        _runtime_config.max_cluster_analysis_splats + delta,
+    )
+
+
+def enable_cluster_analysis_abort() -> None:
+    """Refuse cluster analysis when the active scene exceeds the configured limit."""
+    _runtime_config.abort_if_splat_count_above_limit = True
+
+
+def disable_cluster_analysis_abort() -> None:
+    """Allow sampled approximate cluster analysis above the configured limit."""
+    _runtime_config.abort_if_splat_count_above_limit = False

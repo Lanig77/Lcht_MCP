@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from lichtfeld_mcp.core.gaussian import Gaussian, GaussianId, Position3D
 from lichtfeld_mcp.core.gaussian_cloud import GaussianCloud
 from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
@@ -101,6 +103,12 @@ def get_sh_degree(model: object, scene: object) -> int:
 
 def build_gaussian_cloud_snapshot(model: object) -> GaussianCloud:
     position_rows = extract_position_rows(model)
+    return build_gaussian_cloud_from_positions(position_rows)
+
+
+def build_gaussian_cloud_from_positions(
+    position_rows: list[tuple[float, float, float]],
+) -> GaussianCloud:
     gaussians = [
         Gaussian(
             id=GaussianId(index),
@@ -109,6 +117,19 @@ def build_gaussian_cloud_snapshot(model: object) -> GaussianCloud:
         for index, row in enumerate(position_rows)
     ]
     return GaussianCloud(gaussians=gaussians, splat_count=len(gaussians))
+
+
+def sample_position_rows(
+    position_rows: list[tuple[float, float, float]],
+    max_splats: int,
+) -> tuple[list[tuple[float, float, float]], int]:
+    if max_splats < 1:
+        raise InvalidParameterError("max_cluster_analysis_splats must be at least 1.")
+    if len(position_rows) <= max_splats:
+        return list(position_rows), 1
+    stride = max(1, math.ceil(len(position_rows) / max_splats))
+    sampled_rows = list(position_rows[::stride])[:max_splats]
+    return sampled_rows, stride
 
 
 def _coerce_position_rows(values: object) -> list[tuple[float, float, float]]:
