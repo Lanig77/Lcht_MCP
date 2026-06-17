@@ -10,17 +10,11 @@ from pathlib import Path
 
 import lichtfeld as lf
 
+from .runtime_config import snapshot_runtime_config
+
 
 PLUGIN_NAME = "lcht_mcp_test_plugin"
-MIN_Z = 0.0
-MAX_Z = 2.0
 DELETE_SELECTED = False
-ENABLE_SAFE_DELETE = False
-CONFIRM_SAFE_DELETE = False
-SAFE_DELETE_MIN_Z = 1.0
-SAFE_DELETE_MAX_Z = 1.02
-SAFE_DELETE_MAX_COUNT = 50_000
-SAFE_DELETE_MAX_RATIO = 0.05
 REPO_ROOT_HINT = Path.home() / "Documents" / "MCP GS" / "Lcht_MCP"
 SELECTION_RANGES: tuple[tuple[str, float | None, float | None], ...] = (
     ("range_1", 0.0, 2.0),
@@ -111,8 +105,10 @@ def _selected_percentage(selected_count: int, total_splats: int) -> float:
 
 def run_lcht_mcp_test() -> tuple[bool, str]:
     """Run a safe adapter smoke test inside LichtFeld Studio."""
+    config = snapshot_runtime_config()
     _log_info(
-        f"Starting safe adapter smoke test with MIN_Z={MIN_Z}, MAX_Z={MAX_Z}, "
+        "Starting safe adapter smoke test with "
+        f"MIN_Z={config.smoke_test_min_z}, MAX_Z={config.smoke_test_max_z}, "
         f"DELETE_SELECTED={DELETE_SELECTED}."
     )
 
@@ -137,7 +133,7 @@ def run_lcht_mcp_test() -> tuple[bool, str]:
         empty_min_z = stats.bounds.max.z + 1.0
         empty_max_z = stats.bounds.max.z + 2.0
         validation_ranges = (
-            (SELECTION_RANGES[0][0], MIN_Z, MAX_Z),
+            (SELECTION_RANGES[0][0], config.smoke_test_min_z, config.smoke_test_max_z),
             SELECTION_RANGES[1],
             SELECTION_RANGES[2],
             (SELECTION_RANGES[3][0], empty_min_z, empty_max_z),
@@ -189,15 +185,18 @@ def run_lcht_mcp_test() -> tuple[bool, str]:
 
 def run_safe_delete_test() -> tuple[bool, str]:
     """Run a guarded destructive validation flow inside LichtFeld Studio."""
+    config = snapshot_runtime_config()
     _log_info(
         "Starting safe delete test with "
-        f"ENABLE_SAFE_DELETE={ENABLE_SAFE_DELETE}, "
-        f"CONFIRM_SAFE_DELETE={CONFIRM_SAFE_DELETE}, "
-        f"range=({SAFE_DELETE_MIN_Z}, {SAFE_DELETE_MAX_Z}), "
-        f"thresholds=(max_count={SAFE_DELETE_MAX_COUNT}, max_ratio={SAFE_DELETE_MAX_RATIO:.6f})."
+        f"ENABLE_SAFE_DELETE={config.enable_safe_delete}, "
+        f"CONFIRM_SAFE_DELETE={config.confirm_safe_delete}, "
+        f"range=({config.safe_delete_min_z}, {config.safe_delete_max_z}), "
+        "thresholds=("
+        f"max_count={config.max_deletable_splats}, "
+        f"max_ratio={config.max_deletable_percentage:.6f})."
     )
 
-    if not ENABLE_SAFE_DELETE:
+    if not config.enable_safe_delete:
         message = (
             "Safe delete test is disabled because ENABLE_SAFE_DELETE=False. "
             "No destructive action was performed."
@@ -205,7 +204,7 @@ def run_safe_delete_test() -> tuple[bool, str]:
         _log_info(message)
         return True, message
 
-    if not CONFIRM_SAFE_DELETE:
+    if not config.confirm_safe_delete:
         message = (
             "Safe delete test is armed but not confirmed because "
             "ENABLE_SAFE_DELETE=True and CONFIRM_SAFE_DELETE=False. "
@@ -234,8 +233,8 @@ def run_safe_delete_test() -> tuple[bool, str]:
 
     try:
         selection = adapter.select_by_height(
-            z_min=SAFE_DELETE_MIN_Z,
-            z_max=SAFE_DELETE_MAX_Z,
+            z_min=config.safe_delete_min_z,
+            z_max=config.safe_delete_max_z,
         )
         selected_percentage = _selected_percentage(
             selection.selected_count,
@@ -256,17 +255,17 @@ def run_safe_delete_test() -> tuple[bool, str]:
     try:
         if selection.selected_count == 0:
             raise RuntimeError("Safe delete refused: selected_count == 0.")
-        if selection.selected_count > SAFE_DELETE_MAX_COUNT:
+        if selection.selected_count > config.max_deletable_splats:
             raise RuntimeError(
                 "Safe delete refused: "
                 f"selected_count={selection.selected_count} exceeds "
-                f"SAFE_DELETE_MAX_COUNT={SAFE_DELETE_MAX_COUNT}."
+                f"SAFE_DELETE_MAX_COUNT={config.max_deletable_splats}."
             )
-        if selected_percentage > SAFE_DELETE_MAX_RATIO:
+        if selected_percentage > config.max_deletable_percentage:
             raise RuntimeError(
                 "Safe delete refused: "
                 f"selected_ratio={selected_percentage:.6f} exceeds "
-                f"SAFE_DELETE_MAX_RATIO={SAFE_DELETE_MAX_RATIO:.6f}."
+                f"SAFE_DELETE_MAX_RATIO={config.max_deletable_percentage:.6f}."
             )
     except Exception as exc:
         message = str(exc)

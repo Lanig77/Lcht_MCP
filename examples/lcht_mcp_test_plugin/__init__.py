@@ -8,16 +8,48 @@ from .panels.test_panel import LchtMcpTestPanel
 from .operators.diagnose_api import LCHTMCP_OT_diagnose_api
 from .operators.diagnose_native_selection import LCHTMCP_OT_diagnose_native_selection
 from .operators.diagnose_tensor_mask import LCHTMCP_OT_diagnose_tensor_mask
+from .operators.runtime_controls import (
+    LCHTMCP_OT_arm_safe_delete,
+    LCHTMCP_OT_confirm_safe_delete,
+    LCHTMCP_OT_disarm_safe_delete,
+    LCHTMCP_OT_max_deletable_percentage_down,
+    LCHTMCP_OT_max_deletable_percentage_up,
+    LCHTMCP_OT_max_deletable_splats_down,
+    LCHTMCP_OT_max_deletable_splats_up,
+    LCHTMCP_OT_safe_delete_max_z_down,
+    LCHTMCP_OT_safe_delete_max_z_up,
+    LCHTMCP_OT_safe_delete_min_z_down,
+    LCHTMCP_OT_safe_delete_min_z_up,
+    LCHTMCP_OT_smoke_max_z_down,
+    LCHTMCP_OT_smoke_max_z_up,
+    LCHTMCP_OT_smoke_min_z_down,
+    LCHTMCP_OT_smoke_min_z_up,
+)
 from .operators.run_safe_delete_test import LCHTMCP_OT_run_safe_delete_test
 from .operators.run_test import LCHTMCP_OT_run_test
 
 _classes = [
     LchtMcpTestPanel,
+    LCHTMCP_OT_arm_safe_delete,
+    LCHTMCP_OT_confirm_safe_delete,
+    LCHTMCP_OT_disarm_safe_delete,
     LCHTMCP_OT_run_test,
     LCHTMCP_OT_run_safe_delete_test,
     LCHTMCP_OT_diagnose_api,
     LCHTMCP_OT_diagnose_native_selection,
     LCHTMCP_OT_diagnose_tensor_mask,
+    LCHTMCP_OT_smoke_min_z_down,
+    LCHTMCP_OT_smoke_min_z_up,
+    LCHTMCP_OT_smoke_max_z_down,
+    LCHTMCP_OT_smoke_max_z_up,
+    LCHTMCP_OT_safe_delete_min_z_down,
+    LCHTMCP_OT_safe_delete_min_z_up,
+    LCHTMCP_OT_safe_delete_max_z_down,
+    LCHTMCP_OT_safe_delete_max_z_up,
+    LCHTMCP_OT_max_deletable_splats_down,
+    LCHTMCP_OT_max_deletable_splats_up,
+    LCHTMCP_OT_max_deletable_percentage_down,
+    LCHTMCP_OT_max_deletable_percentage_up,
 ]
 
 

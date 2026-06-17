@@ -1,0 +1,256 @@
+# SPDX-FileCopyrightText: 2025 Lcht_MCP Authors
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Runtime control operators for the LichtFeld test plugin panel."""
+
+from __future__ import annotations
+
+import lichtfeld as lf
+from lfs_plugins.types import Event, Operator
+
+from ..core.runtime_config import (
+    MAX_RATIO_STEP,
+    MAX_SPLATS_STEP,
+    SAFE_DELETE_Z_STEP,
+    SMOKE_Z_STEP,
+    adjust_max_deletable_percentage,
+    adjust_max_deletable_splats,
+    adjust_safe_delete_max_z,
+    adjust_safe_delete_min_z,
+    adjust_smoke_test_max_z,
+    adjust_smoke_test_min_z,
+    arm_safe_delete,
+    confirm_safe_delete,
+    disarm_safe_delete,
+    snapshot_runtime_config,
+)
+
+
+ARM_SAFE_DELETE_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_arm_safe_delete"
+)
+CONFIRM_SAFE_DELETE_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_confirm_safe_delete"
+)
+DISARM_SAFE_DELETE_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_disarm_safe_delete"
+)
+SMOKE_MIN_Z_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_smoke_min_z_down"
+)
+SMOKE_MIN_Z_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_smoke_min_z_up"
+)
+SMOKE_MAX_Z_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_smoke_max_z_down"
+)
+SMOKE_MAX_Z_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_smoke_max_z_up"
+)
+SAFE_DELETE_MIN_Z_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_safe_delete_min_z_down"
+)
+SAFE_DELETE_MIN_Z_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_safe_delete_min_z_up"
+)
+SAFE_DELETE_MAX_Z_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_safe_delete_max_z_down"
+)
+SAFE_DELETE_MAX_Z_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_safe_delete_max_z_up"
+)
+MAX_DELETABLE_SPLATS_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_max_deletable_splats_down"
+)
+MAX_DELETABLE_SPLATS_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_max_deletable_splats_up"
+)
+MAX_DELETABLE_PERCENTAGE_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_max_deletable_percentage_down"
+)
+MAX_DELETABLE_PERCENTAGE_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_max_deletable_percentage_up"
+)
+
+
+def _log_runtime_state(action: str) -> None:
+    config = snapshot_runtime_config()
+    lf.log.info(
+        "lcht_mcp_test_plugin: "
+        f"{action}. "
+        f"enable_safe_delete={config.enable_safe_delete}, "
+        f"confirm_safe_delete={config.confirm_safe_delete}, "
+        f"smoke_test_range=({config.smoke_test_min_z:.4f}, {config.smoke_test_max_z:.4f}), "
+        f"safe_delete_range=({config.safe_delete_min_z:.4f}, {config.safe_delete_max_z:.4f}), "
+        f"max_deletable_splats={config.max_deletable_splats}, "
+        f"max_deletable_percentage={config.max_deletable_percentage:.4f}"
+    )
+
+
+class _ConfigOperator(Operator):
+    """Base operator for stateful panel controls."""
+
+    action_label = "Updated runtime config"
+
+    def invoke(self, context, event: Event) -> set:
+        self._apply()
+        _log_runtime_state(self.action_label)
+        return {"FINISHED"}
+
+    def _apply(self) -> None:
+        raise NotImplementedError
+
+
+class LCHTMCP_OT_arm_safe_delete(_ConfigOperator):
+    """Arm safe delete without confirming it."""
+
+    label = "Arm Safe Delete"
+    description = "Enable the safe delete gate while leaving confirmation off"
+    action_label = "Safe delete armed"
+
+    def _apply(self) -> None:
+        arm_safe_delete()
+
+
+class LCHTMCP_OT_confirm_safe_delete(_ConfigOperator):
+    """Confirm safe delete after it has been armed."""
+
+    label = "Confirm Safe Delete"
+    description = "Confirm the armed safe delete flow"
+    action_label = "Safe delete confirmed"
+
+    def _apply(self) -> None:
+        confirm_safe_delete()
+
+
+class LCHTMCP_OT_disarm_safe_delete(_ConfigOperator):
+    """Return the delete controls to their safe default state."""
+
+    label = "Disarm Safe Delete"
+    description = "Clear both safe delete flags"
+    action_label = "Safe delete disarmed"
+
+    def _apply(self) -> None:
+        disarm_safe_delete()
+
+
+class LCHTMCP_OT_smoke_min_z_down(_ConfigOperator):
+    label = "Smoke Min Z -"
+    description = "Decrease the smoke test minimum Z"
+    action_label = f"Decreased smoke test min Z by {SMOKE_Z_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_smoke_test_min_z(-SMOKE_Z_STEP)
+
+
+class LCHTMCP_OT_smoke_min_z_up(_ConfigOperator):
+    label = "Smoke Min Z +"
+    description = "Increase the smoke test minimum Z"
+    action_label = f"Increased smoke test min Z by {SMOKE_Z_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_smoke_test_min_z(SMOKE_Z_STEP)
+
+
+class LCHTMCP_OT_smoke_max_z_down(_ConfigOperator):
+    label = "Smoke Max Z -"
+    description = "Decrease the smoke test maximum Z"
+    action_label = f"Decreased smoke test max Z by {SMOKE_Z_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_smoke_test_max_z(-SMOKE_Z_STEP)
+
+
+class LCHTMCP_OT_smoke_max_z_up(_ConfigOperator):
+    label = "Smoke Max Z +"
+    description = "Increase the smoke test maximum Z"
+    action_label = f"Increased smoke test max Z by {SMOKE_Z_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_smoke_test_max_z(SMOKE_Z_STEP)
+
+
+class LCHTMCP_OT_safe_delete_min_z_down(_ConfigOperator):
+    label = "Delete Min Z -"
+    description = "Decrease the safe delete minimum Z"
+    action_label = f"Decreased safe delete min Z by {SAFE_DELETE_Z_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_safe_delete_min_z(-SAFE_DELETE_Z_STEP)
+
+
+class LCHTMCP_OT_safe_delete_min_z_up(_ConfigOperator):
+    label = "Delete Min Z +"
+    description = "Increase the safe delete minimum Z"
+    action_label = f"Increased safe delete min Z by {SAFE_DELETE_Z_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_safe_delete_min_z(SAFE_DELETE_Z_STEP)
+
+
+class LCHTMCP_OT_safe_delete_max_z_down(_ConfigOperator):
+    label = "Delete Max Z -"
+    description = "Decrease the safe delete maximum Z"
+    action_label = f"Decreased safe delete max Z by {SAFE_DELETE_Z_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_safe_delete_max_z(-SAFE_DELETE_Z_STEP)
+
+
+class LCHTMCP_OT_safe_delete_max_z_up(_ConfigOperator):
+    label = "Delete Max Z +"
+    description = "Increase the safe delete maximum Z"
+    action_label = f"Increased safe delete max Z by {SAFE_DELETE_Z_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_safe_delete_max_z(SAFE_DELETE_Z_STEP)
+
+
+class LCHTMCP_OT_max_deletable_splats_down(_ConfigOperator):
+    label = "Max Splats -"
+    description = "Decrease the maximum deletable splat threshold"
+    action_label = f"Decreased max deletable splats by {MAX_SPLATS_STEP}"
+
+    def _apply(self) -> None:
+        adjust_max_deletable_splats(-MAX_SPLATS_STEP)
+
+
+class LCHTMCP_OT_max_deletable_splats_up(_ConfigOperator):
+    label = "Max Splats +"
+    description = "Increase the maximum deletable splat threshold"
+    action_label = f"Increased max deletable splats by {MAX_SPLATS_STEP}"
+
+    def _apply(self) -> None:
+        adjust_max_deletable_splats(MAX_SPLATS_STEP)
+
+
+class LCHTMCP_OT_max_deletable_percentage_down(_ConfigOperator):
+    label = "Max % -"
+    description = "Decrease the maximum deletable percentage threshold"
+    action_label = f"Decreased max deletable percentage by {MAX_RATIO_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_max_deletable_percentage(-MAX_RATIO_STEP)
+
+
+class LCHTMCP_OT_max_deletable_percentage_up(_ConfigOperator):
+    label = "Max % +"
+    description = "Increase the maximum deletable percentage threshold"
+    action_label = f"Increased max deletable percentage by {MAX_RATIO_STEP:.2f}"
+
+    def _apply(self) -> None:
+        adjust_max_deletable_percentage(MAX_RATIO_STEP)

@@ -4,16 +4,27 @@
 
 import lichtfeld as lf
 
-from ..core.test_runner import (
-    CONFIRM_SAFE_DELETE,
-    DELETE_SELECTED,
-    ENABLE_SAFE_DELETE,
-    MAX_Z,
-    MIN_Z,
-)
+from ..core.runtime_config import snapshot_runtime_config
 from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
 from ..operators.diagnose_native_selection import DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID
 from ..operators.diagnose_tensor_mask import DIAGNOSE_TENSOR_MASK_OPERATOR_ID
+from ..operators.runtime_controls import (
+    ARM_SAFE_DELETE_OPERATOR_ID,
+    CONFIRM_SAFE_DELETE_OPERATOR_ID,
+    DISARM_SAFE_DELETE_OPERATOR_ID,
+    MAX_DELETABLE_PERCENTAGE_DOWN_OPERATOR_ID,
+    MAX_DELETABLE_PERCENTAGE_UP_OPERATOR_ID,
+    MAX_DELETABLE_SPLATS_DOWN_OPERATOR_ID,
+    MAX_DELETABLE_SPLATS_UP_OPERATOR_ID,
+    SAFE_DELETE_MAX_Z_DOWN_OPERATOR_ID,
+    SAFE_DELETE_MAX_Z_UP_OPERATOR_ID,
+    SAFE_DELETE_MIN_Z_DOWN_OPERATOR_ID,
+    SAFE_DELETE_MIN_Z_UP_OPERATOR_ID,
+    SMOKE_MAX_Z_DOWN_OPERATOR_ID,
+    SMOKE_MAX_Z_UP_OPERATOR_ID,
+    SMOKE_MIN_Z_DOWN_OPERATOR_ID,
+    SMOKE_MIN_Z_UP_OPERATOR_ID,
+)
 from ..operators.run_safe_delete_test import RUN_SAFE_DELETE_TEST_OPERATOR_ID
 from ..operators.run_test import RUN_TEST_OPERATOR_ID
 
@@ -27,6 +38,7 @@ class LchtMcpTestPanel(lf.ui.Panel):
     order = 31
 
     def draw(self, layout):
+        config = snapshot_runtime_config()
         theme = lf.ui.theme()
         scale = layout.get_dpi_scale()
 
@@ -36,33 +48,36 @@ class LchtMcpTestPanel(lf.ui.Panel):
         )
         layout.spacing()
 
-        layout.label(f"Height Range: {MIN_Z:.2f} -> {MAX_Z:.2f}")
-        delete_color = (
-            (1.0, 0.4, 0.4, 1.0)
-            if DELETE_SELECTED
-            else (0.4, 1.0, 0.4, 1.0)
-        )
-        layout.text_colored(
-            f"Delete Selected: {'ON' if DELETE_SELECTED else 'OFF'}",
-            delete_color,
-        )
         safe_delete_color = (
             (1.0, 0.4, 0.4, 1.0)
-            if ENABLE_SAFE_DELETE
+            if config.enable_safe_delete
             else (0.4, 1.0, 0.4, 1.0)
         )
         layout.text_colored(
-            f"Enable Safe Delete: {'ON' if ENABLE_SAFE_DELETE else 'OFF'}",
+            f"Enable Safe Delete: {'ON' if config.enable_safe_delete else 'OFF'}",
             safe_delete_color,
         )
         confirm_safe_delete_color = (
             (1.0, 0.4, 0.4, 1.0)
-            if CONFIRM_SAFE_DELETE
+            if config.confirm_safe_delete
             else (0.4, 1.0, 0.4, 1.0)
         )
         layout.text_colored(
-            f"Confirm Safe Delete: {'ON' if CONFIRM_SAFE_DELETE else 'OFF'}",
+            f"Confirm Safe Delete: {'ON' if config.confirm_safe_delete else 'OFF'}",
             confirm_safe_delete_color,
+        )
+        layout.label(
+            "Smoke Test Range: "
+            f"{config.smoke_test_min_z:.2f} -> {config.smoke_test_max_z:.2f}"
+        )
+        layout.label(
+            "Safe Delete Range: "
+            f"{config.safe_delete_min_z:.2f} -> {config.safe_delete_max_z:.2f}"
+        )
+        layout.label(f"Max Deletable Splats: {config.max_deletable_splats}")
+        layout.label(
+            "Max Deletable Percentage: "
+            f"{config.max_deletable_percentage * 100.0:.2f}%"
         )
         layout.text_colored(
             "Check the LichtFeld log for splat_count, bounding_box and selected_count.",
@@ -82,6 +97,60 @@ class LchtMcpTestPanel(lf.ui.Panel):
         )
         layout.spacing()
 
+        if layout.button_styled("Arm Safe Delete##arm", "warning", (-1, 30 * scale)):
+            lf.ui.ops.invoke(ARM_SAFE_DELETE_OPERATOR_ID)
+        if layout.button_styled("Confirm Safe Delete##confirm", "warning", (-1, 30 * scale)):
+            lf.ui.ops.invoke(CONFIRM_SAFE_DELETE_OPERATOR_ID)
+        if layout.button_styled("Disarm Safe Delete##disarm", "secondary", (-1, 30 * scale)):
+            lf.ui.ops.invoke(DISARM_SAFE_DELETE_OPERATOR_ID)
+
+        layout.spacing()
+        layout.label("Smoke Test Controls")
+        if layout.button_styled("Smoke Min Z -##smoke_min_down", "secondary", (-1, 28 * scale)):
+            lf.ui.ops.invoke(SMOKE_MIN_Z_DOWN_OPERATOR_ID)
+        if layout.button_styled("Smoke Min Z +##smoke_min_up", "secondary", (-1, 28 * scale)):
+            lf.ui.ops.invoke(SMOKE_MIN_Z_UP_OPERATOR_ID)
+        if layout.button_styled("Smoke Max Z -##smoke_max_down", "secondary", (-1, 28 * scale)):
+            lf.ui.ops.invoke(SMOKE_MAX_Z_DOWN_OPERATOR_ID)
+        if layout.button_styled("Smoke Max Z +##smoke_max_up", "secondary", (-1, 28 * scale)):
+            lf.ui.ops.invoke(SMOKE_MAX_Z_UP_OPERATOR_ID)
+
+        layout.spacing()
+        layout.label("Safe Delete Controls")
+        if layout.button_styled(
+            "Delete Min Z -##delete_min_down",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(SAFE_DELETE_MIN_Z_DOWN_OPERATOR_ID)
+        if layout.button_styled(
+            "Delete Min Z +##delete_min_up",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(SAFE_DELETE_MIN_Z_UP_OPERATOR_ID)
+        if layout.button_styled(
+            "Delete Max Z -##delete_max_down",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(SAFE_DELETE_MAX_Z_DOWN_OPERATOR_ID)
+        if layout.button_styled(
+            "Delete Max Z +##delete_max_up",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(SAFE_DELETE_MAX_Z_UP_OPERATOR_ID)
+        if layout.button_styled("Max Splats -##splats_down", "secondary", (-1, 28 * scale)):
+            lf.ui.ops.invoke(MAX_DELETABLE_SPLATS_DOWN_OPERATOR_ID)
+        if layout.button_styled("Max Splats +##splats_up", "secondary", (-1, 28 * scale)):
+            lf.ui.ops.invoke(MAX_DELETABLE_SPLATS_UP_OPERATOR_ID)
+        if layout.button_styled("Max % -##ratio_down", "secondary", (-1, 28 * scale)):
+            lf.ui.ops.invoke(MAX_DELETABLE_PERCENTAGE_DOWN_OPERATOR_ID)
+        if layout.button_styled("Max % +##ratio_up", "secondary", (-1, 28 * scale)):
+            lf.ui.ops.invoke(MAX_DELETABLE_PERCENTAGE_UP_OPERATOR_ID)
+
+        layout.spacing()
         if layout.button_styled("Run Lcht MCP Test##run", "primary", (-1, 34 * scale)):
             lf.ui.ops.invoke(RUN_TEST_OPERATOR_ID)
         if layout.button_styled(
