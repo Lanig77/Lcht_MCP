@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+from time import perf_counter
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter as AdapterContract
 from lichtfeld_mcp.core.cluster_analysis import (
@@ -49,6 +50,10 @@ from .utils import load_lichtfeld, not_implemented, require_active_scene, requir
 
 
 logger = logging.getLogger(__name__)
+
+
+def _elapsed_seconds(start_time: float) -> float:
+    return perf_counter() - start_time
 
 
 def _safe_length(value: object) -> str:
@@ -123,17 +128,19 @@ class LichtfeldAdapter(AdapterContract):
         self,
         distance_threshold: float,
         min_cluster_size: int = 1,
-        max_cluster_analysis_splats: int = 100_000,
+        max_cluster_analysis_splats: int = 25_000,
         abort_if_splat_count_above_limit: bool = False,
     ) -> ClusterAnalysisSummary:
         if max_cluster_analysis_splats < 1:
             raise InvalidParameterError("max_cluster_analysis_splats must be at least 1.")
 
         logger.info("LichtFeld cluster preview: before get_stats")
+        stats_started_at = perf_counter()
         stats = self.get_stats()
         logger.info(
-            "LichtFeld cluster preview: after get_stats total_splats=%s",
+            "LichtFeld cluster preview: after get_stats total_splats=%s elapsed=%.3fs",
             stats.splat_count,
+            _elapsed_seconds(stats_started_at),
         )
         logger.info(
             "LichtFeld cluster preview: max_cluster_analysis_splats=%s "
@@ -173,10 +180,12 @@ class LichtfeldAdapter(AdapterContract):
         model = require_combined_model(scene)
 
         logger.info("LichtFeld cluster preview: before reading means")
+        read_means_started_at = perf_counter()
         position_rows = extract_position_rows(model)
         logger.info(
-            "LichtFeld cluster preview: after reading means total_positions=%s",
+            "LichtFeld cluster preview: after reading means total_positions=%s elapsed=%.3fs",
             len(position_rows),
+            _elapsed_seconds(read_means_started_at),
         )
 
         logger.info(
@@ -184,6 +193,7 @@ class LichtfeldAdapter(AdapterContract):
             len(position_rows),
             max_cluster_analysis_splats,
         )
+        sampling_started_at = perf_counter()
         sampled_rows, sampling_stride = sample_position_rows(
             position_rows,
             max_cluster_analysis_splats,
@@ -191,21 +201,24 @@ class LichtfeldAdapter(AdapterContract):
         approximate = len(sampled_rows) != len(position_rows)
         logger.info(
             "LichtFeld cluster preview: after sampling analyzed_splats=%s total_splats=%s "
-            "sampling_stride=%s approximate=%s",
+            "sampling_stride=%s approximate=%s elapsed=%.3fs",
             len(sampled_rows),
             len(position_rows),
             sampling_stride,
             approximate,
+            _elapsed_seconds(sampling_started_at),
         )
 
         logger.info(
             "LichtFeld cluster preview: before building GaussianCloud analyzed_splats=%s",
             len(sampled_rows),
         )
+        cloud_build_started_at = perf_counter()
         cloud = build_gaussian_cloud_from_positions(sampled_rows)
         logger.info(
-            "LichtFeld cluster preview: after building GaussianCloud splat_count=%s",
+            "LichtFeld cluster preview: after building GaussianCloud splat_count=%s elapsed=%.3fs",
             cloud.count(),
+            _elapsed_seconds(cloud_build_started_at),
         )
 
         logger.info(
@@ -213,14 +226,16 @@ class LichtfeldAdapter(AdapterContract):
             approximate,
             sampling_stride,
         )
+        clustering_started_at = perf_counter()
         clusters = analyze_clusters(
             cloud,
             distance_threshold=distance_threshold,
             min_cluster_size=1,
         )
         logger.info(
-            "LichtFeld cluster preview: after clustering total_clusters=%s",
+            "LichtFeld cluster preview: after clustering total_clusters=%s elapsed=%.3fs",
             len(clusters),
+            _elapsed_seconds(clustering_started_at),
         )
         largest = largest_cluster(clusters)
         small_clusters = clusters_smaller_than(clusters, min_cluster_size)

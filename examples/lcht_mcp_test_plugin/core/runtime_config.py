@@ -14,6 +14,9 @@ MAX_RATIO_STEP = 0.01
 CLUSTER_DISTANCE_STEP = 0.05
 CLUSTER_MIN_SIZE_STEP = 50
 CLUSTER_ANALYSIS_SPLATS_STEP = 10_000
+CLUSTER_ANALYSIS_FAST_SPLATS = 10_000
+CLUSTER_ANALYSIS_BALANCED_SPLATS = 25_000
+CLUSTER_ANALYSIS_DETAILED_SPLATS = 100_000
 
 
 @dataclass(slots=True)
@@ -30,7 +33,7 @@ class RuntimeConfig:
     max_deletable_percentage: float = 0.05
     cluster_distance_threshold: float = 0.10
     cluster_min_cluster_size: int = 100
-    max_cluster_analysis_splats: int = 100_000
+    max_cluster_analysis_splats: int = CLUSTER_ANALYSIS_BALANCED_SPLATS
     abort_if_splat_count_above_limit: bool = False
 
 
@@ -127,6 +130,11 @@ def adjust_max_cluster_analysis_splats(delta: int) -> None:
         1,
         _runtime_config.max_cluster_analysis_splats + delta,
     )
+
+
+def set_max_cluster_analysis_splats(value: int) -> None:
+    """Set the maximum splat count allowed for cluster analysis."""
+    _runtime_config.max_cluster_analysis_splats = max(1, value)
 
 
 def enable_cluster_analysis_abort() -> None:

@@ -59,6 +59,23 @@ def test_run_cluster_analysis_preview_uses_runtime_config_and_returns_success(mo
     assert fake_adapter.last_kwargs == {
         "distance_threshold": 0.15,
         "min_cluster_size": 125,
-        "max_cluster_analysis_splats": 120_000,
+        "max_cluster_analysis_splats": 45_000,
         "abort_if_splat_count_above_limit": False,
     }
+
+
+def test_cluster_analysis_preset_operators_update_runtime_limit(monkeypatch):
+    runtime_config, _ = _load_runner_modules(monkeypatch)
+    runtime_controls = __import__(
+        "examples.lcht_mcp_test_plugin.operators.runtime_controls",
+        fromlist=["runtime_controls"],
+    )
+
+    runtime_controls.LCHTMCP_OT_set_cluster_analysis_fast().invoke(None, None)
+    assert runtime_config.snapshot_runtime_config().max_cluster_analysis_splats == 10_000
+
+    runtime_controls.LCHTMCP_OT_set_cluster_analysis_balanced().invoke(None, None)
+    assert runtime_config.snapshot_runtime_config().max_cluster_analysis_splats == 25_000
+
+    runtime_controls.LCHTMCP_OT_set_cluster_analysis_detailed().invoke(None, None)
+    assert runtime_config.snapshot_runtime_config().max_cluster_analysis_splats == 100_000

@@ -8,6 +8,9 @@ import lichtfeld as lf
 from lfs_plugins.types import Event, Operator
 
 from ..core.runtime_config import (
+    CLUSTER_ANALYSIS_BALANCED_SPLATS,
+    CLUSTER_ANALYSIS_DETAILED_SPLATS,
+    CLUSTER_ANALYSIS_FAST_SPLATS,
     CLUSTER_ANALYSIS_SPLATS_STEP,
     CLUSTER_DISTANCE_STEP,
     CLUSTER_MIN_SIZE_STEP,
@@ -29,6 +32,7 @@ from ..core.runtime_config import (
     enable_cluster_analysis_abort,
     confirm_safe_delete,
     disarm_safe_delete,
+    set_max_cluster_analysis_splats,
     snapshot_runtime_config,
 )
 
@@ -124,6 +128,18 @@ ENABLE_CLUSTER_ANALYSIS_ABORT_OPERATOR_ID = (
 DISABLE_CLUSTER_ANALYSIS_ABORT_OPERATOR_ID = (
     "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
     "LCHTMCP_OT_disable_cluster_analysis_abort"
+)
+SET_CLUSTER_ANALYSIS_FAST_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_set_cluster_analysis_fast"
+)
+SET_CLUSTER_ANALYSIS_BALANCED_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_set_cluster_analysis_balanced"
+)
+SET_CLUSTER_ANALYSIS_DETAILED_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_set_cluster_analysis_detailed"
 )
 
 
@@ -371,3 +387,34 @@ class LCHTMCP_OT_disable_cluster_analysis_abort(_ConfigOperator):
 
     def _apply(self) -> None:
         disable_cluster_analysis_abort()
+
+
+class LCHTMCP_OT_set_cluster_analysis_fast(_ConfigOperator):
+    label = "Fast Preset"
+    description = "Set cluster analysis to the fast 10,000 splat preset"
+    action_label = f"Set cluster analysis preset to Fast ({CLUSTER_ANALYSIS_FAST_SPLATS})"
+
+    def _apply(self) -> None:
+        set_max_cluster_analysis_splats(CLUSTER_ANALYSIS_FAST_SPLATS)
+
+
+class LCHTMCP_OT_set_cluster_analysis_balanced(_ConfigOperator):
+    label = "Balanced Preset"
+    description = "Set cluster analysis to the balanced 25,000 splat preset"
+    action_label = (
+        f"Set cluster analysis preset to Balanced ({CLUSTER_ANALYSIS_BALANCED_SPLATS})"
+    )
+
+    def _apply(self) -> None:
+        set_max_cluster_analysis_splats(CLUSTER_ANALYSIS_BALANCED_SPLATS)
+
+
+class LCHTMCP_OT_set_cluster_analysis_detailed(_ConfigOperator):
+    label = "Detailed Preset"
+    description = "Set cluster analysis to the detailed 100,000 splat preset"
+    action_label = (
+        f"Set cluster analysis preset to Detailed ({CLUSTER_ANALYSIS_DETAILED_SPLATS})"
+    )
+
+    def _apply(self) -> None:
+        set_max_cluster_analysis_splats(CLUSTER_ANALYSIS_DETAILED_SPLATS)

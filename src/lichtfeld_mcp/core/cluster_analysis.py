@@ -33,21 +33,25 @@ def analyze_clusters(
     cell_size = distance_threshold
     threshold_squared = distance_threshold * distance_threshold
     gaussians = cloud.gaussians
-    positions = [gaussian.position for gaussian in gaussians]
-    grid = _build_spatial_grid(positions, cell_size)
+    coordinates = [
+        (gaussian.position.x, gaussian.position.y, gaussian.position.z)
+        for gaussian in gaussians
+    ]
+    cell_keys = [_cell_key_from_coordinates(x, y, z, cell_size) for x, y, z in coordinates]
+    grid = _build_spatial_grid(cell_keys)
     visited = [False] * len(gaussians)
     clusters: list[Cluster] = []
     cluster_id = 0
 
-    for start_index, gaussian in enumerate(gaussians):
+    for start_index in range(len(gaussians)):
         if visited[start_index]:
             continue
         component_indices = _collect_component(
             start_index=start_index,
-            positions=positions,
+            coordinates=coordinates,
+            cell_keys=cell_keys,
             grid=grid,
             visited=visited,
-            cell_size=cell_size,
             threshold_squared=threshold_squared,
         )
         if len(component_indices) < min_cluster_size:
@@ -82,12 +86,10 @@ def clusters_outside_largest(clusters: list[Cluster]) -> list[Cluster]:
 
 
 def _build_spatial_grid(
-    positions: list[Position3D],
-    cell_size: float,
+    cell_keys: list[tuple[int, int, int]],
 ) -> dict[tuple[int, int, int], list[int]]:
     grid: dict[tuple[int, int, int], list[int]] = {}
-    for index, position in enumerate(positions):
-        key = _cell_key(position, cell_size)
+    for index, key in enumerate(cell_keys):
         grid.setdefault(key, []).append(index)
     return grid
 
@@ -95,30 +97,31 @@ def _build_spatial_grid(
 def _collect_component(
     *,
     start_index: int,
-    positions: list[Position3D],
+    coordinates: list[tuple[float, float, float]],
+    cell_keys: list[tuple[int, int, int]],
     grid: dict[tuple[int, int, int], list[int]],
     visited: list[bool],
-    cell_size: float,
     threshold_squared: float,
 ) -> list[int]:
     component_indices: list[int] = []
     queue: deque[int] = deque([start_index])
     visited[start_index] = True
+    grid_get = grid.get
 
     while queue:
         current_index = queue.popleft()
         component_indices.append(current_index)
-        current_position = positions[current_index]
-        cell_x, cell_y, cell_z = _cell_key(current_position, cell_size)
+        current_coordinates = coordinates[current_index]
+        cell_x, cell_y, cell_z = cell_keys[current_index]
         for neighbor_x in range(cell_x - 1, cell_x + 2):
             for neighbor_y in range(cell_y - 1, cell_y + 2):
                 for neighbor_z in range(cell_z - 1, cell_z + 2):
-                    for neighbor_index in grid.get((neighbor_x, neighbor_y, neighbor_z), []):
+                    for neighbor_index in grid_get((neighbor_x, neighbor_y, neighbor_z), ()):
                         if visited[neighbor_index]:
                             continue
                         if _distance_squared(
-                            current_position,
-                            positions[neighbor_index],
+                            current_coordinates,
+                            coordinates[neighbor_index],
                         ) > threshold_squared:
                             continue
                         visited[neighbor_index] = True
@@ -132,22 +135,45 @@ def _build_cluster(
     gaussians,
     component_indices: list[int],
 ) -> Cluster:
-    cluster_gaussians = [gaussians[index] for index in component_indices]
-    min_x = min(gaussian.position.x for gaussian in cluster_gaussians)
-    min_y = min(gaussian.position.y for gaussian in cluster_gaussians)
-    min_z = min(gaussian.position.z for gaussian in cluster_gaussians)
-    max_x = max(gaussian.position.x for gaussian in cluster_gaussians)
-    max_y = max(gaussian.position.y for gaussian in cluster_gaussians)
-    max_z = max(gaussian.position.z for gaussian in cluster_gaussians)
-    count = len(cluster_gaussians)
+    first_gaussian = gaussians[component_indices[0]]
+    min_x = max_x = first_gaussian.position.x
+    min_y = max_y = first_gaussian.position.y
+    min_z = max_z = first_gaussian.position.z
+    sum_x = 0.0
+    sum_y = 0.0
+    sum_z = 0.0
+    gaussian_ids: list[GaussianId] = []
+    for index in component_indices:
+        gaussian = gaussians[index]
+        position = gaussian.position
+        x = position.x
+        y = position.y
+        z = position.z
+        if x < min_x:
+            min_x = x
+        if x > max_x:
+            max_x = x
+        if y < min_y:
+            min_y = y
+        if y > max_y:
+            max_y = y
+        if z < min_z:
+            min_z = z
+        if z > max_z:
+            max_z = z
+        sum_x += x
+        sum_y += y
+        sum_z += z
+        gaussian_ids.append(gaussian.id)
+    count = len(component_indices)
     centroid = Position3D(
-        x=sum(gaussian.position.x for gaussian in cluster_gaussians) / count,
-        y=sum(gaussian.position.y for gaussian in cluster_gaussians) / count,
-        z=sum(gaussian.position.z for gaussian in cluster_gaussians) / count,
+        x=sum_x / count,
+        y=sum_y / count,
+        z=sum_z / count,
     )
     return Cluster(
         id=cluster_id,
-        gaussian_ids=tuple(gaussian.id for gaussian in cluster_gaussians),
+        gaussian_ids=tuple(gaussian_ids),
         count=count,
         bounding_box=BoundingBox(
             min=Position3D(x=min_x, y=min_y, z=min_z),
@@ -158,17 +184,29 @@ def _build_cluster(
 
 
 def _cell_key(position: Position3D, cell_size: float) -> tuple[int, int, int]:
+    return _cell_key_from_coordinates(position.x, position.y, position.z, cell_size)
+
+
+def _cell_key_from_coordinates(
+    x: float,
+    y: float,
+    z: float,
+    cell_size: float,
+) -> tuple[int, int, int]:
     return (
-        math.floor(position.x / cell_size),
-        math.floor(position.y / cell_size),
-        math.floor(position.z / cell_size),
+        math.floor(x / cell_size),
+        math.floor(y / cell_size),
+        math.floor(z / cell_size),
     )
 
 
-def _distance_squared(a: Position3D, b: Position3D) -> float:
-    dx = a.x - b.x
-    dy = a.y - b.y
-    dz = a.z - b.z
+def _distance_squared(
+    a: tuple[float, float, float],
+    b: tuple[float, float, float],
+) -> float:
+    dx = a[0] - b[0]
+    dy = a[1] - b[1]
+    dz = a[2] - b[2]
     return dx * dx + dy * dy + dz * dz
 
 

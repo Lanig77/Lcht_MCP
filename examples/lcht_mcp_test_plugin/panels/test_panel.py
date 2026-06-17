@@ -29,6 +29,9 @@ from ..operators.runtime_controls import (
     SAFE_DELETE_MAX_Z_UP_OPERATOR_ID,
     SAFE_DELETE_MIN_Z_DOWN_OPERATOR_ID,
     SAFE_DELETE_MIN_Z_UP_OPERATOR_ID,
+    SET_CLUSTER_ANALYSIS_BALANCED_OPERATOR_ID,
+    SET_CLUSTER_ANALYSIS_DETAILED_OPERATOR_ID,
+    SET_CLUSTER_ANALYSIS_FAST_OPERATOR_ID,
     SMOKE_MAX_Z_DOWN_OPERATOR_ID,
     SMOKE_MAX_Z_UP_OPERATOR_ID,
     SMOKE_MIN_Z_DOWN_OPERATOR_ID,
@@ -224,6 +227,24 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 28 * scale),
         ):
             lf.ui.ops.invoke(MAX_CLUSTER_ANALYSIS_SPLATS_UP_OPERATOR_ID)
+        if layout.button_styled(
+            "Preset Fast 10k##cluster_preset_fast",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(SET_CLUSTER_ANALYSIS_FAST_OPERATOR_ID)
+        if layout.button_styled(
+            "Preset Balanced 25k##cluster_preset_balanced",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(SET_CLUSTER_ANALYSIS_BALANCED_OPERATOR_ID)
+        if layout.button_styled(
+            "Preset Detailed 100k##cluster_preset_detailed",
+            "secondary",
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(SET_CLUSTER_ANALYSIS_DETAILED_OPERATOR_ID)
         if layout.button_styled(
             "Abort Instead Of Sampling##cluster_abort_on",
             "secondary",
