@@ -10,4 +10,6 @@ import importlib
 
 from .adapter import LichtfeldAdapter, LichtfeldPluginAdapter
 
+_IMPORTLIB = importlib
+
 __all__ = ["LichtfeldAdapter", "LichtfeldPluginAdapter"]

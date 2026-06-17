@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
 from lichtfeld_mcp.core.gaussian import BoundingBox, Gaussian, GaussianId, Position3D
+from lichtfeld_mcp.core.gaussian_query import GaussianQuery
 from lichtfeld_mcp.core.history import GaussianRestorePoint, HistoryEntry, HistoryStack
 from lichtfeld_mcp.core.query.expressions import (
     ColorSimilarityExpression,
@@ -210,6 +211,3 @@ class GaussianCloud:
                 return float(value)
             return None
         return None
-
-
-from lichtfeld_mcp.core.gaussian_query import GaussianQuery
