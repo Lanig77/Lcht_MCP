@@ -5,6 +5,7 @@
 import lichtfeld as lf
 
 from ..core.test_runner import DELETE_SELECTED, MAX_Z, MIN_Z
+from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
 from ..operators.run_test import RUN_TEST_OPERATOR_ID
 
 
@@ -40,7 +41,17 @@ class LchtMcpTestPanel(lf.ui.Panel):
             "Check the LichtFeld log for splat_count, bounding_box and selected_count.",
             theme.palette.text_dim,
         )
+        layout.text_colored(
+            "Use Diagnose LichtFeld API to inspect the active runtime scene/model path.",
+            theme.palette.text_dim,
+        )
         layout.spacing()
 
         if layout.button_styled("Run Lcht MCP Test##run", "primary", (-1, 34 * scale)):
             lf.ui.ops.invoke(RUN_TEST_OPERATOR_ID)
+        if layout.button_styled(
+            "Diagnose LichtFeld API##diagnose",
+            "secondary",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(DIAGNOSE_API_OPERATOR_ID)
