@@ -118,6 +118,14 @@ class FakeLfTensor:
         return iter(self._values)
 
 
+class NonIterableSelectionMask:
+    def detach(self):
+        return self
+
+    def cpu(self):
+        return self
+
+
 class FakeModel:
     sh_degree = 2
 
@@ -335,6 +343,40 @@ def test_get_stats_uses_active_lichtfeld_scene_and_computes_bounds(monkeypatch):
     assert stats.bounds.max.z == 8.0
     assert stats.sh_degree == 2
     assert stats.opacity_mean == 0.6
+
+
+def test_get_stats_succeeds_when_selection_mask_is_not_iterable(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [1.0, 2.0, 3.0],
+                    [-4.0, 0.5, 8.0],
+                ]
+            )
+        )
+    )
+    fake_scene.selection_mask = NonIterableSelectionMask()
+    fake_scene.has_selection = lambda: False
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        get_scene=lambda: fake_scene,
+        has_selection=lambda: False,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    stats = adapter.get_stats()
+
+    assert stats.splat_count == 2
+    assert stats.selected_count == 0
 
 
 def test_analyze_clusters_preview_builds_gaussian_cloud_snapshot_and_returns_summary(monkeypatch):
@@ -654,6 +696,47 @@ def test_analyze_scene_returns_unified_report(monkeypatch):
     assert report.scene_stats["approximate"] is True
     assert len(report.results) == 4
     assert any(result.name == "voxel_connectivity" for result in report.results)
+
+
+def test_analyze_scene_succeeds_when_no_active_selection_exists(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [0.2, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    fake_scene.selection_mask = NonIterableSelectionMask()
+    fake_scene.has_selection = lambda: False
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        get_scene=lambda: fake_scene,
+        has_selection=lambda: False,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    report = adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+
+    assert report.scene_stats["total_splats"] == 3
+    assert report.scene_stats["selected_splats"] == 0
+    assert report.scene_stats["approximate"] is False
 
 
 def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):

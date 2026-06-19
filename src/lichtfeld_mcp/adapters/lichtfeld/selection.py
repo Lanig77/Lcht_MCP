@@ -29,14 +29,35 @@ class SelectionState:
             return None
         return list(self._cached_mask)
 
-    def current_selection_mask(self, scene: object, expected_length: int) -> list[bool] | None:
+    def current_selection_mask(
+        self,
+        scene: object,
+        expected_length: int,
+        *,
+        lf_module: object | None = None,
+    ) -> list[bool] | None:
         mask = self.cached_mask(expected_length)
         if mask is not None:
             return mask
-        return self.read_scene_selection_mask(scene, expected_length)
+        return self.read_scene_selection_mask(
+            scene,
+            expected_length,
+            lf_module=lf_module,
+            allow_invalid_mask=True,
+        )
 
-    def get_selected_count(self, scene: object, expected_length: int) -> int:
-        mask = self.current_selection_mask(scene, expected_length)
+    def get_selected_count(
+        self,
+        scene: object,
+        expected_length: int,
+        *,
+        lf_module: object | None = None,
+    ) -> int:
+        mask = self.current_selection_mask(
+            scene,
+            expected_length,
+            lf_module=lf_module,
+        )
         if mask is None:
             return 0
         return sum(mask)
@@ -230,7 +251,13 @@ class SelectionState:
         self,
         scene: object,
         expected_length: int,
+        *,
+        lf_module: object | None = None,
+        allow_invalid_mask: bool = False,
     ) -> list[bool] | None:
+        has_selection = self._has_active_selection(scene, lf_module=lf_module)
+        if has_selection is False:
+            return None
         for attribute_name in (
             "get_selection_mask",
             "selection_mask",
@@ -242,10 +269,33 @@ class SelectionState:
                 candidate = candidate()
             if candidate is None:
                 continue
-            mask = coerce_boolean_mask(candidate)
+            try:
+                mask = coerce_boolean_mask(candidate)
+            except AdapterUnavailableError:
+                if allow_invalid_mask:
+                    return None
+                raise
             if len(mask) != expected_length:
                 continue
             return mask
+        return None
+
+    def _has_active_selection(
+        self,
+        scene: object,
+        *,
+        lf_module: object | None = None,
+    ) -> bool | None:
+        for owner in (lf_module, scene):
+            if owner is None:
+                continue
+            has_selection = getattr(owner, "has_selection", None)
+            if not callable(has_selection):
+                continue
+            try:
+                return bool(has_selection())
+            except Exception:
+                continue
         return None
 
     @staticmethod

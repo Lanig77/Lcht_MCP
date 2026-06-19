@@ -167,7 +167,11 @@ class LichtfeldAdapter(AdapterContract):
             scene,
             model,
             position_rows,
-            selected_count=self._selection.get_selected_count(scene, len(position_rows)),
+            selected_count=self._selection.get_selected_count(
+                scene,
+                len(position_rows),
+                lf_module=lichtfeld_module,
+            ),
         )
 
     def get_scene_stats(self) -> SceneStats:
@@ -205,7 +209,11 @@ class LichtfeldAdapter(AdapterContract):
                 positions=[],
                 total_splats=total_splats,
                 analyzed_splats=0,
-                selected_splats=self._selection.get_selected_count(scene, total_splats),
+                selected_splats=self._selection.get_selected_count(
+                    scene,
+                    total_splats,
+                    lf_module=lichtfeld_module,
+                ),
                 deleted_splats=self._read_deleted_count(model),
                 voxel_size=voxel_size,
                 min_voxel_cluster_size=min_voxel_cluster_size,
@@ -236,7 +244,11 @@ class LichtfeldAdapter(AdapterContract):
             positions=sampled_rows,
             total_splats=total_splats,
             analyzed_splats=len(sampled_rows),
-            selected_splats=self._selection.get_selected_count(scene, total_splats),
+            selected_splats=self._selection.get_selected_count(
+                scene,
+                total_splats,
+                lf_module=lichtfeld_module,
+            ),
             deleted_splats=self._read_deleted_count(model),
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
