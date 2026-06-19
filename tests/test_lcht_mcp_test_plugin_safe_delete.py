@@ -47,6 +47,30 @@ class FakeCleanupPreviewSoftDeleteAdapter:
         )
 
 
+class FakeConfirmedCleanupAdapter:
+    def __init__(self, *, should_raise: bool = False):
+        self.apply_cleanup_candidates_calls = 0
+        self.apply_deleted_calls = 0
+        self.should_raise = should_raise
+        self.current_splat_count = 100
+
+    def get_stats(self):
+        return SimpleNamespace(splat_count=self.current_splat_count)
+
+    def apply_cleanup_candidates(self):
+        self.apply_cleanup_candidates_calls += 1
+        if self.should_raise:
+            raise RuntimeError(
+                "No confirmed cleanup soft delete is available. Run Soft Delete Cleanup Preview first."
+            )
+        self.apply_deleted_calls += 1
+        self.current_splat_count -= 12
+        return SimpleNamespace(
+            ok=True,
+            message="Permanently applied cleanup of 12 soft-deleted splats.",
+        )
+
+
 def test_run_safe_delete_test_skips_post_delete_stats_when_verification_is_disabled(monkeypatch):
     runtime_config, test_runner = _load_runner_modules(monkeypatch)
     runtime_config.arm_safe_delete()
@@ -123,3 +147,48 @@ def test_run_soft_delete_cleanup_preview_succeeds_without_apply_deleted(monkeypa
     assert "Soft-deleted 12 selected splats." in message
     assert fake_adapter.soft_delete_cleanup_candidates_calls == 1
     assert fake_adapter.apply_deleted_calls == 0
+
+
+def test_run_apply_confirmed_cleanup_returns_early_without_confirmation(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.arm_safe_delete()
+    monkeypatch.setattr(
+        test_runner,
+        "_build_adapter",
+        lambda: (_ for _ in ()).throw(AssertionError("adapter should not be built")),
+    )
+
+    success, message = test_runner.run_apply_confirmed_cleanup()
+
+    assert success is True
+    assert "CONFIRM_SAFE_DELETE=False" in message
+
+
+def test_run_apply_confirmed_cleanup_refuses_without_pending_cleanup_soft_delete(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.arm_safe_delete()
+    runtime_config.confirm_safe_delete()
+    fake_adapter = FakeConfirmedCleanupAdapter(should_raise=True)
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_apply_confirmed_cleanup()
+
+    assert success is False
+    assert "Run Soft Delete Cleanup Preview first" in message
+    assert fake_adapter.apply_cleanup_candidates_calls == 1
+    assert fake_adapter.apply_deleted_calls == 0
+
+
+def test_run_apply_confirmed_cleanup_succeeds_with_single_apply_deleted(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.arm_safe_delete()
+    runtime_config.confirm_safe_delete()
+    fake_adapter = FakeConfirmedCleanupAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_apply_confirmed_cleanup()
+
+    assert success is True
+    assert message == "Permanently applied cleanup of 12 soft-deleted splats."
+    assert fake_adapter.apply_cleanup_candidates_calls == 1
+    assert fake_adapter.apply_deleted_calls == 1

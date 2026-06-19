@@ -404,6 +404,77 @@ def run_soft_delete_cleanup_preview() -> tuple[bool, str]:
     return result.ok, result.message
 
 
+def run_apply_confirmed_cleanup() -> tuple[bool, str]:
+    """Permanently apply a previously confirmed cleanup soft delete."""
+    config = snapshot_runtime_config()
+    _log_info(
+        "Starting confirmed cleanup apply with "
+        f"ENABLE_SAFE_DELETE={config.enable_safe_delete}, "
+        f"CONFIRM_SAFE_DELETE={config.confirm_safe_delete}."
+    )
+
+    if not config.enable_safe_delete:
+        message = (
+            "Confirmed cleanup apply is disabled because ENABLE_SAFE_DELETE=False. "
+            "No permanent action was performed."
+        )
+        _log_info(message)
+        return True, message
+
+    if not config.confirm_safe_delete:
+        message = (
+            "Confirmed cleanup apply is armed but not confirmed because "
+            "ENABLE_SAFE_DELETE=True and CONFIRM_SAFE_DELETE=False. "
+            "No permanent action was performed."
+        )
+        _log_info(message)
+        return True, message
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Confirmed cleanup apply adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    apply_cleanup_candidates = getattr(adapter, "apply_cleanup_candidates", None)
+    if not callable(apply_cleanup_candidates):
+        message = "LichtfeldAdapter does not expose apply_cleanup_candidates()."
+        _log_error(message)
+        return False, message
+
+    get_stats = getattr(adapter, "get_stats", None)
+    if not callable(get_stats):
+        message = "LichtfeldAdapter does not expose get_stats() for confirmed cleanup logging."
+        _log_error(message)
+        return False, message
+
+    try:
+        initial_stats = get_stats()
+        initial_splat_count = initial_stats.splat_count
+        _log_info(f"initial_splat_count={initial_splat_count}")
+        result = apply_cleanup_candidates()
+        final_stats = get_stats()
+    except Exception as exc:
+        message = f"Confirmed cleanup apply failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    final_splat_count = final_stats.splat_count
+    permanent_deleted_count = initial_splat_count - final_splat_count
+    soft_deleted_count = permanent_deleted_count
+    _log_info(f"soft_deleted_count={soft_deleted_count}")
+    _log_info(f"final_splat_count={final_splat_count}")
+    _log_info(f"permanent_deleted_count={permanent_deleted_count}")
+    _log_info(
+        "Confirmed cleanup apply complete. "
+        "Permanent cleanup is no longer restorable."
+    )
+    _log_info(f"confirmed_cleanup_apply ok={result.ok} message={result.message}")
+    return result.ok, result.message
+
+
 def run_cluster_analysis_preview() -> tuple[bool, str]:
     """Run a non-destructive cluster analysis summary on the active LichtFeld scene."""
     config = snapshot_runtime_config()

@@ -70,6 +70,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._snapshots: list[MockSceneState] = []
         self._history: list[HistoryEntry] = []
         self._last_cleanup_preview: CleanupCandidateSummary | None = None
+        self._pending_cleanup_apply_count = 0
 
     def _require_scene(self) -> MockSceneState:
         if self._scene is None:
@@ -154,11 +155,25 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         scene.selected_count = 0
         scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
         self._last_cleanup_preview = None
+        self._pending_cleanup_apply_count = deleted
         return ToolResult(
             message=(
                 f"Soft-deleted {deleted:,} cleanup candidate splats. "
                 "Reversible until apply_deleted() is called."
             )
+        )
+
+    def apply_cleanup_candidates(self) -> ToolResult:
+        scene = self._require_scene()
+        if self._pending_cleanup_apply_count <= 0:
+            raise ProjectNotOpenError(
+                "No confirmed cleanup soft delete is available. Run Soft Delete Cleanup Preview first."
+            )
+        deleted = min(scene.splat_count, self._pending_cleanup_apply_count)
+        self._push_history("apply_cleanup_candidates", {"deleted": deleted})
+        self._pending_cleanup_apply_count = 0
+        return ToolResult(
+            message=f"Permanently applied cleanup of {deleted:,} soft-deleted splats."
         )
 
     def analyze_scene(

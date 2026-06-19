@@ -12,6 +12,10 @@ from .preview_cleanup_candidates import (
     LCHTMCP_OT_preview_cleanup_candidates,
     PREVIEW_CLEANUP_CANDIDATES_OPERATOR_ID,
 )
+from .apply_confirmed_cleanup import (
+    APPLY_CONFIRMED_CLEANUP_OPERATOR_ID,
+    LCHTMCP_OT_apply_confirmed_cleanup,
+)
 from .soft_delete_cleanup_preview import (
     LCHTMCP_OT_soft_delete_cleanup_preview,
     SOFT_DELETE_CLEANUP_PREVIEW_OPERATOR_ID,
@@ -103,6 +107,7 @@ __all__ = [
     "ANALYZE_CLUSTERS_OPERATOR_ID",
     "ANALYZE_VOXEL_CLUSTERS_OPERATOR_ID",
     "PREVIEW_CLEANUP_CANDIDATES_OPERATOR_ID",
+    "APPLY_CONFIRMED_CLEANUP_OPERATOR_ID",
     "SOFT_DELETE_CLEANUP_PREVIEW_OPERATOR_ID",
     "CONFIRM_SAFE_DELETE_OPERATOR_ID",
     "CLUSTER_DISTANCE_DOWN_OPERATOR_ID",
@@ -140,6 +145,7 @@ __all__ = [
     "LCHTMCP_OT_analyze_clusters",
     "LCHTMCP_OT_analyze_voxel_clusters",
     "LCHTMCP_OT_preview_cleanup_candidates",
+    "LCHTMCP_OT_apply_confirmed_cleanup",
     "LCHTMCP_OT_soft_delete_cleanup_preview",
     "LCHTMCP_OT_arm_safe_delete",
     "LCHTMCP_OT_cluster_distance_down",

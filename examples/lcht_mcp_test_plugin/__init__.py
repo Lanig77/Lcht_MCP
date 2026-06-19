@@ -8,6 +8,7 @@ from .operators.analyze_scene import LCHTMCP_OT_analyze_scene
 from .operators.analyze_clusters import LCHTMCP_OT_analyze_clusters
 from .operators.analyze_voxel_clusters import LCHTMCP_OT_analyze_voxel_clusters
 from .operators.preview_cleanup_candidates import LCHTMCP_OT_preview_cleanup_candidates
+from .operators.apply_confirmed_cleanup import LCHTMCP_OT_apply_confirmed_cleanup
 from .operators.soft_delete_cleanup_preview import LCHTMCP_OT_soft_delete_cleanup_preview
 from .panels.test_panel import LchtMcpTestPanel
 from .operators.diagnose_api import LCHTMCP_OT_diagnose_api
@@ -55,6 +56,7 @@ _classes = [
     LCHTMCP_OT_analyze_clusters,
     LCHTMCP_OT_analyze_voxel_clusters,
     LCHTMCP_OT_preview_cleanup_candidates,
+    LCHTMCP_OT_apply_confirmed_cleanup,
     LCHTMCP_OT_soft_delete_cleanup_preview,
     LCHTMCP_OT_arm_safe_delete,
     LCHTMCP_OT_confirm_safe_delete,

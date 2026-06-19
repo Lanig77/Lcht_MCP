@@ -6,6 +6,7 @@ import lichtfeld as lf
 
 from ..core.runtime_config import snapshot_runtime_config
 from ..operators.analyze_scene import ANALYZE_SCENE_OPERATOR_ID
+from ..operators.apply_confirmed_cleanup import APPLY_CONFIRMED_CLEANUP_OPERATOR_ID
 from ..operators.preview_cleanup_candidates import PREVIEW_CLEANUP_CANDIDATES_OPERATOR_ID
 from ..operators.soft_delete_cleanup_preview import SOFT_DELETE_CLEANUP_PREVIEW_OPERATOR_ID
 from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
@@ -342,6 +343,16 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 34 * scale),
         ):
             lf.ui.ops.invoke(SOFT_DELETE_CLEANUP_PREVIEW_OPERATOR_ID)
+        layout.text_colored(
+            "Permanent cleanup requires explicit confirmation.",
+            theme.palette.text_dim,
+        )
+        if layout.button_styled(
+            "Permanently Apply Cleanup##apply_confirmed_cleanup",
+            "warning",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(APPLY_CONFIRMED_CLEANUP_OPERATOR_ID)
         if layout.button_styled(
             "Analyze Clusters##analyze_clusters",
             "secondary",

@@ -162,6 +162,7 @@ class LichtfeldAdapter(AdapterContract):
         self._last_delete_count = 0
         self._last_finalized_delete_count = 0
         self._last_cleanup_preview: _CleanupPreviewState | None = None
+        self._pending_cleanup_apply_project_path: str | None = None
 
     @property
     def _cached_selection_mask(self) -> list[bool] | None:
@@ -443,8 +444,56 @@ class LichtfeldAdapter(AdapterContract):
             selected_count,
             result.message,
         )
+        self._pending_cleanup_apply_project_path = preview_state.summary.project_path
         self._last_cleanup_preview = None
         return result
+
+    def apply_cleanup_candidates(self) -> ToolResult:
+        if self._pending_cleanup_apply_project_path is None:
+            raise AdapterUnavailableError(
+                "No confirmed cleanup soft delete is available. "
+                "Run Soft Delete Cleanup Preview first."
+            )
+        if self._last_delete_mask is None or self._last_delete_count <= 0:
+            self._pending_cleanup_apply_project_path = None
+            raise AdapterUnavailableError(
+                "No pending cleanup soft delete is available to finalize."
+            )
+
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        scene_path = get_scene_path(scene)
+        if scene_path != self._pending_cleanup_apply_project_path:
+            raise AdapterUnavailableError(
+                "Pending cleanup soft delete no longer matches the active scene. "
+                "Run Preview Cleanup Candidates again."
+            )
+
+        apply_deleted = getattr(model, "apply_deleted", None)
+        if not callable(apply_deleted):
+            raise AdapterUnavailableError(
+                "Active LichtFeld combined model does not expose apply_deleted() for permanent cleanup."
+            )
+
+        initial_splat_count = len(extract_position_rows(model))
+        soft_deleted_count = self._last_delete_count
+        logger.info("LichtFeld cleanup apply: initial_splat_count=%s", initial_splat_count)
+        logger.info("LichtFeld cleanup apply: soft_deleted_count=%s", soft_deleted_count)
+        result = self.apply_pending_delete()
+        final_splat_count = len(extract_position_rows(model))
+        permanent_deleted_count = initial_splat_count - final_splat_count
+        logger.info("LichtFeld cleanup apply: final_splat_count=%s", final_splat_count)
+        logger.info(
+            "LichtFeld cleanup apply: permanent_deleted_count=%s",
+            permanent_deleted_count,
+        )
+        return ToolResult(
+            ok=result.ok,
+            message=(
+                f"Permanently applied cleanup of {permanent_deleted_count} soft-deleted splats."
+            ),
+        )
 
     def analyze_clusters_preview(
         self,
@@ -1084,6 +1133,7 @@ class LichtfeldAdapter(AdapterContract):
     def _clear_last_delete(self) -> None:
         self._last_delete_mask = None
         self._last_delete_count = 0
+        self._pending_cleanup_apply_project_path = None
 
     @staticmethod
     def _read_splat_count_without_selection(
