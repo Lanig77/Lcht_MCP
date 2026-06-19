@@ -8,8 +8,8 @@ that decision.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from lichtfeld_mcp.core.scene_analysis import SceneAnalysisReport
 from lichtfeld_mcp.schemas.common import (
     Box3D,
     ExportResult,
@@ -22,6 +22,9 @@ from lichtfeld_mcp.schemas.common import (
     ToolResult,
     Vec3,
 )
+
+if TYPE_CHECKING:
+    from lichtfeld_mcp.core.scene_analysis import SceneAnalysisReport
 
 
 class LichtfeldAdapter(ABC):
