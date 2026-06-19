@@ -204,6 +204,7 @@ class LichtfeldAdapter(AdapterContract):
         if max_splats < 1:
             raise InvalidParameterError("max_splats must be at least 1.")
 
+        print("analyze_scene entered")
         logger.info("analyze_scene entered")
 
         lichtfeld_module = load_lichtfeld()
