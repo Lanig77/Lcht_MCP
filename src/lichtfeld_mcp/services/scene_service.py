@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from lichtfeld_mcp.core.scene_analysis import SceneAnalysisReport
 from lichtfeld_mcp.core.scene_api import SceneAPI
 from lichtfeld_mcp.schemas.common import (
     ExportResult,
@@ -32,6 +33,20 @@ class SceneService:
 
     def get_stats(self) -> SceneStats:
         return self._scene_api.get_scene_stats()
+
+    def analyze_scene(
+        self,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        max_splats: int = 25_000,
+        abort_if_above_limit: bool = False,
+    ) -> SceneAnalysisReport:
+        return self._scene_api.analyze_scene(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+            max_splats=max_splats,
+            abort_if_above_limit=abort_if_above_limit,
+        )
 
     def select_by_box(
         self,

@@ -14,6 +14,11 @@ from pathlib import Path
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter
 from lichtfeld_mcp.core.constraints import validate_selection_mode
+from lichtfeld_mcp.core.scene_analysis import (
+    AnalysisResult,
+    AnalysisSeverity,
+    SceneAnalysisReport,
+)
 from lichtfeld_mcp.core.presets import get_optimization_profile
 from lichtfeld_mcp.core.requests import (
     BoxSelectionRequest,
@@ -112,6 +117,106 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             opacity_mean=scene.opacity_mean,
             density_score=scene.density_score,
             history_length=len(self._history),
+        )
+
+    def analyze_scene(
+        self,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        max_splats: int = 25_000,
+        abort_if_above_limit: bool = False,
+    ) -> SceneAnalysisReport:
+        scene = self._require_scene()
+        approximate = scene.splat_count > max_splats and not abort_if_above_limit
+        aborted = scene.splat_count > max_splats and abort_if_above_limit
+        results = [
+            AnalysisResult(
+                name="statistics",
+                severity=AnalysisSeverity.INFO,
+                summary="Scene statistics captured.",
+                details={
+                    "total_splats": scene.splat_count,
+                    "deleted_splats": 0,
+                    "selected_splats": scene.selected_count,
+                },
+            ),
+            AnalysisResult(
+                name="voxel_connectivity",
+                severity=AnalysisSeverity.INFO,
+                summary="Scene appears fully connected.",
+                details={
+                    "connected": True,
+                    "floating_voxel_groups": 0,
+                    "estimated_floating_splats": 0,
+                },
+                recommendations=["No cleanup required."],
+            ),
+            AnalysisResult(
+                name="bounding_box",
+                severity=AnalysisSeverity.INFO,
+                summary="Bounding box looks normal.",
+                details={"distant_splats": 0, "abnormal_scene_size": False},
+            ),
+            AnalysisResult(
+                name="density",
+                severity=AnalysisSeverity.INFO,
+                summary="Density distribution looks healthy.",
+                details={
+                    "occupied_voxels": max(1, min(max_splats, scene.splat_count) // max(1, min_voxel_cluster_size)),
+                    "density_histogram": {"1": 0, "2-4": 0, "5-9": 0, "10-24": 1, "25+": 0},
+                    "sparse_regions": 0,
+                },
+                recommendations=["Density looks healthy."],
+            ),
+        ]
+        if aborted:
+            results = [
+                AnalysisResult(
+                    name="statistics",
+                    severity=AnalysisSeverity.WARNING,
+                    summary="Scene analysis aborted by execution budget.",
+                    details={
+                        "total_splats": scene.splat_count,
+                        "deleted_splats": 0,
+                        "selected_splats": scene.selected_count,
+                    },
+                    warnings=["Analysis skipped because the execution budget was exceeded."],
+                    recommendations=["Increase the analysis budget or allow sampled preview mode."],
+                    score_impact=14,
+                )
+            ]
+
+        warnings = [
+            warning
+            for result in results
+            for warning in result.warnings
+        ]
+        recommendations = [
+            recommendation
+            for result in results
+            for recommendation in result.recommendations
+        ] or ["Scene is healthy."]
+        return SceneAnalysisReport(
+            scene_stats={
+                "scene_name": scene.name,
+                "project_path": scene.path,
+                "total_splats": scene.splat_count,
+                "analyzed_splats": min(scene.splat_count, max_splats),
+                "selected_splats": scene.selected_count,
+                "deleted_splats": 0,
+                "voxel_size": voxel_size,
+                "min_voxel_cluster_size": min_voxel_cluster_size,
+                "approximate": approximate,
+                "sampling_stride": max(1, math.ceil(scene.splat_count / max_splats)),
+                "used_native_sampling": False,
+                "max_splats": max_splats,
+                "aborted": aborted,
+            },
+            quality_score=max(0, 100 - sum(result.score_impact for result in results)),
+            warnings=warnings,
+            recommendations=recommendations,
+            analysis_time=0.0,
+            results=results,
         )
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:

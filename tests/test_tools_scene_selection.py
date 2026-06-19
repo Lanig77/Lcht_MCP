@@ -1,5 +1,6 @@
 from unittest.mock import Mock
 
+from lichtfeld_mcp.core.scene_analysis import SceneAnalysisReport
 from lichtfeld_mcp.schemas.common import (
     Box3D,
     HistoryEntry,
@@ -34,6 +35,28 @@ def test_scene_tools_delegate_to_scene_service(monkeypatch):
         density_score=0.7,
         history_length=2,
     )
+    service.analyze_scene.return_value = SceneAnalysisReport(
+        scene_stats={
+            "scene_name": "demo_scene",
+            "project_path": "demo_scene.lfp",
+            "total_splats": 123,
+            "analyzed_splats": 123,
+            "selected_splats": 4,
+            "deleted_splats": 0,
+            "voxel_size": 0.25,
+            "min_voxel_cluster_size": 10,
+            "approximate": False,
+            "sampling_stride": 1,
+            "used_native_sampling": False,
+            "max_splats": 25_000,
+            "aborted": False,
+        },
+        quality_score=95,
+        warnings=[],
+        recommendations=["Scene is healthy."],
+        analysis_time=0.1,
+        results=[],
+    )
     service.undo.return_value = ToolResult(message="Undo applied.")
     service.list_history.return_value = [HistoryEntry(index=0, action="open_project", details={})]
     service.save_project.return_value = ToolResult(message="saved")
@@ -42,6 +65,7 @@ def test_scene_tools_delegate_to_scene_service(monkeypatch):
 
     assert scene_tools.open_project("demo_scene.lfp")["name"] == "demo_scene"
     assert scene_tools.get_scene_stats()["project_name"] == "demo_scene"
+    assert scene_tools.analyze_scene()["quality_score"] == 95
     assert scene_tools.undo()["message"] == "Undo applied."
     assert scene_tools.list_history()[0]["action"] == "open_project"
     assert scene_tools.save_project()["message"] == "saved"
@@ -49,6 +73,12 @@ def test_scene_tools_delegate_to_scene_service(monkeypatch):
 
     service.open_project.assert_called_once_with("demo_scene.lfp")
     service.get_stats.assert_called_once_with()
+    service.analyze_scene.assert_called_once_with(
+        voxel_size=0.25,
+        min_voxel_cluster_size=10,
+        max_splats=25_000,
+        abort_if_above_limit=False,
+    )
     service.undo.assert_called_once_with()
     service.list_history.assert_called_once_with()
     service.save_project.assert_called_once_with()

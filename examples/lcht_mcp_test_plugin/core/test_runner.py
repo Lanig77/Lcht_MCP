@@ -10,7 +10,7 @@ from pathlib import Path
 
 import lichtfeld as lf
 
-from .runtime_config import snapshot_runtime_config
+from .runtime_config import set_scene_analysis_report_lines, snapshot_runtime_config
 
 
 PLUGIN_NAME = "lcht_mcp_test_plugin"
@@ -172,6 +172,63 @@ def _restore_deleted_splats(adapter) -> None:
     _log_info(f"restore_last_delete ok={restore_result.ok} message={restore_result.message}")
     if not restore_result.ok:
         raise RuntimeError(restore_result.message)
+
+
+def run_scene_analysis() -> tuple[bool, str]:
+    """Run a unified read-only scene analysis report on the active LichtFeld scene."""
+    config = snapshot_runtime_config()
+    _log_info(
+        "Starting scene analysis with "
+        f"voxel_size={config.voxel_size:.4f}, "
+        f"min_voxel_cluster_size={config.voxel_min_cluster_size}, "
+        f"max_cluster_analysis_splats={config.max_cluster_analysis_splats}, "
+        "abort_if_splat_count_above_limit="
+        f"{config.abort_if_splat_count_above_limit}."
+    )
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Scene analysis adapter setup failed: {exc}"
+        _log_error(message)
+        set_scene_analysis_report_lines([message])
+        return False, message
+
+    analyze_scene = getattr(adapter, "analyze_scene", None)
+    if not callable(analyze_scene):
+        message = "LichtfeldAdapter does not expose analyze_scene()."
+        _log_error(message)
+        set_scene_analysis_report_lines([message])
+        return False, message
+
+    try:
+        from lichtfeld_mcp.core.scene_analysis import format_scene_analysis_report
+    except Exception as exc:
+        message = f"Scene analysis formatter import failed: {exc}"
+        _log_error(message)
+        set_scene_analysis_report_lines([message])
+        return False, message
+
+    try:
+        report = analyze_scene(
+            voxel_size=config.voxel_size,
+            min_voxel_cluster_size=config.voxel_min_cluster_size,
+            max_splats=config.max_cluster_analysis_splats,
+            abort_if_above_limit=config.abort_if_splat_count_above_limit,
+        )
+    except Exception as exc:
+        message = f"Scene analysis failed: {exc}"
+        _log_error(message)
+        set_scene_analysis_report_lines([message])
+        return False, message
+
+    formatted_report = format_scene_analysis_report(report)
+    report_lines = formatted_report.splitlines()
+    set_scene_analysis_report_lines(report_lines)
+    for line in report_lines:
+        _log_info(line)
+    return True, f"Scene analysis complete. Quality score: {report.quality_score}"
 
 
 def run_cluster_analysis_preview() -> tuple[bool, str]:

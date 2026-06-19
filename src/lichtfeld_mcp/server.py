@@ -20,6 +20,7 @@ mcp.tool()(scene.open_project)
 mcp.tool()(scene.save_project)
 mcp.tool()(scene.close_project)
 mcp.tool()(scene.get_scene_stats)
+mcp.tool()(scene.analyze_scene)
 mcp.tool()(scene.list_history)
 mcp.tool()(scene.undo)
 

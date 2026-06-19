@@ -18,6 +18,8 @@ def test_open_stats_select_delete_optimize_export():
     stats = adapter.get_scene_stats()
     assert stats.project_name == "demo_castle"
     assert stats.splat_count == project.splat_count
+    report = adapter.analyze_scene(max_splats=10_000)
+    assert report.scene_stats["total_splats"] == project.splat_count
 
     result = adapter.select_by_box(Box3D(min=Vec3(x=-1, y=-1, z=0), max=Vec3(x=1, y=1, z=2)))
     assert result.selected_count > 0

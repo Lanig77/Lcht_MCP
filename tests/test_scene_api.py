@@ -19,6 +19,8 @@ def test_scene_api_routes_scene_lifecycle_through_adapter():
 
     stats = api.get_scene_stats()
     assert stats.project_path == project.path
+    report = api.analyze_scene(max_splats=5_000)
+    assert report.scene_stats["total_splats"] == project.splat_count
 
     closed = api.close_project()
     assert closed.ok is True

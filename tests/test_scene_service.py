@@ -14,6 +14,23 @@ from lichtfeld_mcp.services.scene_service import SceneService
         ("close_project", (), {}, (), {}),
         ("get_stats", (), {}, (), {}),
         (
+            "analyze_scene",
+            (),
+            {
+                "voxel_size": 0.5,
+                "min_voxel_cluster_size": 5,
+                "max_splats": 10_000,
+                "abort_if_above_limit": True,
+            },
+            (),
+            {
+                "voxel_size": 0.5,
+                "min_voxel_cluster_size": 5,
+                "max_splats": 10_000,
+                "abort_if_above_limit": True,
+            },
+        ),
+        (
             "select_by_box",
             (),
             {"min_x": -1, "min_y": -1, "min_z": 0, "max_x": 1, "max_y": 1, "max_z": 2, "mode": "add"},

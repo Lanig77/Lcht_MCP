@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Operators for the Lcht_MCP test plugin."""
 
+from .analyze_scene import ANALYZE_SCENE_OPERATOR_ID, LCHTMCP_OT_analyze_scene
 from .analyze_clusters import ANALYZE_CLUSTERS_OPERATOR_ID, LCHTMCP_OT_analyze_clusters
 from .analyze_voxel_clusters import (
     ANALYZE_VOXEL_CLUSTERS_OPERATOR_ID,
@@ -90,6 +91,7 @@ from .run_undo_validation import (
 
 __all__ = [
     "ARM_SAFE_DELETE_OPERATOR_ID",
+    "ANALYZE_SCENE_OPERATOR_ID",
     "ANALYZE_CLUSTERS_OPERATOR_ID",
     "ANALYZE_VOXEL_CLUSTERS_OPERATOR_ID",
     "CONFIRM_SAFE_DELETE_OPERATOR_ID",
@@ -124,6 +126,7 @@ __all__ = [
     "VOXEL_MIN_CLUSTER_SIZE_UP_OPERATOR_ID",
     "VOXEL_SIZE_DOWN_OPERATOR_ID",
     "VOXEL_SIZE_UP_OPERATOR_ID",
+    "LCHTMCP_OT_analyze_scene",
     "LCHTMCP_OT_analyze_clusters",
     "LCHTMCP_OT_analyze_voxel_clusters",
     "LCHTMCP_OT_arm_safe_delete",

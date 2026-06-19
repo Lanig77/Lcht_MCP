@@ -33,6 +33,22 @@ def get_scene_stats() -> dict:
     return get_scene_service().get_stats().model_dump()
 
 
+def analyze_scene(
+    voxel_size: float = 0.25,
+    min_voxel_cluster_size: int = 10,
+    max_splats: int = 25_000,
+    abort_if_above_limit: bool = False,
+) -> dict:
+    """Run a unified read-only scene quality analysis."""
+
+    return get_scene_service().analyze_scene(
+        voxel_size=voxel_size,
+        min_voxel_cluster_size=min_voxel_cluster_size,
+        max_splats=max_splats,
+        abort_if_above_limit=abort_if_above_limit,
+    ).to_dict()
+
+
 def list_history() -> list[dict]:
     """Return the editor operation history."""
 

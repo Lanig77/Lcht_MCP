@@ -614,6 +614,48 @@ def test_analyze_voxel_clusters_preview_returns_summary(monkeypatch):
     assert summary.used_native_sampling is True
 
 
+def test_analyze_scene_returns_unified_report(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [0.2, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [5.2, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    report = adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=4,
+        abort_if_above_limit=False,
+    )
+
+    assert report.scene_stats["scene_name"] == "castle_demo"
+    assert report.scene_stats["project_path"] == "C:/data/castle_demo.lf"
+    assert report.scene_stats["total_splats"] == 6
+    assert report.scene_stats["analyzed_splats"] == 3
+    assert report.scene_stats["approximate"] is True
+    assert len(report.results) == 4
+    assert any(result.name == "voxel_connectivity" for result in report.results)
+
+
 def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module

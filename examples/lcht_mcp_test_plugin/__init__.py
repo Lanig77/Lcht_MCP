@@ -4,6 +4,7 @@
 
 import lichtfeld as lf
 
+from .operators.analyze_scene import LCHTMCP_OT_analyze_scene
 from .operators.analyze_clusters import LCHTMCP_OT_analyze_clusters
 from .operators.analyze_voxel_clusters import LCHTMCP_OT_analyze_voxel_clusters
 from .panels.test_panel import LchtMcpTestPanel
@@ -48,6 +49,7 @@ from .operators.run_undo_validation import LCHTMCP_OT_run_undo_validation
 
 _classes = [
     LchtMcpTestPanel,
+    LCHTMCP_OT_analyze_scene,
     LCHTMCP_OT_analyze_clusters,
     LCHTMCP_OT_analyze_voxel_clusters,
     LCHTMCP_OT_arm_safe_delete,

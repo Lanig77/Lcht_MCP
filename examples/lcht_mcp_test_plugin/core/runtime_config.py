@@ -39,6 +39,7 @@ class RuntimeConfig:
     abort_if_splat_count_above_limit: bool = False
     voxel_size: float = 0.25
     voxel_min_cluster_size: int = 10
+    last_scene_analysis_lines: tuple[str, ...] = ()
 
 
 _runtime_config = RuntimeConfig()
@@ -61,6 +62,11 @@ def reset_runtime_config() -> None:
     """Restore the runtime config to its default values."""
     global _runtime_config
     _runtime_config = RuntimeConfig()
+
+
+def set_scene_analysis_report_lines(lines: list[str]) -> None:
+    """Store the most recent scene analysis report for panel display."""
+    _runtime_config.last_scene_analysis_lines = tuple(lines)
 
 
 def arm_safe_delete() -> None:

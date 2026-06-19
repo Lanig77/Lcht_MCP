@@ -3,6 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from lichtfeld_mcp.core.scene_analysis import (
+    AnalysisResult,
+    AnalysisSeverity,
+    SceneAnalysisReport,
+)
 from test_lcht_mcp_test_plugin_undo import _load_runner_modules
 
 
@@ -84,6 +89,77 @@ class FakeClusterPreviewAdapter:
             voxel_analysis_elapsed_seconds=0.3,
         )
 
+    def analyze_scene(
+        self,
+        *,
+        voxel_size: float,
+        min_voxel_cluster_size: int,
+        max_splats: int,
+        abort_if_above_limit: bool,
+    ):
+        self.scene_analysis_calls = getattr(self, "scene_analysis_calls", 0) + 1
+        self.last_scene_analysis_kwargs = {
+            "voxel_size": voxel_size,
+            "min_voxel_cluster_size": min_voxel_cluster_size,
+            "max_splats": max_splats,
+            "abort_if_above_limit": abort_if_above_limit,
+        }
+        return SceneAnalysisReport(
+            scene_stats={
+                "scene_name": "demo_scene",
+                "project_path": "C:/repo/demo_scene.lf",
+                "total_splats": 1_998_000,
+                "analyzed_splats": 25_000,
+                "selected_splats": 0,
+                "deleted_splats": 0,
+                "voxel_size": voxel_size,
+                "min_voxel_cluster_size": min_voxel_cluster_size,
+                "approximate": True,
+                "sampling_stride": 80,
+                "used_native_sampling": True,
+                "max_splats": max_splats,
+                "aborted": False,
+            },
+            quality_score=93,
+            warnings=[],
+            recommendations=["Scene is healthy.", "Preview floating islands."],
+            analysis_time=0.42,
+            results=[
+                AnalysisResult(
+                    name="statistics",
+                    severity=AnalysisSeverity.INFO,
+                    summary="Scene statistics captured.",
+                    details={
+                        "total_splats": 1_998_000,
+                        "deleted_splats": 0,
+                        "selected_splats": 0,
+                    },
+                ),
+                AnalysisResult(
+                    name="voxel_connectivity",
+                    severity=AnalysisSeverity.WARNING,
+                    summary="Small floating islands detected.",
+                    details={
+                        "connected": False,
+                        "floating_voxel_groups": 2,
+                        "estimated_floating_splats": 412,
+                    },
+                ),
+                AnalysisResult(
+                    name="bounding_box",
+                    severity=AnalysisSeverity.INFO,
+                    summary="Bounding box looks normal.",
+                    details={"distant_splats": 0, "abnormal_scene_size": False},
+                ),
+                AnalysisResult(
+                    name="density",
+                    severity=AnalysisSeverity.INFO,
+                    summary="Density distribution looks healthy.",
+                    details={"occupied_voxels": 1200, "density_histogram": {}, "sparse_regions": 0},
+                ),
+            ],
+        )
+
 
 def test_run_cluster_analysis_preview_uses_runtime_config_and_returns_success(monkeypatch):
     runtime_config, test_runner = _load_runner_modules(monkeypatch)
@@ -136,6 +212,26 @@ def test_run_voxel_cluster_analysis_preview_uses_runtime_config_and_returns_succ
     assert message == "Voxel cluster preview complete in approximate sampled mode."
     assert fake_adapter.voxel_analysis_calls == 1
     assert fake_adapter.last_voxel_kwargs == {
+        "voxel_size": 0.35,
+        "min_voxel_cluster_size": 25,
+        "max_splats": 25_000,
+        "abort_if_above_limit": False,
+    }
+
+
+def test_run_scene_analysis_uses_runtime_config_and_returns_success(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.adjust_voxel_size(0.10)
+    runtime_config.adjust_voxel_min_cluster_size(15)
+    fake_adapter = FakeClusterPreviewAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_scene_analysis()
+
+    assert success is True
+    assert message == "Scene analysis complete. Quality score: 93"
+    assert fake_adapter.scene_analysis_calls == 1
+    assert fake_adapter.last_scene_analysis_kwargs == {
         "voxel_size": 0.35,
         "min_voxel_cluster_size": 25,
         "max_splats": 25_000,

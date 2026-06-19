@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter
 from lichtfeld_mcp.core.constraints import validate_selection_mode
+from lichtfeld_mcp.core.scene_analysis import SceneAnalysisReport
 from lichtfeld_mcp.core.requests import (
     BoxSelectionRequest,
     ColorSelectionRequest,
@@ -45,6 +46,20 @@ class SceneAPI:
 
     def get_scene_stats(self) -> SceneStats:
         return self._adapter.get_scene_stats()
+
+    def analyze_scene(
+        self,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        max_splats: int = 25_000,
+        abort_if_above_limit: bool = False,
+    ) -> SceneAnalysisReport:
+        return self._adapter.analyze_scene(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+            max_splats=max_splats,
+            abort_if_above_limit=abort_if_above_limit,
+        )
 
     def list_history(self) -> list[HistoryEntry]:
         return self._adapter.list_history()

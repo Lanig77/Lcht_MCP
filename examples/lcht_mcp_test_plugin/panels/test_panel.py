@@ -5,6 +5,7 @@
 import lichtfeld as lf
 
 from ..core.runtime_config import snapshot_runtime_config
+from ..operators.analyze_scene import ANALYZE_SCENE_OPERATOR_ID
 from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
 from ..operators.diagnose_native_selection import DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID
 from ..operators.diagnose_tensor_mask import DIAGNOSE_TENSOR_MASK_OPERATOR_ID
@@ -146,6 +147,12 @@ class LchtMcpTestPanel(lf.ui.Panel):
             theme.palette.text_dim,
         )
         layout.spacing()
+
+        if config.last_scene_analysis_lines:
+            layout.label("Last Scene Analysis")
+            for line in config.last_scene_analysis_lines:
+                layout.text_colored(line, theme.palette.text_dim)
+            layout.spacing()
 
         if layout.button_styled("Arm Safe Delete##arm", "warning", (-1, 30 * scale)):
             lf.ui.ops.invoke(ARM_SAFE_DELETE_OPERATOR_ID)
@@ -305,6 +312,12 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 34 * scale),
         ):
             lf.ui.ops.invoke(RUN_SAFE_DELETE_TEST_OPERATOR_ID)
+        if layout.button_styled(
+            "Analyze Scene##analyze_scene",
+            "primary",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(ANALYZE_SCENE_OPERATOR_ID)
         if layout.button_styled(
             "Analyze Clusters##analyze_clusters",
             "secondary",

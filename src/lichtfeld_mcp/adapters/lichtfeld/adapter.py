@@ -19,6 +19,11 @@ from lichtfeld_mcp.core.constraints import (
     validate_selection_mode,
 )
 from lichtfeld_mcp.core.requests import HeightRange
+from lichtfeld_mcp.core.scene_analysis import (
+    SceneAnalysisContext,
+    SceneAnalysisReport,
+    build_default_scene_analysis_engine,
+)
 from lichtfeld_mcp.core.validation import normalize_scene_path
 from lichtfeld_mcp.core.voxel_analysis import (
     analyze_voxel_clusters,
@@ -53,10 +58,16 @@ from .gaussian import (
     get_position_source_count,
     resolve_position_source,
 )
-from .scene import build_scene_stats, notify_scene_changed
+from .scene import build_scene_stats, get_scene_name, get_scene_path, notify_scene_changed
 from .selection import SelectionState
 from .training import TrainingOperations
-from .utils import load_lichtfeld, not_implemented, require_active_scene, require_combined_model
+from .utils import (
+    coerce_boolean_mask,
+    load_lichtfeld,
+    not_implemented,
+    require_active_scene,
+    require_combined_model,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -161,6 +172,80 @@ class LichtfeldAdapter(AdapterContract):
 
     def get_scene_stats(self) -> SceneStats:
         return self.get_stats()
+
+    def analyze_scene(
+        self,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        max_splats: int = 25_000,
+        abort_if_above_limit: bool = False,
+    ) -> SceneAnalysisReport:
+        if voxel_size <= 0.0:
+            raise InvalidParameterError("voxel_size must be strictly positive.")
+        if min_voxel_cluster_size < 1:
+            raise InvalidParameterError("min_voxel_cluster_size must be at least 1.")
+        if max_splats < 1:
+            raise InvalidParameterError("max_splats must be at least 1.")
+
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        position_source = resolve_position_source(model)
+
+        total_splats = get_position_source_count(position_source)
+        materialized_position_rows: list[tuple[float, float, float]] | None = None
+        if total_splats is None:
+            materialized_position_rows = _coerce_position_rows(position_source)
+            total_splats = len(materialized_position_rows)
+
+        if abort_if_above_limit and total_splats > max_splats:
+            context = SceneAnalysisContext(
+                scene_name=get_scene_name(scene, get_scene_path(scene)),
+                project_path=get_scene_path(scene),
+                positions=[],
+                total_splats=total_splats,
+                analyzed_splats=0,
+                selected_splats=self._selection.get_selected_count(scene, total_splats),
+                deleted_splats=self._read_deleted_count(model),
+                voxel_size=voxel_size,
+                min_voxel_cluster_size=min_voxel_cluster_size,
+                approximate=False,
+                sampling_stride=1,
+                used_native_sampling=False,
+                max_splats=max_splats,
+                aborted=True,
+            )
+            return build_default_scene_analysis_engine().analyze(context)
+
+        if materialized_position_rows is not None:
+            sampled_rows, sampling_stride = sample_position_rows(
+                materialized_position_rows,
+                max_splats,
+            )
+            used_native_sampling = False
+        else:
+            sampled_rows, sampling_stride, used_native_sampling = extract_sampled_position_rows(
+                position_source,
+                max_splats,
+                total_splats=total_splats,
+            )
+
+        context = SceneAnalysisContext(
+            scene_name=get_scene_name(scene, get_scene_path(scene)),
+            project_path=get_scene_path(scene),
+            positions=sampled_rows,
+            total_splats=total_splats,
+            analyzed_splats=len(sampled_rows),
+            selected_splats=self._selection.get_selected_count(scene, total_splats),
+            deleted_splats=self._read_deleted_count(model),
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+            approximate=len(sampled_rows) != total_splats,
+            sampling_stride=sampling_stride,
+            used_native_sampling=used_native_sampling,
+            max_splats=max_splats,
+        )
+        return build_default_scene_analysis_engine().analyze(context)
 
     def analyze_clusters_preview(
         self,
@@ -800,6 +885,20 @@ class LichtfeldAdapter(AdapterContract):
     def _clear_last_delete(self) -> None:
         self._last_delete_mask = None
         self._last_delete_count = 0
+
+    @staticmethod
+    def _read_deleted_count(model: object) -> int:
+        deleted_mask = getattr(model, "deleted", None)
+        if deleted_mask is None:
+            get_deleted_mask = getattr(model, "get_deleted_mask", None)
+            if callable(get_deleted_mask):
+                try:
+                    deleted_mask = get_deleted_mask()
+                except Exception:
+                    deleted_mask = None
+        if deleted_mask is None:
+            return 0
+        return sum(coerce_boolean_mask(deleted_mask))
 
     @staticmethod
     def _notify_scene_changed(scene: object) -> bool:
