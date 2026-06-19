@@ -9,6 +9,7 @@ from lichtfeld_mcp.core.scene_analysis import (
     CleanupCandidateSummary,
     SceneAnalysisReport,
 )
+from lichtfeld_mcp.schemas.common import CleanupSelectionPreviewResult
 from test_lcht_mcp_test_plugin_undo import _load_runner_modules
 
 
@@ -18,6 +19,7 @@ class FakeClusterPreviewAdapter:
         self.last_kwargs = None
         self.voxel_analysis_calls = 0
         self.last_voxel_kwargs = None
+        self.cleanup_selection_preview_calls = 0
 
     def analyze_clusters_preview(
         self,
@@ -206,6 +208,21 @@ class FakeClusterPreviewAdapter:
             notes=["Preview report only.", "Approximate sampled preview."],
         )
 
+    def preview_cleanup_selection(self):
+        self.cleanup_selection_preview_calls += 1
+        return CleanupSelectionPreviewResult(
+            selected_count=512,
+            selection_percentage=512 / 1_998_000,
+            selection_mode="replace",
+            selection_source="floating voxel clusters, disconnected clusters",
+            approximate=True,
+            message=(
+                "Approximate sampled selection preview. "
+                "Selected splats represent estimated cleanup regions. "
+                "Run Detailed mode for a more precise preview."
+            ),
+        )
+
 
 def test_run_cluster_analysis_preview_uses_runtime_config_and_returns_success(monkeypatch):
     runtime_config, test_runner = _load_runner_modules(monkeypatch)
@@ -333,3 +350,18 @@ def test_run_preview_cleanup_candidates_returns_actionable_summary(monkeypatch):
         ],
         "notes": ["Preview report only.", "Approximate sampled preview."],
     }
+
+
+def test_run_preview_cleanup_selection_builds_native_selection_preview(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.adjust_voxel_size(0.10)
+    runtime_config.adjust_voxel_min_cluster_size(15)
+    fake_adapter = FakeClusterPreviewAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_preview_cleanup_selection()
+
+    assert success is True
+    assert "Approximate sampled selection preview." in message
+    assert fake_adapter.cleanup_preview_calls == 1
+    assert fake_adapter.cleanup_selection_preview_calls == 1

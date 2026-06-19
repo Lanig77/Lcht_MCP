@@ -61,7 +61,8 @@ class FakeConfirmedCleanupAdapter:
         self.apply_cleanup_candidates_calls += 1
         if self.should_raise:
             raise RuntimeError(
-                "No confirmed cleanup soft delete is available. Run Soft Delete Cleanup Preview first."
+                "No confirmed cleanup soft delete is available. "
+                "Run Soft Delete Cleanup Preview after Preview Cleanup Selection."
             )
         self.apply_deleted_calls += 1
         self.current_splat_count -= 12
@@ -174,7 +175,7 @@ def test_run_apply_confirmed_cleanup_refuses_without_pending_cleanup_soft_delete
     success, message = test_runner.run_apply_confirmed_cleanup()
 
     assert success is False
-    assert "Run Soft Delete Cleanup Preview first" in message
+    assert "Run Soft Delete Cleanup Preview after Preview Cleanup Selection" in message
     assert fake_adapter.apply_cleanup_candidates_calls == 1
     assert fake_adapter.apply_deleted_calls == 0
 

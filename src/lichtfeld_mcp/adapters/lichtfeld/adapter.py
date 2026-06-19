@@ -37,6 +37,7 @@ from lichtfeld_mcp.core.voxel_analysis import (
 from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 from lichtfeld_mcp.schemas.common import (
     Box3D,
+    CleanupSelectionPreviewResult,
     ExportResult,
     HistoryEntry,
     MeasurementResult,
@@ -141,9 +142,22 @@ class AnalysisSceneStats:
 
 
 @dataclass(slots=True)
+class _SceneAnalysisState:
+    report: SceneAnalysisReport
+    sampled_rows: list[tuple[float, float, float]]
+    sampled_indices: list[int]
+    project_path: str
+    total_splats: int
+    approximate: bool
+
+
+@dataclass(slots=True)
 class _CleanupPreviewState:
     summary: CleanupCandidateSummary
-    selection_mask: list[bool] | None
+    selection_mask: list[bool]
+    selected_indices: list[int]
+    selection_sources: tuple[str, ...]
+    approximate: bool
 
 
 def _raise_analyze_scene_stage_error(stage: str, exc: Exception) -> None:
@@ -161,6 +175,7 @@ class LichtfeldAdapter(AdapterContract):
         self._last_delete_mask: object | None = None
         self._last_delete_count = 0
         self._last_finalized_delete_count = 0
+        self._last_scene_analysis: _SceneAnalysisState | None = None
         self._last_cleanup_preview: _CleanupPreviewState | None = None
         self._pending_cleanup_apply_project_path: str | None = None
 
@@ -250,6 +265,7 @@ class LichtfeldAdapter(AdapterContract):
             used_native_sampling = False
             sampling_stride = 1
             sampled_rows: list[tuple[float, float, float]] = []
+            sampled_indices: list[int] = []
 
             if total_splats is None:
                 materialized_position_rows = _coerce_position_rows(position_source)
@@ -268,12 +284,16 @@ class LichtfeldAdapter(AdapterContract):
                         materialized_position_rows,
                         max_splats,
                     )
+                    sampled_indices = list(range(0, len(materialized_position_rows), sampling_stride))[
+                        : len(sampled_rows)
+                    ]
                 else:
                     sampled_rows, sampling_stride, used_native_sampling = extract_sampled_position_rows(
                         position_source,
                         max_splats,
                         total_splats=total_splats,
                     )
+                    sampled_indices = list(range(0, total_splats, sampling_stride))[: len(sampled_rows)]
                 analysis_stats = AnalysisSceneStats(
                     splat_count=total_splats,
                     bounding_box=build_bounds(sampled_rows),
@@ -329,6 +349,15 @@ class LichtfeldAdapter(AdapterContract):
             len(report.recommendations),
             report.analysis_time,
         )
+        self._last_scene_analysis = _SceneAnalysisState(
+            report=report,
+            sampled_rows=list(sampled_rows),
+            sampled_indices=list(sampled_indices),
+            project_path=project_path,
+            total_splats=analysis_stats.splat_count,
+            approximate=approximate,
+        )
+        self._last_cleanup_preview = None
         return report
 
     def preview_cleanup_candidates(
@@ -338,32 +367,28 @@ class LichtfeldAdapter(AdapterContract):
         max_splats: int = 25_000,
         abort_if_above_limit: bool = False,
     ) -> CleanupCandidateSummary:
-        logger.info(
-            "LichtFeld cleanup preview: starting voxel_size=%.4f min_voxel_cluster_size=%s "
-            "max_splats=%s abort_if_above_limit=%s",
-            voxel_size,
-            min_voxel_cluster_size,
-            max_splats,
-            abort_if_above_limit,
-        )
-        report = self.analyze_scene(
-            voxel_size=voxel_size,
-            min_voxel_cluster_size=min_voxel_cluster_size,
-            max_splats=max_splats,
-            abort_if_above_limit=abort_if_above_limit,
-        )
-        summary = build_cleanup_candidate_summary(report)
-        selection_mask: list[bool] | None = None
-        if not summary.approximate and not bool(report.scene_stats.get("aborted")):
-            lichtfeld_module = load_lichtfeld()
-            scene = require_active_scene(lichtfeld_module)
-            model = require_combined_model(scene)
-            position_rows = _coerce_position_rows(resolve_position_source(model))
-            selection_mask = self._build_cleanup_candidate_mask(
-                position_rows,
-                voxel_size=voxel_size,
-                min_voxel_cluster_size=min_voxel_cluster_size,
+        analysis_state = self._last_scene_analysis
+        if analysis_state is None:
+            raise AdapterUnavailableError(
+                "No previous scene analysis is available. Run Analyze Scene first."
             )
+        report = analysis_state.report
+        summary = build_cleanup_candidate_summary(report)
+        selection_mask = self._build_cleanup_candidate_mask(
+            analysis_state.sampled_rows,
+            voxel_size=float(report.scene_stats.get("voxel_size", voxel_size)),
+            min_voxel_cluster_size=int(
+                report.scene_stats.get("min_voxel_cluster_size", min_voxel_cluster_size)
+            ),
+        )
+        selected_indices = [
+            analysis_state.sampled_indices[index]
+            for index, selected in enumerate(selection_mask)
+            if selected and index < len(analysis_state.sampled_indices)
+        ]
+        selection_sources = self._cleanup_selection_sources(report)
+        if not summary.approximate and not bool(report.scene_stats.get("aborted")):
+            exact_selected_count = sum(selection_mask)
             summary = CleanupCandidateSummary(
                 scene_name=summary.scene_name,
                 project_path=summary.project_path,
@@ -374,19 +399,19 @@ class LichtfeldAdapter(AdapterContract):
                 approximate=summary.approximate,
                 report_only=summary.report_only,
                 candidate_group_count=summary.candidate_group_count,
-                affected_splats_in_sample=sum(selection_mask),
-                estimated_affected_splats_total=sum(selection_mask),
+                affected_splats_in_sample=exact_selected_count,
+                estimated_affected_splats_total=exact_selected_count,
                 affected_percentage_of_sample=(
                     0.0
                     if summary.analyzed_splats <= 0
-                    else sum(selection_mask) / summary.analyzed_splats
+                    else exact_selected_count / summary.analyzed_splats
                 ),
                 estimated_percentage_of_total=(
                     0.0
                     if summary.total_splats <= 0
-                    else sum(selection_mask) / summary.total_splats
+                    else exact_selected_count / summary.total_splats
                 ),
-                estimated_affected_splats=sum(selection_mask),
+                estimated_affected_splats=exact_selected_count,
                 floating_voxel_groups=summary.floating_voxel_groups,
                 estimated_floating_splats=summary.estimated_floating_splats,
                 small_voxel_clusters=summary.small_voxel_clusters,
@@ -399,7 +424,10 @@ class LichtfeldAdapter(AdapterContract):
             )
         self._last_cleanup_preview = _CleanupPreviewState(
             summary=summary,
-            selection_mask=selection_mask,
+            selection_mask=list(selection_mask),
+            selected_indices=selected_indices,
+            selection_sources=selection_sources,
+            approximate=summary.approximate,
         )
         logger.info(
             "LichtFeld cleanup preview: candidate_groups=%s estimated_affected_splats=%s "
@@ -410,16 +438,85 @@ class LichtfeldAdapter(AdapterContract):
             summary.small_voxel_clusters,
             summary.sparse_regions,
         )
-        logger.info("LichtFeld cleanup preview: preview report only")
+        logger.info("LichtFeld cleanup preview: cached for native selection preview")
         return summary
+
+    def preview_cleanup_selection(self) -> CleanupSelectionPreviewResult:
+        analysis_state = self._last_scene_analysis
+        if analysis_state is None:
+            raise AdapterUnavailableError(
+                "No previous scene analysis is available. Run Analyze Scene first."
+            )
+        preview_state = self._last_cleanup_preview
+        if preview_state is None:
+            raise AdapterUnavailableError(
+                "No cleanup preview is available. Run Preview Cleanup Selection after Analyze Scene."
+            )
+
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        scene_path = get_scene_path(scene)
+        if scene_path != analysis_state.project_path:
+            raise AdapterUnavailableError(
+                "Cleanup selection preview no longer matches the active scene. "
+                "Run Analyze Scene again."
+            )
+
+        selected_count = len(preview_state.selected_indices)
+        selection_mode = "replace"
+        selection_source = ", ".join(preview_state.selection_sources) or "no cleanup candidates"
+        approximate = preview_state.approximate
+        selection_percentage = (
+            0.0 if analysis_state.total_splats <= 0 else selected_count / analysis_state.total_splats
+        )
+
+        if approximate:
+            self._apply_cleanup_candidate_selection_indices_only(
+                scene,
+                lichtfeld_module,
+                preview_state.selected_indices,
+            )
+        else:
+            self._apply_cleanup_candidate_selection(
+                scene,
+                model,
+                lichtfeld_module,
+                preview_state.selection_mask,
+            )
+
+        message = (
+            "Approximate sampled selection preview. "
+            "Selected splats represent estimated cleanup regions. "
+            "Run Detailed mode for a more precise preview."
+            if approximate
+            else "Exact cleanup selection preview."
+        )
+        logger.info(
+            "LichtFeld cleanup selection preview: selected_count=%s selection_percentage=%.6f "
+            "selection_mode=%s selection_source=%s approximate=%s",
+            selected_count,
+            selection_percentage,
+            selection_mode,
+            selection_source,
+            approximate,
+        )
+        return CleanupSelectionPreviewResult(
+            selected_count=selected_count,
+            selection_percentage=selection_percentage,
+            selection_mode="replace",
+            selection_source=selection_source,
+            approximate=approximate,
+            message=message,
+        )
 
     def soft_delete_cleanup_candidates(self) -> ToolResult:
         preview_state = self._last_cleanup_preview
         if preview_state is None:
             raise AdapterUnavailableError(
-                "No cleanup preview is available. Run Preview Cleanup Candidates first."
+                "No cleanup preview is available. Run Preview Cleanup Selection after Analyze Scene."
             )
-        if preview_state.summary.approximate or preview_state.selection_mask is None:
+        if preview_state.summary.approximate:
             raise AdapterUnavailableError(
                 "Cleanup preview is approximate-only; no reliable native selection is available."
             )
@@ -436,7 +533,7 @@ class LichtfeldAdapter(AdapterContract):
         if preview_state.summary.project_path != get_scene_path(scene):
             raise AdapterUnavailableError(
                 "Cleanup preview no longer matches the active scene. "
-                "Run Preview Cleanup Candidates again."
+                "Run Preview Cleanup Selection again."
             )
 
         try:
@@ -465,7 +562,7 @@ class LichtfeldAdapter(AdapterContract):
         if self._pending_cleanup_apply_project_path is None:
             raise AdapterUnavailableError(
                 "No confirmed cleanup soft delete is available. "
-                "Run Soft Delete Cleanup Preview first."
+                "Run Soft Delete Cleanup Preview after Preview Cleanup Selection."
             )
         if self._last_delete_mask is None or self._last_delete_count <= 0:
             self._pending_cleanup_apply_project_path = None
@@ -480,7 +577,7 @@ class LichtfeldAdapter(AdapterContract):
         if scene_path != self._pending_cleanup_apply_project_path:
             raise AdapterUnavailableError(
                 "Pending cleanup soft delete no longer matches the active scene. "
-                "Run Preview Cleanup Candidates again."
+                "Run Preview Cleanup Selection again."
             )
 
         apply_deleted = getattr(model, "apply_deleted", None)
@@ -1195,6 +1292,43 @@ class LichtfeldAdapter(AdapterContract):
         self._selection.cache_mask(selection_mask)
         notify_scene_changed(scene)
 
+    def _apply_cleanup_candidate_selection_indices_only(
+        self,
+        scene: object,
+        lichtfeld_module: object,
+        selected_indices: list[int],
+    ) -> None:
+        self._selection.apply_native_selection(
+            scene,
+            selected_indices,
+            lichtfeld_module,
+        )
+        self._selection.clear_cache()
+        notify_scene_changed(scene)
+
+    @staticmethod
+    def _cleanup_selection_sources(report: SceneAnalysisReport) -> tuple[str, ...]:
+        sources: list[str] = []
+        connectivity = next(
+            (result for result in report.results if result.name == "voxel_connectivity"),
+            None,
+        )
+        bounds = next((result for result in report.results if result.name == "bounding_box"), None)
+        density = next((result for result in report.results if result.name == "density"), None)
+
+        if connectivity is not None and int(connectivity.details.get("floating_voxel_groups", 0)) > 0:
+            sources.extend(["floating voxel clusters", "disconnected clusters"])
+        if bounds is not None and int(bounds.details.get("distant_splats", 0)) > 0:
+            sources.append("distant outliers")
+        if density is not None and int(density.details.get("estimated_sparse_splats", 0)) > 0:
+            sources.append("sparse singleton regions")
+
+        unique_sources: list[str] = []
+        for source in sources:
+            if source not in unique_sources:
+                unique_sources.append(source)
+        return tuple(unique_sources)
+
     @staticmethod
     def _build_cleanup_candidate_mask(
         position_rows: list[tuple[float, float, float]],
@@ -1234,10 +1368,42 @@ class LichtfeldAdapter(AdapterContract):
             for key in keys
         }
         sparse_keys = {key for key, count in voxel_counts.items() if count <= 1}
+        distant_flags = LichtfeldAdapter._distant_outlier_flags(position_rows, voxel_size)
         return [
-            key in floating_keys or key in sparse_keys
-            for key in voxel_keys
+            (key in floating_keys or key in sparse_keys or distant_flags[index])
+            for index, key in enumerate(voxel_keys)
         ]
+
+    @staticmethod
+    def _distant_outlier_flags(
+        position_rows: list[tuple[float, float, float]],
+        voxel_size: float,
+    ) -> list[bool]:
+        if len(position_rows) < 5:
+            return [False] * len(position_rows)
+
+        xs = sorted(position[0] for position in position_rows)
+        ys = sorted(position[1] for position in position_rows)
+        zs = sorted(position[2] for position in position_rows)
+        bounds: list[tuple[float, float]] = []
+        for values in (xs, ys, zs):
+            low = LichtfeldAdapter._percentile(values, 0.05)
+            high = LichtfeldAdapter._percentile(values, 0.95)
+            robust_span = max(high - low, voxel_size * 4.0, 1.0)
+            margin = robust_span * 2.5
+            bounds.append((low - margin, high + margin))
+
+        flags: list[bool] = []
+        for x, y, z in position_rows:
+            flags.append(
+                x < bounds[0][0]
+                or x > bounds[0][1]
+                or y < bounds[1][0]
+                or y > bounds[1][1]
+                or z < bounds[2][0]
+                or z > bounds[2][1]
+            )
+        return flags
 
     @staticmethod
     def _collect_voxel_components(
@@ -1276,6 +1442,13 @@ class LichtfeldAdapter(AdapterContract):
             (x, y, z - 1),
             (x, y, z + 1),
         )
+
+    @staticmethod
+    def _percentile(values: list[float], ratio: float) -> float:
+        if not values:
+            return 0.0
+        index = max(0, min(len(values) - 1, int(round((len(values) - 1) * ratio))))
+        return values[index]
 
     @staticmethod
     def _notify_scene_changed(scene: object) -> bool:

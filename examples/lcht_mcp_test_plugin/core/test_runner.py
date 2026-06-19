@@ -312,6 +312,43 @@ def run_preview_cleanup_candidates() -> tuple[bool, str]:
     return True, f"Cleanup preview complete. Candidate groups: {summary.candidate_group_count}"
 
 
+def run_preview_cleanup_selection() -> tuple[bool, str]:
+    """Build and display a native cleanup selection preview without mutating splats."""
+    success, message = run_preview_cleanup_candidates()
+    if not success:
+        return success, message
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup selection preview adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    preview_cleanup_selection = getattr(adapter, "preview_cleanup_selection", None)
+    if not callable(preview_cleanup_selection):
+        message = "LichtfeldAdapter does not expose preview_cleanup_selection()."
+        _log_error(message)
+        return False, message
+
+    try:
+        result = preview_cleanup_selection()
+    except Exception as exc:
+        message = f"Cleanup selection preview failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    _log_info("Selection Preview")
+    _log_info(f"selected splats={result.selected_count}")
+    _log_info(f"selection percentage={result.selection_percentage * 100.0:.6f}%")
+    _log_info(f"selection mode={result.selection_mode}")
+    _log_info(f"selection source={result.selection_source}")
+    _log_info(f"selection approximation={'approximate' if result.approximate else 'exact'}")
+    _log_info(result.message)
+    return True, result.message
+
+
 def run_soft_delete_cleanup_preview() -> tuple[bool, str]:
     """Soft-delete the last reliable cleanup preview without finalizing deletion."""
     config = snapshot_runtime_config()
@@ -343,7 +380,7 @@ def run_soft_delete_cleanup_preview() -> tuple[bool, str]:
 
     preview_summary = config.last_cleanup_preview_summary
     if preview_summary is None:
-        message = "No cleanup preview is available. Run Preview Cleanup Candidates first."
+        message = "No cleanup preview is available. Run Preview Cleanup Selection first."
         _log_error(message)
         return False, message
 

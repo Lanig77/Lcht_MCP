@@ -33,6 +33,9 @@ contract.
 Some operations are already implemented against the active LichtFeld plugin scene:
 
 - `get_stats()`
+- `analyze_scene()`
+- `preview_cleanup_candidates()`
+- `preview_cleanup_selection()`
 - `select_by_height()`
 - `select_by_opacity()`
 - `select_by_color()`
@@ -47,6 +50,44 @@ Other methods are still placeholders, including:
 
 The class also satisfies the broader adapter contract so it can later plug into
 `SceneAPI` without changing MCP-facing code.
+
+## Scene analysis and cleanup workflow
+
+The adapter now supports a read-only analysis pipeline that feeds a native cleanup
+preview workflow:
+
+1. `analyze_scene()` samples or scans scene positions within a bounded execution budget
+2. `preview_cleanup_candidates()` derives a cached cleanup summary from the latest
+   `SceneAnalysisReport`
+3. `preview_cleanup_selection()` clears any existing selection and rebuilds a native
+   LichtFeld selection for the latest cleanup candidates
+4. optional edit steps can later consume that validated selection for soft delete,
+   restore, and explicit permanent apply
+
+This keeps analysis, preview, and destructive editing as separate stages.
+
+### Native cleanup selection preview
+
+`preview_cleanup_selection()` is a visualization and validation tool. It must never:
+
+- delete splats
+- soft delete splats
+- hide splats
+- call `apply_deleted()`
+
+Instead it reuses the latest cached analysis and cleanup preview state, clears the
+current native selection, rebuilds a new selection, and refreshes the viewport.
+
+Selection sources currently include:
+
+- floating voxel clusters
+- disconnected clusters
+- distant outliers
+- sparse singleton regions
+
+When the latest analysis is sampled, the preview is explicitly labeled as approximate.
+The selected splats then represent sampled cleanup regions rather than an exact
+full-scene selection.
 
 ## Availability behavior
 
@@ -198,6 +239,13 @@ The current selection flow follows the same lifecycle across implemented selecto
 6. later, `delete_selection()` consumes the cached mask or a scene-provided current mask
 7. after deletion, the adapter clears both the cache and the visible scene selection
 
+The cleanup preview flow adds one more non-destructive branch:
+
+1. `analyze_scene()` captures bounded scene analysis metadata
+2. `preview_cleanup_candidates()` caches a cleanup summary without touching the scene
+3. `preview_cleanup_selection()` rebuilds a fresh native selection for inspection only
+4. later edit workflows may choose to reuse that validated selection for soft delete
+
 ## No-selection behavior
 
 When `delete_selection()` cannot find any active selection, it currently returns an
@@ -216,6 +264,17 @@ MCP tools
   -> SceneAPI
   -> LichtfeldPluginAdapter
   -> LichtFeld Studio Plugin API
+
+Cleanup now follows the staged architecture below:
+
+```text
+Analyze Scene
+  -> Cleanup Candidate Detection
+  -> Native Selection Preview
+  -> Soft Delete
+  -> Restore
+  -> Apply Deleted
+```
 ```
 
 ## Current integration status

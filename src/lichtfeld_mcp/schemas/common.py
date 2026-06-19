@@ -62,6 +62,17 @@ class SelectionResult(BaseModel):
     message: str
 
 
+class CleanupSelectionPreviewResult(BaseModel):
+    """Cleanup-selection preview result."""
+
+    selected_count: int
+    selection_percentage: float
+    selection_mode: Literal["replace"]
+    selection_source: str
+    approximate: bool
+    message: str
+
+
 class ExportResult(BaseModel):
     """Export operation result."""
 

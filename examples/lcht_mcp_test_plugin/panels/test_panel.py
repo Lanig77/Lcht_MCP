@@ -328,13 +328,13 @@ class LchtMcpTestPanel(lf.ui.Panel):
         ):
             lf.ui.ops.invoke(ANALYZE_SCENE_OPERATOR_ID)
         if layout.button_styled(
-            "Preview Cleanup Candidates##preview_cleanup",
+            "Preview Cleanup Selection##preview_cleanup",
             "secondary",
             (-1, 34 * scale),
         ):
             lf.ui.ops.invoke(PREVIEW_CLEANUP_CANDIDATES_OPERATOR_ID)
         layout.text_colored(
-            "Reversible only. Does not call apply_deleted().",
+            "Selection preview only. Does not delete, hide, or modify splats.",
             theme.palette.text_dim,
         )
         if layout.button_styled(

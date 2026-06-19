@@ -33,6 +33,7 @@ from lichtfeld_mcp.core.validation import normalize_measurement_unit, normalize_
 from lichtfeld_mcp.errors import ProjectNotOpenError
 from lichtfeld_mcp.schemas.common import (
     Box3D,
+    CleanupSelectionPreviewResult,
     ExportResult,
     HistoryEntry,
     MeasurementResult,
@@ -69,6 +70,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._scene: MockSceneState | None = None
         self._snapshots: list[MockSceneState] = []
         self._history: list[HistoryEntry] = []
+        self._last_scene_analysis: SceneAnalysisReport | None = None
         self._last_cleanup_preview: CleanupCandidateSummary | None = None
         self._pending_cleanup_apply_count = 0
 
@@ -130,19 +132,49 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         max_splats: int = 25_000,
         abort_if_above_limit: bool = False,
     ) -> CleanupCandidateSummary:
-        report = self.analyze_scene(
-            voxel_size=voxel_size,
-            min_voxel_cluster_size=min_voxel_cluster_size,
-            max_splats=max_splats,
-            abort_if_above_limit=abort_if_above_limit,
-        )
+        if self._last_scene_analysis is None:
+            raise ProjectNotOpenError("No previous scene analysis is available. Run Analyze Scene first.")
+        report = self._last_scene_analysis
         self._last_cleanup_preview = build_cleanup_candidate_summary(report)
         return self._last_cleanup_preview
+
+    def preview_cleanup_selection(self) -> CleanupSelectionPreviewResult:
+        scene = self._require_scene()
+        if self._last_scene_analysis is None:
+            raise ProjectNotOpenError("No previous scene analysis is available. Run Analyze Scene first.")
+        if self._last_cleanup_preview is None:
+            raise ProjectNotOpenError(
+                "No cleanup preview is available. Run Preview Cleanup Selection after Analyze Scene."
+            )
+        scene.selected_count = self._last_cleanup_preview.affected_splats_in_sample
+        selection_source = "floating voxel clusters"
+        if self._last_cleanup_preview.sparse_regions > 0:
+            selection_source += ", sparse singleton regions"
+        return CleanupSelectionPreviewResult(
+            selected_count=scene.selected_count,
+            selection_percentage=(
+                0.0
+                if scene.splat_count <= 0
+                else scene.selected_count / scene.splat_count
+            ),
+            selection_mode="replace",
+            selection_source=selection_source,
+            approximate=self._last_cleanup_preview.approximate,
+            message=(
+                "Approximate sampled selection preview. "
+                "Selected splats represent estimated cleanup regions. "
+                "Run Detailed mode for a more precise preview."
+                if self._last_cleanup_preview.approximate
+                else "Exact cleanup selection preview."
+            ),
+        )
 
     def soft_delete_cleanup_candidates(self) -> ToolResult:
         scene = self._require_scene()
         if self._last_cleanup_preview is None:
-            raise ProjectNotOpenError("No cleanup preview is available. Run Preview Cleanup Candidates first.")
+            raise ProjectNotOpenError(
+                "No cleanup preview is available. Run Preview Cleanup Selection first."
+            )
         if self._last_cleanup_preview.approximate:
             raise ProjectNotOpenError(
                 "Cleanup preview is approximate-only; no reliable native selection is available."
@@ -167,7 +199,8 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         scene = self._require_scene()
         if self._pending_cleanup_apply_count <= 0:
             raise ProjectNotOpenError(
-                "No confirmed cleanup soft delete is available. Run Soft Delete Cleanup Preview first."
+                "No confirmed cleanup soft delete is available. "
+                "Run Soft Delete Cleanup Preview after Preview Cleanup Selection."
             )
         deleted = min(scene.splat_count, self._pending_cleanup_apply_count)
         self._push_history("apply_cleanup_candidates", {"deleted": deleted})
@@ -256,7 +289,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             for result in results
             for recommendation in result.recommendations
         ] or ["Scene is healthy."]
-        return SceneAnalysisReport(
+        report = SceneAnalysisReport(
             scene_stats={
                 "scene_name": scene.name,
                 "project_path": scene.path,
@@ -278,6 +311,8 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             analysis_time=0.0,
             results=results,
         )
+        self._last_scene_analysis = report
+        return report
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:
         scene = self._require_scene()

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from lichtfeld_mcp.schemas.common import (
     Box3D,
+    CleanupSelectionPreviewResult,
     ExportResult,
     HistoryEntry,
     MeasurementResult,
@@ -59,6 +60,9 @@ class LichtfeldAdapter(ABC):
         max_splats: int = 25_000,
         abort_if_above_limit: bool = False,
     ) -> CleanupCandidateSummary: ...
+
+    @abstractmethod
+    def preview_cleanup_selection(self) -> CleanupSelectionPreviewResult: ...
 
     @abstractmethod
     def soft_delete_cleanup_candidates(self) -> ToolResult: ...

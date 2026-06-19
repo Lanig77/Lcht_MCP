@@ -125,6 +125,45 @@ Apply
 Approximate or sampled analysis may suggest a candidate region, but it must not
 directly trigger deletion or final destructive changes.
 
+### Native cleanup selection preview
+
+Cleanup preview is the validation bridge between analysis and editing.
+
+Rules:
+
+- `Analyze Scene` may produce approximate cleanup candidates.
+- `Preview Cleanup Selection` may convert those candidates into a native LichtFeld
+  selection for inspection.
+- selection preview must remain non-destructive and must not soft delete, hide, or
+  apply deletion.
+- approximate previews must be labeled clearly as sampled or estimated.
+- the default preview path must stay bounded and avoid full-scene Python
+  materialization.
+
+This preserves the required workflow:
+
+Analyze Scene
+
+`->`
+
+Cleanup Candidate Detection
+
+`->`
+
+Native Selection Preview
+
+`->`
+
+User validation
+
+`->`
+
+Soft delete
+
+`->`
+
+Restore or Apply Deleted
+
 ## Complexity expectations
 
 Every future analysis algorithm should document:

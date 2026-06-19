@@ -92,6 +92,46 @@ class FakeSliceSamplingTensor(FakeTorchTensor):
         return FakeSliceSamplingTensor(self._values[item], sampled=True)
 
 
+class FakeLargeSampledTensor:
+    def __init__(self, total_count: int, *, outlier_indices: set[int] | None = None):
+        self._total_count = total_count
+        self._outlier_indices = set(outlier_indices or ())
+
+    @property
+    def shape(self):
+        return (self._total_count, 3)
+
+    def detach(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        raise AssertionError("full tensor should not be materialized for sampled preview")
+
+    def __len__(self):
+        return self._total_count
+
+    def __getitem__(self, item):
+        if isinstance(item, slice):
+            start = 0 if item.start is None else int(item.start)
+            stop = self._total_count if item.stop is None else min(int(item.stop), self._total_count)
+            step = 1 if item.step is None else int(item.step)
+            rows = [self._row_for_index(index) for index in range(start, stop, step)]
+            return FakeSliceSamplingTensor(rows, sampled=True)
+        if isinstance(item, int):
+            if item < 0 or item >= self._total_count:
+                raise IndexError(item)
+            return self._row_for_index(item)
+        raise TypeError("FakeLargeSampledTensor only supports integer and slice indexing")
+
+    def _row_for_index(self, index: int):
+        if index in self._outlier_indices:
+            return [10.0, 0.0, 0.0]
+        return [0.0, 0.0, 0.0] if index % 2 == 0 else [0.1, 0.0, 0.0]
+
+
 class FakeLfTensor:
     def __init__(self, values=None, *, data=None):
         source = values if values is not None else data
@@ -875,6 +915,12 @@ def test_preview_cleanup_candidates_generates_report_only_summary_without_scene_
     )
 
     adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=3,
+        abort_if_above_limit=False,
+    )
     summary = adapter.preview_cleanup_candidates(
         voxel_size=1.0,
         min_voxel_cluster_size=2,
@@ -887,6 +933,251 @@ def test_preview_cleanup_candidates_generates_report_only_summary_without_scene_
     assert summary.candidate_group_count >= 1
     assert fake_scene.selection_mask_reads == 0
     assert fake_scene.notify_changed_calls == 0
+    assert fake_scene._model.last_soft_delete_argument is None
+    assert fake_scene._model.apply_deleted_calls == 0
+
+
+def test_preview_cleanup_selection_refuses_without_previous_analysis(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(FakeModel(means=FakeTorchTensor([[0.0, 0.0, 0.0]])))
+    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="Run Analyze Scene first",
+    ):
+        adapter.preview_cleanup_selection()
+
+
+def test_preview_cleanup_selection_refuses_without_cleanup_preview(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="Run Preview Cleanup Selection after Analyze Scene",
+    ):
+        adapter.preview_cleanup_selection()
+
+
+def test_preview_cleanup_selection_builds_native_selection_without_scene_mutation(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+    adapter.preview_cleanup_candidates(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+
+    result = adapter.preview_cleanup_selection()
+
+    assert result.selected_count == 2
+    assert result.selection_mode == "replace"
+    assert "floating voxel clusters" in result.selection_source
+    assert "disconnected clusters" in result.selection_source
+    assert result.approximate is False
+    assert native_selection.deselect_all_calls == 1
+    assert native_selection.add_to_selection_calls == [[2, 3]]
+    assert fake_scene.last_selection_mask == [False, False, True, True]
+    assert fake_scene.notify_changed_calls == 1
+    assert fake_scene._model.last_soft_delete_argument is None
+    assert fake_scene._model.apply_deleted_calls == 0
+    assert len(fake_scene._model._means_values) == 4
+
+
+def test_preview_cleanup_selection_replaces_existing_native_selection_on_repeat(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+    adapter.preview_cleanup_candidates(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+    adapter.preview_cleanup_selection()
+
+    fake_scene._model._means_values = [
+        [0.0, 0.0, 0.0],
+        [0.1, 0.0, 0.0],
+        [0.2, 0.0, 0.0],
+        [10.0, 0.0, 0.0],
+    ]
+
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+    adapter.preview_cleanup_candidates(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+    result = adapter.preview_cleanup_selection()
+
+    assert result.selected_count == 1
+    assert native_selection.deselect_all_calls == 2
+    assert native_selection.add_to_selection_calls[-1] == [3]
+    assert fake_scene.last_selection_mask == [False, False, False, True]
+    assert fake_scene.notify_changed_calls == 2
+    assert fake_scene._model.last_soft_delete_argument is None
+    assert fake_scene._model.apply_deleted_calls == 0
+
+
+def test_preview_cleanup_selection_supports_large_sampled_scenes_without_full_materialization(
+    monkeypatch,
+):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    total_splats = 100
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeLargeSampledTensor(total_splats, outlier_indices={75}),
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    report = adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=4,
+        abort_if_above_limit=False,
+    )
+    summary = adapter.preview_cleanup_candidates(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=4,
+        abort_if_above_limit=False,
+    )
+    result = adapter.preview_cleanup_selection()
+
+    assert report.scene_stats["approximate"] is True
+    assert summary.approximate is True
+    assert result.approximate is True
+    assert result.selected_count == 1
+    assert result.selection_percentage == pytest.approx(0.01)
+    assert "Approximate sampled selection preview." in result.message
+    assert "Run Detailed mode for a more precise preview." in result.message
+    assert native_selection.deselect_all_calls == 1
+    assert native_selection.add_to_selection_calls == [[75]]
     assert fake_scene._model.last_soft_delete_argument is None
     assert fake_scene._model.apply_deleted_calls == 0
 
@@ -938,6 +1229,12 @@ def test_soft_delete_cleanup_candidates_refuses_when_preview_is_approximate(monk
     )
 
     adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=3,
+        abort_if_above_limit=False,
+    )
     preview = adapter.preview_cleanup_candidates(
         voxel_size=1.0,
         min_voxel_cluster_size=2,
@@ -985,6 +1282,12 @@ def test_soft_delete_cleanup_candidates_soft_deletes_without_apply_deleted_and_c
     )
 
     adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
     preview = adapter.preview_cleanup_candidates(
         voxel_size=1.0,
         min_voxel_cluster_size=2,
@@ -1021,7 +1324,7 @@ def test_apply_cleanup_candidates_refuses_without_pending_cleanup_soft_delete(mo
 
     with pytest.raises(
         AdapterUnavailableError,
-        match="Run Soft Delete Cleanup Preview first",
+        match="Run Soft Delete Cleanup Preview after Preview Cleanup Selection",
     ):
         adapter.apply_cleanup_candidates()
 
@@ -1057,6 +1360,12 @@ def test_apply_cleanup_candidates_permanently_finalizes_confirmed_cleanup(monkey
     )
 
     adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
     adapter.preview_cleanup_candidates(
         voxel_size=1.0,
         min_voxel_cluster_size=2,
@@ -1082,7 +1391,7 @@ def test_apply_cleanup_candidates_permanently_finalizes_confirmed_cleanup(monkey
 
     with pytest.raises(
         AdapterUnavailableError,
-        match="Run Soft Delete Cleanup Preview first",
+        match="Run Soft Delete Cleanup Preview after Preview Cleanup Selection",
     ):
         adapter.apply_cleanup_candidates()
 
