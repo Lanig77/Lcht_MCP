@@ -48,6 +48,7 @@ from lichtfeld_mcp.schemas.common import (
 from .cameras import CameraOperations
 from .export import ExportOperations
 from .gaussian import (
+    build_bounds,
     build_gaussian_cloud_from_positions,
     extract_sampled_position_rows,
     extract_color_rows,
@@ -58,7 +59,7 @@ from .gaussian import (
     get_position_source_count,
     resolve_position_source,
 )
-from .scene import build_scene_stats, notify_scene_changed
+from .scene import build_scene_stats, get_scene_name, get_scene_path, notify_scene_changed
 from .selection import SelectionState
 from .training import TrainingOperations
 from .utils import (
@@ -129,6 +130,15 @@ class VoxelClusterAnalysisSummary:
     voxel_analysis_elapsed_seconds: float
 
 
+@dataclass(frozen=True, slots=True)
+class _BasicSceneStats:
+    project_name: str
+    project_path: str
+    splat_count: int
+    bounding_box: Box3D
+    deleted_count: int
+
+
 class LichtfeldAdapter(AdapterContract):
     """Facade preserving the existing adapter API while delegating feature logic."""
 
@@ -195,18 +205,22 @@ class LichtfeldAdapter(AdapterContract):
         if max_splats < 1:
             raise InvalidParameterError("max_splats must be at least 1.")
 
-        logger.info("LichtFeld scene analysis: before get_stats(include_selection=False)")
-        stats = self.get_stats(include_selection=False)
-        logger.info(
-            "LichtFeld scene analysis: after get_stats(include_selection=False) "
-            "splat_count=%s selected_count=%s",
-            stats.splat_count,
-            stats.selected_count,
-        )
+        logger.info("analyze_scene: start")
 
         lichtfeld_module = load_lichtfeld()
         scene = require_active_scene(lichtfeld_module)
         model = require_combined_model(scene)
+        basic_stats = self._get_basic_scene_stats_without_selection(
+            scene,
+            model,
+            max_splats=max_splats,
+        )
+        logger.info(
+            "analyze_scene: basic stats read splat_count=%s deleted_count=%s",
+            basic_stats.splat_count,
+            basic_stats.deleted_count,
+        )
+
         position_source = resolve_position_source(model)
 
         total_splats = get_position_source_count(position_source)
@@ -216,15 +230,21 @@ class LichtfeldAdapter(AdapterContract):
             total_splats = len(materialized_position_rows)
 
         if abort_if_above_limit and total_splats > max_splats:
-            logger.info("LichtFeld scene analysis: before scene analysis")
+            logger.info(
+                "analyze_scene: means sampled analyzed_splats=0 total_splats=%s "
+                "sampling_stride=1 approximate=%s aborted=%s",
+                total_splats,
+                False,
+                True,
+            )
             context = SceneAnalysisContext(
-                scene_name=stats.project_name,
-                project_path=stats.project_path,
+                scene_name=basic_stats.project_name,
+                project_path=basic_stats.project_path,
                 positions=[],
                 total_splats=total_splats,
                 analyzed_splats=0,
-                selected_splats=stats.selected_count,
-                deleted_splats=self._read_deleted_count(model),
+                selected_splats=0,
+                deleted_splats=basic_stats.deleted_count,
                 voxel_size=voxel_size,
                 min_voxel_cluster_size=min_voxel_cluster_size,
                 approximate=False,
@@ -233,7 +253,10 @@ class LichtfeldAdapter(AdapterContract):
                 max_splats=max_splats,
                 aborted=True,
             )
-            return build_default_scene_analysis_engine().analyze(context)
+            logger.info("analyze_scene: engine run")
+            report = build_default_scene_analysis_engine().analyze(context)
+            logger.info("analyze_scene: done quality_score=%s", report.quality_score)
+            return report
 
         if materialized_position_rows is not None:
             sampled_rows, sampling_stride = sample_position_rows(
@@ -248,15 +271,23 @@ class LichtfeldAdapter(AdapterContract):
                 total_splats=total_splats,
             )
 
-        logger.info("LichtFeld scene analysis: before scene analysis")
+        logger.info(
+            "analyze_scene: means sampled analyzed_splats=%s total_splats=%s "
+            "sampling_stride=%s approximate=%s native_sampling=%s",
+            len(sampled_rows),
+            total_splats,
+            sampling_stride,
+            len(sampled_rows) != total_splats,
+            used_native_sampling,
+        )
         context = SceneAnalysisContext(
-            scene_name=stats.project_name,
-            project_path=stats.project_path,
+            scene_name=basic_stats.project_name,
+            project_path=basic_stats.project_path,
             positions=sampled_rows,
             total_splats=total_splats,
             analyzed_splats=len(sampled_rows),
-            selected_splats=stats.selected_count,
-            deleted_splats=self._read_deleted_count(model),
+            selected_splats=0,
+            deleted_splats=basic_stats.deleted_count,
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
             approximate=len(sampled_rows) != total_splats,
@@ -264,7 +295,10 @@ class LichtfeldAdapter(AdapterContract):
             used_native_sampling=used_native_sampling,
             max_splats=max_splats,
         )
-        return build_default_scene_analysis_engine().analyze(context)
+        logger.info("analyze_scene: engine run")
+        report = build_default_scene_analysis_engine().analyze(context)
+        logger.info("analyze_scene: done quality_score=%s", report.quality_score)
+        return report
 
     def analyze_clusters_preview(
         self,
@@ -904,6 +938,36 @@ class LichtfeldAdapter(AdapterContract):
     def _clear_last_delete(self) -> None:
         self._last_delete_mask = None
         self._last_delete_count = 0
+
+    def _get_basic_scene_stats_without_selection(
+        self,
+        scene: object,
+        model: object,
+        *,
+        max_splats: int,
+    ) -> _BasicSceneStats:
+        position_source = resolve_position_source(model)
+        splat_count = get_position_source_count(position_source)
+        if splat_count is None:
+            position_rows = _coerce_position_rows(position_source)
+            splat_count = len(position_rows)
+        elif splat_count == 0:
+            position_rows = []
+        else:
+            position_rows, _, _ = extract_sampled_position_rows(
+                position_source,
+                min(max_splats, splat_count),
+                total_splats=splat_count,
+            )
+
+        project_path = get_scene_path(scene)
+        return _BasicSceneStats(
+            project_name=get_scene_name(scene, project_path),
+            project_path=project_path,
+            splat_count=splat_count,
+            bounding_box=build_bounds(position_rows),
+            deleted_count=self._read_deleted_count(model),
+        )
 
     @staticmethod
     def _read_deleted_count(model: object) -> int:

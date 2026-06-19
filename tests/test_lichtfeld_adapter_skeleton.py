@@ -237,11 +237,19 @@ class FakeScene:
         self._model = model
         self.last_selection_mask_argument = None
         mask_length = len(model._means_values) if model is not None else 0
-        self.selection_mask = FakeLfTensor([False] * mask_length)
-        self.last_selection_mask = list(self.selection_mask)
+        self._selection_mask = FakeLfTensor([False] * mask_length)
+        self.last_selection_mask = list(self._selection_mask)
         self.notify_changed_calls = 0
         self.clear_selection_calls = 0
         self.reset_selection_state_calls = 0
+
+    @property
+    def selection_mask(self):
+        return self._selection_mask
+
+    @selection_mask.setter
+    def selection_mask(self, value):
+        self._selection_mask = value
 
     def combined_model(self):
         return self._model
@@ -269,6 +277,24 @@ class FakeScene:
 
     def notify_changed(self):
         self.notify_changed_calls += 1
+
+
+class ExplodingSelectionScene(FakeScene):
+    def __init__(self, model, *, name="castle_demo", path="C:/data/castle_demo.lf"):
+        self.selection_mask_reads = 0
+        super().__init__(model, name=name, path=path)
+
+    @property
+    def selection_mask(self):
+        self.selection_mask_reads += 1
+        raise AssertionError("Analyze Scene should not access scene.selection_mask.")
+
+    @selection_mask.setter
+    def selection_mask(self, value):
+        self._selection_mask = value
+
+    def get_selection_mask(self):
+        raise AssertionError("Analyze Scene should not access scene.get_selection_mask().")
 
 
 class FakeSceneWithoutSelectionApi:
@@ -656,7 +682,7 @@ def test_analyze_voxel_clusters_preview_returns_summary(monkeypatch):
     assert summary.used_native_sampling is True
 
 
-def test_analyze_scene_returns_unified_report(monkeypatch):
+def test_analyze_scene_returns_unified_report(monkeypatch, caplog):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
     fake_scene = FakeScene(
@@ -682,14 +708,26 @@ def test_analyze_scene_returns_unified_report(monkeypatch):
     )
 
     adapter = adapter_module.LichtfeldPluginAdapter()
-    get_stats_calls: list[bool] = []
-    original_get_stats = adapter.get_stats
+    caplog.set_level("INFO")
+    helper_calls: list[int] = []
+    original_helper = adapter._get_basic_scene_stats_without_selection
 
-    def tracked_get_stats(*, include_selection: bool = True):
-        get_stats_calls.append(include_selection)
-        return original_get_stats(include_selection=include_selection)
+    def tracked_basic_stats(scene, model, *, max_splats: int):
+        helper_calls.append(max_splats)
+        return original_helper(scene, model, max_splats=max_splats)
 
-    monkeypatch.setattr(adapter, "get_stats", tracked_get_stats)
+    monkeypatch.setattr(
+        adapter,
+        "get_stats",
+        lambda *, include_selection=True: (_ for _ in ()).throw(
+            AssertionError("Analyze Scene should not call get_stats().")
+        ),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_get_basic_scene_stats_without_selection",
+        tracked_basic_stats,
+    )
     report = adapter.analyze_scene(
         voxel_size=1.0,
         min_voxel_cluster_size=2,
@@ -702,15 +740,20 @@ def test_analyze_scene_returns_unified_report(monkeypatch):
     assert report.scene_stats["total_splats"] == 6
     assert report.scene_stats["analyzed_splats"] == 3
     assert report.scene_stats["approximate"] is True
-    assert get_stats_calls == [False]
+    assert helper_calls == [4]
     assert len(report.results) == 4
     assert any(result.name == "voxel_connectivity" for result in report.results)
+    assert "analyze_scene: start" in caplog.text
+    assert "analyze_scene: basic stats read" in caplog.text
+    assert "analyze_scene: means sampled" in caplog.text
+    assert "analyze_scene: engine run" in caplog.text
+    assert "analyze_scene: done" in caplog.text
 
 
 def test_analyze_scene_succeeds_when_no_active_selection_exists(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
-    fake_scene = FakeScene(
+    fake_scene = ExplodingSelectionScene(
         FakeModel(
             means=FakeTorchTensor(
                 [
@@ -721,7 +764,6 @@ def test_analyze_scene_succeeds_when_no_active_selection_exists(monkeypatch):
             )
         )
     )
-    fake_scene.selection_mask = NonIterableSelectionMask()
     fake_scene.has_selection = lambda: (_ for _ in ()).throw(
         AssertionError("Analyze Scene should not inspect scene.has_selection().")
     )
@@ -750,6 +792,7 @@ def test_analyze_scene_succeeds_when_no_active_selection_exists(monkeypatch):
     assert report.scene_stats["total_splats"] == 3
     assert report.scene_stats["selected_splats"] == 0
     assert report.scene_stats["approximate"] is False
+    assert fake_scene.selection_mask_reads == 0
 
 
 def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):
