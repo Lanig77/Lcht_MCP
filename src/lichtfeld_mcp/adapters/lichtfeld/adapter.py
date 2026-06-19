@@ -137,11 +137,6 @@ class AnalysisSceneStats:
     selected_count: int | None = None
 
 
-def _trace_analyze_scene(message: str) -> None:
-    print(message)
-    logger.info(message)
-
-
 def _raise_analyze_scene_stage_error(stage: str, exc: Exception) -> None:
     raise AdapterUnavailableError(f"analyze_scene failed at {stage}: {exc}") from exc
 
@@ -212,42 +207,32 @@ class LichtfeldAdapter(AdapterContract):
         if max_splats < 1:
             raise InvalidParameterError("max_splats must be at least 1.")
 
-        _trace_analyze_scene("analyze_scene entered")
-
         try:
             lichtfeld_module = load_lichtfeld()
         except Exception as exc:
             _raise_analyze_scene_stage_error("get_lf_module", exc)
-        _trace_analyze_scene("after get_lf_module")
 
         try:
             scene = require_active_scene(lichtfeld_module)
         except Exception as exc:
             _raise_analyze_scene_stage_error("get_active_scene", exc)
-        _trace_analyze_scene("after get_active_scene")
 
         try:
             model = require_combined_model(scene)
         except Exception as exc:
             _raise_analyze_scene_stage_error("combined_model", exc)
-        _trace_analyze_scene("after combined_model")
 
-        _trace_analyze_scene("before basic stats")
         try:
             project_path = get_scene_path(scene)
             project_name = get_scene_name(scene, project_path)
         except Exception as exc:
             _raise_analyze_scene_stage_error("basic_stats", exc)
-        _trace_analyze_scene("after basic stats")
 
-        _trace_analyze_scene("before get_means")
         try:
             position_source = resolve_position_source(model)
         except Exception as exc:
             _raise_analyze_scene_stage_error("get_means", exc)
-        _trace_analyze_scene("after get_means")
 
-        _trace_analyze_scene("before sampling")
         try:
             total_splats = self._read_splat_count_without_selection(model, position_source)
             materialized_position_rows: list[tuple[float, float, float]] | None = None
@@ -286,7 +271,19 @@ class LichtfeldAdapter(AdapterContract):
                 )
         except Exception as exc:
             _raise_analyze_scene_stage_error("sampling", exc)
-        _trace_analyze_scene("after sampling")
+
+        approximate = len(sampled_rows) != analysis_stats.splat_count
+        aborted = abort_if_above_limit and analysis_stats.splat_count > max_splats
+        logger.info(
+            "LichtFeld scene analysis: total_splats=%s analyzed_splats=%s "
+            "approximate=%s sampling_stride=%s native_sampling=%s aborted=%s",
+            analysis_stats.splat_count,
+            len(sampled_rows),
+            approximate,
+            sampling_stride,
+            used_native_sampling,
+            aborted,
+        )
 
         context = SceneAnalysisContext(
             scene_name=project_name,
@@ -298,26 +295,29 @@ class LichtfeldAdapter(AdapterContract):
             deleted_splats=0,
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
-            approximate=len(sampled_rows) != analysis_stats.splat_count,
+            approximate=approximate,
             sampling_stride=sampling_stride,
             used_native_sampling=used_native_sampling,
             max_splats=max_splats,
-            aborted=abort_if_above_limit and analysis_stats.splat_count > max_splats,
+            aborted=aborted,
         )
-
-        _trace_analyze_scene("before SceneAnalysisEngine creation")
         try:
             engine = build_default_scene_analysis_engine()
         except Exception as exc:
             _raise_analyze_scene_stage_error("engine_creation", exc)
 
-        _trace_analyze_scene("before engine.run()")
         try:
             report = engine.analyze(context)
         except Exception as exc:
             _raise_analyze_scene_stage_error("engine_run", exc)
-        _trace_analyze_scene("after engine.run()")
-        logger.info("analyze_scene: done quality_score=%s", report.quality_score)
+        logger.info(
+            "LichtFeld scene analysis complete: quality_score=%s warnings=%s "
+            "recommendations=%s analysis_time=%.3fs",
+            report.quality_score,
+            len(report.warnings),
+            len(report.recommendations),
+            report.analysis_time,
+        )
         return report
 
     def analyze_clusters_preview(

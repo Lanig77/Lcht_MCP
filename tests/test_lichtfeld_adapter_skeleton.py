@@ -751,20 +751,11 @@ def test_analyze_scene_returns_unified_report(monkeypatch, caplog):
     assert splat_count_calls == ["FakeTorchTensor"]
     assert len(report.results) == 4
     assert any(result.name == "voxel_connectivity" for result in report.results)
-    assert "analyze_scene entered" in caplog.text
-    assert "after get_lf_module" in caplog.text
-    assert "after get_active_scene" in caplog.text
-    assert "after combined_model" in caplog.text
-    assert "before basic stats" in caplog.text
-    assert "after basic stats" in caplog.text
-    assert "before get_means" in caplog.text
-    assert "after get_means" in caplog.text
-    assert "before sampling" in caplog.text
-    assert "after sampling" in caplog.text
-    assert "before SceneAnalysisEngine creation" in caplog.text
-    assert "before engine.run()" in caplog.text
-    assert "after engine.run()" in caplog.text
-    assert "analyze_scene: done" in caplog.text
+    assert "LichtFeld scene analysis: total_splats=6 analyzed_splats=3" in caplog.text
+    assert "LichtFeld scene analysis complete: quality_score=" in caplog.text
+    assert "analyze_scene entered" not in caplog.text
+    assert "after get_lf_module" not in caplog.text
+    assert "before engine.run()" not in caplog.text
 
 
 def test_analyze_scene_succeeds_when_no_active_selection_exists(monkeypatch):

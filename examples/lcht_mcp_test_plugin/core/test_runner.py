@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import inspect
 import os
 import sys
 from pathlib import Path
@@ -212,13 +211,6 @@ def run_scene_analysis() -> tuple[bool, str]:
         return False, message
 
     try:
-        from lichtfeld_mcp.adapters.lichtfeld import LichtfeldAdapter
-        _log_info("Before adapter.analyze_scene()")
-        _log_info(f"LichtfeldAdapter module: {LichtfeldAdapter.__module__}")
-        _log_info(f"LichtfeldAdapter file: {inspect.getfile(LichtfeldAdapter)}")
-        _log_info(f"Adapter instance type: {type(adapter)}")
-        _log_info(f"Adapter class file: {inspect.getfile(adapter.__class__)}")
-        _log_info(f"Adapter analyze_scene: {adapter.analyze_scene}")
         report = analyze_scene(
             voxel_size=config.voxel_size,
             min_voxel_cluster_size=config.voxel_min_cluster_size,
@@ -236,6 +228,8 @@ def run_scene_analysis() -> tuple[bool, str]:
     set_scene_analysis_report_lines(report_lines)
     for line in report_lines:
         _log_info(line)
+    _log_info(f"analysis_time_seconds={report.analysis_time:.3f}")
+    _log_info(f"Scene analysis complete. Quality score: {report.quality_score}")
     return True, f"Scene analysis complete. Quality score: {report.quality_score}"
 
 
