@@ -682,6 +682,14 @@ def test_analyze_scene_returns_unified_report(monkeypatch):
     )
 
     adapter = adapter_module.LichtfeldPluginAdapter()
+    get_stats_calls: list[bool] = []
+    original_get_stats = adapter.get_stats
+
+    def tracked_get_stats(*, include_selection: bool = True):
+        get_stats_calls.append(include_selection)
+        return original_get_stats(include_selection=include_selection)
+
+    monkeypatch.setattr(adapter, "get_stats", tracked_get_stats)
     report = adapter.analyze_scene(
         voxel_size=1.0,
         min_voxel_cluster_size=2,
@@ -694,6 +702,7 @@ def test_analyze_scene_returns_unified_report(monkeypatch):
     assert report.scene_stats["total_splats"] == 6
     assert report.scene_stats["analyzed_splats"] == 3
     assert report.scene_stats["approximate"] is True
+    assert get_stats_calls == [False]
     assert len(report.results) == 4
     assert any(result.name == "voxel_connectivity" for result in report.results)
 
@@ -713,11 +722,15 @@ def test_analyze_scene_succeeds_when_no_active_selection_exists(monkeypatch):
         )
     )
     fake_scene.selection_mask = NonIterableSelectionMask()
-    fake_scene.has_selection = lambda: False
+    fake_scene.has_selection = lambda: (_ for _ in ()).throw(
+        AssertionError("Analyze Scene should not inspect scene.has_selection().")
+    )
     fake_module = SimpleNamespace(
         Tensor=FakeLfTensor,
         get_scene=lambda: fake_scene,
-        has_selection=lambda: False,
+        has_selection=lambda: (_ for _ in ()).throw(
+            AssertionError("Analyze Scene should not inspect lichtfeld.has_selection().")
+        ),
     )
 
     monkeypatch.setattr(

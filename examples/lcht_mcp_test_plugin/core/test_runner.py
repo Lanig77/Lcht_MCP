@@ -211,6 +211,7 @@ def run_scene_analysis() -> tuple[bool, str]:
         return False, message
 
     try:
+        _log_info("Before adapter.analyze_scene()")
         report = analyze_scene(
             voxel_size=config.voxel_size,
             min_voxel_cluster_size=config.voxel_min_cluster_size,

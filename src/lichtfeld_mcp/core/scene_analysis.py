@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter, deque
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+import logging
 import math
 from time import perf_counter
 
@@ -12,6 +13,8 @@ from lichtfeld_mcp.core.voxel_analysis import (
     largest_voxel_cluster,
     voxel_clusters_outside_largest,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisSeverity(str, Enum):
@@ -318,7 +321,10 @@ class SceneAnalysisEngine:
 
     def analyze(self, context: SceneAnalysisContext) -> SceneAnalysisReport:
         started_at = perf_counter()
-        results = [analysis.analyze(context) for analysis in self.analyses]
+        results: list[AnalysisResult] = []
+        for analysis in self.analyses:
+            logger.info("Scene analysis: before %s", _analysis_log_label(analysis.name))
+            results.append(analysis.analyze(context))
         warnings = _unique_strings(
             warning
             for result in results
@@ -437,6 +443,18 @@ def _result_by_name(results: list[AnalysisResult], name: str) -> AnalysisResult 
         if result.name == name:
             return result
     return None
+
+
+def _analysis_log_label(name: str) -> str:
+    if name == "statistics":
+        return "statistics analysis"
+    if name == "voxel_connectivity":
+        return "voxel analysis"
+    if name == "bounding_box":
+        return "bounding box analysis"
+    if name == "density":
+        return "density analysis"
+    return f"{name} analysis"
 
 
 def _serialize_value(value: object) -> object:

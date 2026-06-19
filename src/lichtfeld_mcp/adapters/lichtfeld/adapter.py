@@ -58,7 +58,7 @@ from .gaussian import (
     get_position_source_count,
     resolve_position_source,
 )
-from .scene import build_scene_stats, get_scene_name, get_scene_path, notify_scene_changed
+from .scene import build_scene_stats, notify_scene_changed
 from .selection import SelectionState
 from .training import TrainingOperations
 from .utils import (
@@ -158,20 +158,24 @@ class LichtfeldAdapter(AdapterContract):
         load_lichtfeld()
         not_implemented("close_project")
 
-    def get_stats(self) -> SceneStats:
+    def get_stats(self, *, include_selection: bool = True) -> SceneStats:
         lichtfeld_module = load_lichtfeld()
         scene = require_active_scene(lichtfeld_module)
         model = require_combined_model(scene)
         position_rows = extract_position_rows(model)
+        if include_selection:
+            selected_count = self._selection.get_selected_count(
+                scene,
+                len(position_rows),
+                lf_module=lichtfeld_module,
+            )
+        else:
+            selected_count = 0
         return build_scene_stats(
             scene,
             model,
             position_rows,
-            selected_count=self._selection.get_selected_count(
-                scene,
-                len(position_rows),
-                lf_module=lichtfeld_module,
-            ),
+            selected_count=selected_count,
         )
 
     def get_scene_stats(self) -> SceneStats:
@@ -191,6 +195,15 @@ class LichtfeldAdapter(AdapterContract):
         if max_splats < 1:
             raise InvalidParameterError("max_splats must be at least 1.")
 
+        logger.info("LichtFeld scene analysis: before get_stats(include_selection=False)")
+        stats = self.get_stats(include_selection=False)
+        logger.info(
+            "LichtFeld scene analysis: after get_stats(include_selection=False) "
+            "splat_count=%s selected_count=%s",
+            stats.splat_count,
+            stats.selected_count,
+        )
+
         lichtfeld_module = load_lichtfeld()
         scene = require_active_scene(lichtfeld_module)
         model = require_combined_model(scene)
@@ -203,17 +216,14 @@ class LichtfeldAdapter(AdapterContract):
             total_splats = len(materialized_position_rows)
 
         if abort_if_above_limit and total_splats > max_splats:
+            logger.info("LichtFeld scene analysis: before scene analysis")
             context = SceneAnalysisContext(
-                scene_name=get_scene_name(scene, get_scene_path(scene)),
-                project_path=get_scene_path(scene),
+                scene_name=stats.project_name,
+                project_path=stats.project_path,
                 positions=[],
                 total_splats=total_splats,
                 analyzed_splats=0,
-                selected_splats=self._selection.get_selected_count(
-                    scene,
-                    total_splats,
-                    lf_module=lichtfeld_module,
-                ),
+                selected_splats=stats.selected_count,
                 deleted_splats=self._read_deleted_count(model),
                 voxel_size=voxel_size,
                 min_voxel_cluster_size=min_voxel_cluster_size,
@@ -238,17 +248,14 @@ class LichtfeldAdapter(AdapterContract):
                 total_splats=total_splats,
             )
 
+        logger.info("LichtFeld scene analysis: before scene analysis")
         context = SceneAnalysisContext(
-            scene_name=get_scene_name(scene, get_scene_path(scene)),
-            project_path=get_scene_path(scene),
+            scene_name=stats.project_name,
+            project_path=stats.project_path,
             positions=sampled_rows,
             total_splats=total_splats,
             analyzed_splats=len(sampled_rows),
-            selected_splats=self._selection.get_selected_count(
-                scene,
-                total_splats,
-                lf_module=lichtfeld_module,
-            ),
+            selected_splats=stats.selected_count,
             deleted_splats=self._read_deleted_count(model),
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
