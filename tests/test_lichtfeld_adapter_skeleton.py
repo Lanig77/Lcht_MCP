@@ -287,14 +287,14 @@ class ExplodingSelectionScene(FakeScene):
     @property
     def selection_mask(self):
         self.selection_mask_reads += 1
-        raise AssertionError("Analyze Scene should not access scene.selection_mask.")
+        raise RuntimeError("Analyze Scene should not access scene.selection_mask.")
 
     @selection_mask.setter
     def selection_mask(self, value):
         self._selection_mask = value
 
     def get_selection_mask(self):
-        raise AssertionError("Analyze Scene should not access scene.get_selection_mask().")
+        raise RuntimeError("Analyze Scene should not access scene.get_selection_mask().")
 
 
 class FakeSceneWithoutSelectionApi:
@@ -684,6 +684,7 @@ def test_analyze_voxel_clusters_preview_returns_summary(monkeypatch):
 
 def test_analyze_scene_returns_unified_report(monkeypatch, caplog):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    adapter_impl_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld.adapter")
     original_import_module = adapter_module.importlib.import_module
     fake_scene = FakeScene(
         FakeModel(
@@ -710,11 +711,11 @@ def test_analyze_scene_returns_unified_report(monkeypatch, caplog):
     adapter = adapter_module.LichtfeldPluginAdapter()
     caplog.set_level("INFO")
     helper_calls: list[int] = []
-    original_helper = adapter._get_basic_scene_stats_without_selection
+    original_helper = adapter._read_analysis_scene_stats
 
-    def tracked_basic_stats(scene, model, *, max_splats: int):
+    def tracked_basic_stats(model, *, max_splats: int):
         helper_calls.append(max_splats)
-        return original_helper(scene, model, max_splats=max_splats)
+        return original_helper(model, max_splats=max_splats)
 
     monkeypatch.setattr(
         adapter,
@@ -724,8 +725,15 @@ def test_analyze_scene_returns_unified_report(monkeypatch, caplog):
         ),
     )
     monkeypatch.setattr(
+        adapter_impl_module,
+        "build_scene_stats",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("Analyze Scene should not call build_scene_stats().")
+        ),
+    )
+    monkeypatch.setattr(
         adapter,
-        "_get_basic_scene_stats_without_selection",
+        "_read_analysis_scene_stats",
         tracked_basic_stats,
     )
     report = adapter.analyze_scene(
@@ -743,10 +751,11 @@ def test_analyze_scene_returns_unified_report(monkeypatch, caplog):
     assert helper_calls == [4]
     assert len(report.results) == 4
     assert any(result.name == "voxel_connectivity" for result in report.results)
-    assert "analyze_scene: start" in caplog.text
-    assert "analyze_scene: basic stats read" in caplog.text
-    assert "analyze_scene: means sampled" in caplog.text
-    assert "analyze_scene: engine run" in caplog.text
+    assert "analyze_scene entered" in caplog.text
+    assert "reading basic stats without selection" in caplog.text
+    assert "basic stats complete" in caplog.text
+    assert "sampling means" in caplog.text
+    assert "running scene analysis engine" in caplog.text
     assert "analyze_scene: done" in caplog.text
 
 
