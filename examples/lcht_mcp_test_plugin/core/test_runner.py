@@ -34,13 +34,6 @@ def _log_error(message: str) -> None:
     lf.log.error(f"{PLUGIN_NAME}: {message}")
 
 
-def _safe_inspect_file(value: object) -> str:
-    try:
-        return inspect.getfile(value)
-    except Exception as exc:
-        return f"<inspect.getfile failed: {exc}>"
-
-
 def _candidate_repo_roots() -> list[Path]:
     candidates: list[Path] = []
     environment_root = os.environ.get("LCHT_MCP_REPO_ROOT")
@@ -221,17 +214,11 @@ def run_scene_analysis() -> tuple[bool, str]:
     try:
         from lichtfeld_mcp.adapters.lichtfeld import LichtfeldAdapter
         _log_info("Before adapter.analyze_scene()")
-        _log_info(f"LichtfeldAdapter.__module__={LichtfeldAdapter.__module__}")
-        _log_info(
-            "inspect.getfile(LichtfeldAdapter)="
-            f"{_safe_inspect_file(LichtfeldAdapter)}"
-        )
-        _log_info(
-            "inspect.getfile(adapter.__class__)="
-            f"{_safe_inspect_file(adapter.__class__)}"
-        )
-        _log_info(f"hasattr(adapter, 'analyze_scene')={hasattr(adapter, 'analyze_scene')}")
-        _log_info(f"repr(adapter.analyze_scene)={repr(adapter.analyze_scene)}")
+        _log_info(f"LichtfeldAdapter module: {LichtfeldAdapter.__module__}")
+        _log_info(f"LichtfeldAdapter file: {inspect.getfile(LichtfeldAdapter)}")
+        _log_info(f"Adapter instance type: {type(adapter)}")
+        _log_info(f"Adapter class file: {inspect.getfile(adapter.__class__)}")
+        _log_info(f"Adapter analyze_scene: {adapter.analyze_scene}")
         report = analyze_scene(
             voxel_size=config.voxel_size,
             min_voxel_cluster_size=config.voxel_min_cluster_size,

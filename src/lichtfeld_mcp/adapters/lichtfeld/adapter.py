@@ -63,7 +63,6 @@ from .scene import build_scene_stats, get_scene_name, get_scene_path, notify_sce
 from .selection import SelectionState
 from .training import TrainingOperations
 from .utils import (
-    coerce_boolean_mask,
     load_lichtfeld,
     not_implemented,
     require_active_scene,
@@ -138,6 +137,15 @@ class AnalysisSceneStats:
     selected_count: int | None = None
 
 
+def _trace_analyze_scene(message: str) -> None:
+    print(message)
+    logger.info(message)
+
+
+def _raise_analyze_scene_stage_error(stage: str, exc: Exception) -> None:
+    raise AdapterUnavailableError(f"analyze_scene failed at {stage}: {exc}") from exc
+
+
 class LichtfeldAdapter(AdapterContract):
     """Facade preserving the existing adapter API while delegating feature logic."""
 
@@ -204,87 +212,111 @@ class LichtfeldAdapter(AdapterContract):
         if max_splats < 1:
             raise InvalidParameterError("max_splats must be at least 1.")
 
-        print("analyze_scene entered")
-        logger.info("analyze_scene entered")
+        _trace_analyze_scene("analyze_scene entered")
 
-        lichtfeld_module = load_lichtfeld()
-        scene = require_active_scene(lichtfeld_module)
-        model = require_combined_model(scene)
-        logger.info("reading basic stats without selection")
-        project_path = get_scene_path(scene)
-        project_name = get_scene_name(scene, project_path)
-        analysis_stats = self._read_analysis_scene_stats(
-            model,
-            max_splats=max_splats,
-        )
-        logger.info(
-            "basic stats complete splat_count=%s deleted_count=%s",
-            analysis_stats.splat_count,
-            analysis_stats.deleted_count,
-        )
+        try:
+            lichtfeld_module = load_lichtfeld()
+        except Exception as exc:
+            _raise_analyze_scene_stage_error("get_lf_module", exc)
+        _trace_analyze_scene("after get_lf_module")
 
-        position_source = resolve_position_source(model)
+        try:
+            scene = require_active_scene(lichtfeld_module)
+        except Exception as exc:
+            _raise_analyze_scene_stage_error("get_active_scene", exc)
+        _trace_analyze_scene("after get_active_scene")
 
-        total_splats = analysis_stats.splat_count
-        materialized_position_rows: list[tuple[float, float, float]] | None = None
-        if total_splats is None:
-            materialized_position_rows = _coerce_position_rows(position_source)
-            total_splats = len(materialized_position_rows)
+        try:
+            model = require_combined_model(scene)
+        except Exception as exc:
+            _raise_analyze_scene_stage_error("combined_model", exc)
+        _trace_analyze_scene("after combined_model")
 
-        if abort_if_above_limit and total_splats > max_splats:
-            logger.info("sampling means")
-            context = SceneAnalysisContext(
-                scene_name=project_name,
-                project_path=project_path,
-                positions=[],
-                total_splats=total_splats,
-                analyzed_splats=0,
-                selected_splats=0,
-                deleted_splats=analysis_stats.deleted_count or 0,
-                voxel_size=voxel_size,
-                min_voxel_cluster_size=min_voxel_cluster_size,
-                approximate=False,
-                sampling_stride=1,
-                used_native_sampling=False,
-                max_splats=max_splats,
-                aborted=True,
-            )
-            logger.info("running scene analysis engine")
-            report = build_default_scene_analysis_engine().analyze(context)
-            logger.info("analyze_scene: done quality_score=%s", report.quality_score)
-            return report
+        _trace_analyze_scene("before basic stats")
+        try:
+            project_path = get_scene_path(scene)
+            project_name = get_scene_name(scene, project_path)
+        except Exception as exc:
+            _raise_analyze_scene_stage_error("basic_stats", exc)
+        _trace_analyze_scene("after basic stats")
 
-        logger.info("sampling means")
-        if materialized_position_rows is not None:
-            sampled_rows, sampling_stride = sample_position_rows(
-                materialized_position_rows,
-                max_splats,
-            )
+        _trace_analyze_scene("before get_means")
+        try:
+            position_source = resolve_position_source(model)
+        except Exception as exc:
+            _raise_analyze_scene_stage_error("get_means", exc)
+        _trace_analyze_scene("after get_means")
+
+        _trace_analyze_scene("before sampling")
+        try:
+            total_splats = self._read_splat_count_without_selection(model, position_source)
+            materialized_position_rows: list[tuple[float, float, float]] | None = None
             used_native_sampling = False
-        else:
-            sampled_rows, sampling_stride, used_native_sampling = extract_sampled_position_rows(
-                position_source,
-                max_splats,
-                total_splats=total_splats,
-            )
+            sampling_stride = 1
+            sampled_rows: list[tuple[float, float, float]] = []
+
+            if total_splats is None:
+                materialized_position_rows = _coerce_position_rows(position_source)
+                total_splats = len(materialized_position_rows)
+
+            if abort_if_above_limit and total_splats > max_splats:
+                analysis_stats = AnalysisSceneStats(
+                    splat_count=total_splats,
+                    bounding_box=build_bounds([]),
+                    deleted_count=None,
+                    selected_count=None,
+                )
+            else:
+                if materialized_position_rows is not None:
+                    sampled_rows, sampling_stride = sample_position_rows(
+                        materialized_position_rows,
+                        max_splats,
+                    )
+                else:
+                    sampled_rows, sampling_stride, used_native_sampling = extract_sampled_position_rows(
+                        position_source,
+                        max_splats,
+                        total_splats=total_splats,
+                    )
+                analysis_stats = AnalysisSceneStats(
+                    splat_count=total_splats,
+                    bounding_box=build_bounds(sampled_rows),
+                    deleted_count=None,
+                    selected_count=None,
+                )
+        except Exception as exc:
+            _raise_analyze_scene_stage_error("sampling", exc)
+        _trace_analyze_scene("after sampling")
 
         context = SceneAnalysisContext(
             scene_name=project_name,
             project_path=project_path,
             positions=sampled_rows,
-            total_splats=total_splats,
+            total_splats=analysis_stats.splat_count,
             analyzed_splats=len(sampled_rows),
             selected_splats=0,
-            deleted_splats=analysis_stats.deleted_count or 0,
+            deleted_splats=0,
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
-            approximate=len(sampled_rows) != total_splats,
+            approximate=len(sampled_rows) != analysis_stats.splat_count,
             sampling_stride=sampling_stride,
             used_native_sampling=used_native_sampling,
             max_splats=max_splats,
+            aborted=abort_if_above_limit and analysis_stats.splat_count > max_splats,
         )
-        logger.info("running scene analysis engine")
-        report = build_default_scene_analysis_engine().analyze(context)
+
+        _trace_analyze_scene("before SceneAnalysisEngine creation")
+        try:
+            engine = build_default_scene_analysis_engine()
+        except Exception as exc:
+            _raise_analyze_scene_stage_error("engine_creation", exc)
+
+        _trace_analyze_scene("before engine.run()")
+        try:
+            report = engine.analyze(context)
+        except Exception as exc:
+            _raise_analyze_scene_stage_error("engine_run", exc)
+        _trace_analyze_scene("after engine.run()")
         logger.info("analyze_scene: done quality_score=%s", report.quality_score)
         return report
 
@@ -927,33 +959,6 @@ class LichtfeldAdapter(AdapterContract):
         self._last_delete_mask = None
         self._last_delete_count = 0
 
-    def _read_analysis_scene_stats(
-        self,
-        model: object,
-        *,
-        max_splats: int,
-    ) -> AnalysisSceneStats:
-        position_source = resolve_position_source(model)
-        splat_count = self._read_splat_count_without_selection(model, position_source)
-        if splat_count is None:
-            position_rows = _coerce_position_rows(position_source)
-            splat_count = len(position_rows)
-        elif splat_count == 0:
-            position_rows = []
-        else:
-            position_rows, _, _ = extract_sampled_position_rows(
-                position_source,
-                min(max_splats, splat_count),
-                total_splats=splat_count,
-            )
-
-        return AnalysisSceneStats(
-            splat_count=splat_count,
-            bounding_box=build_bounds(position_rows),
-            deleted_count=self._read_deleted_count(model),
-            selected_count=None,
-        )
-
     @staticmethod
     def _read_splat_count_without_selection(
         model: object,
@@ -971,20 +976,6 @@ class LichtfeldAdapter(AdapterContract):
             except Exception:
                 pass
         return get_position_source_count(position_source)
-
-    @staticmethod
-    def _read_deleted_count(model: object) -> int:
-        deleted_mask = getattr(model, "deleted", None)
-        if deleted_mask is None:
-            get_deleted_mask = getattr(model, "get_deleted_mask", None)
-            if callable(get_deleted_mask):
-                try:
-                    deleted_mask = get_deleted_mask()
-                except Exception:
-                    deleted_mask = None
-        if deleted_mask is None:
-            return 0
-        return sum(coerce_boolean_mask(deleted_mask))
 
     @staticmethod
     def _notify_scene_changed(scene: object) -> bool:

@@ -710,12 +710,12 @@ def test_analyze_scene_returns_unified_report(monkeypatch, caplog):
 
     adapter = adapter_module.LichtfeldPluginAdapter()
     caplog.set_level("INFO")
-    helper_calls: list[int] = []
-    original_helper = adapter._read_analysis_scene_stats
+    splat_count_calls: list[str] = []
+    original_splat_count_reader = adapter._read_splat_count_without_selection
 
-    def tracked_basic_stats(model, *, max_splats: int):
-        helper_calls.append(max_splats)
-        return original_helper(model, max_splats=max_splats)
+    def tracked_splat_count_reader(model, position_source):
+        splat_count_calls.append(type(position_source).__name__)
+        return original_splat_count_reader(model, position_source)
 
     monkeypatch.setattr(
         adapter,
@@ -733,8 +733,8 @@ def test_analyze_scene_returns_unified_report(monkeypatch, caplog):
     )
     monkeypatch.setattr(
         adapter,
-        "_read_analysis_scene_stats",
-        tracked_basic_stats,
+        "_read_splat_count_without_selection",
+        tracked_splat_count_reader,
     )
     report = adapter.analyze_scene(
         voxel_size=1.0,
@@ -748,14 +748,22 @@ def test_analyze_scene_returns_unified_report(monkeypatch, caplog):
     assert report.scene_stats["total_splats"] == 6
     assert report.scene_stats["analyzed_splats"] == 3
     assert report.scene_stats["approximate"] is True
-    assert helper_calls == [4]
+    assert splat_count_calls == ["FakeTorchTensor"]
     assert len(report.results) == 4
     assert any(result.name == "voxel_connectivity" for result in report.results)
     assert "analyze_scene entered" in caplog.text
-    assert "reading basic stats without selection" in caplog.text
-    assert "basic stats complete" in caplog.text
-    assert "sampling means" in caplog.text
-    assert "running scene analysis engine" in caplog.text
+    assert "after get_lf_module" in caplog.text
+    assert "after get_active_scene" in caplog.text
+    assert "after combined_model" in caplog.text
+    assert "before basic stats" in caplog.text
+    assert "after basic stats" in caplog.text
+    assert "before get_means" in caplog.text
+    assert "after get_means" in caplog.text
+    assert "before sampling" in caplog.text
+    assert "after sampling" in caplog.text
+    assert "before SceneAnalysisEngine creation" in caplog.text
+    assert "before engine.run()" in caplog.text
+    assert "after engine.run()" in caplog.text
     assert "analyze_scene: done" in caplog.text
 
 
@@ -773,6 +781,7 @@ def test_analyze_scene_succeeds_when_no_active_selection_exists(monkeypatch):
             )
         )
     )
+    fake_scene._model.deleted = NonIterableSelectionMask()
     fake_scene.has_selection = lambda: (_ for _ in ()).throw(
         AssertionError("Analyze Scene should not inspect scene.has_selection().")
     )
@@ -802,6 +811,42 @@ def test_analyze_scene_succeeds_when_no_active_selection_exists(monkeypatch):
     assert report.scene_stats["selected_splats"] == 0
     assert report.scene_stats["approximate"] is False
     assert fake_scene.selection_mask_reads == 0
+
+
+def test_analyze_scene_re_raises_stage_name_when_get_means_fails(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    adapter_impl_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld.adapter")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+    monkeypatch.setattr(
+        adapter_impl_module,
+        "resolve_position_source",
+        lambda model: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="analyze_scene failed at get_means: boom",
+    ):
+        adapter.analyze_scene()
 
 
 def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):
