@@ -66,6 +66,48 @@ class SceneAnalysisReport:
 
 
 @dataclass(frozen=True, slots=True)
+class CleanupCandidateSummary:
+    scene_name: str
+    project_path: str
+    quality_score: int
+    analysis_time: float
+    approximate: bool
+    report_only: bool
+    candidate_group_count: int
+    estimated_affected_splats: int
+    floating_voxel_groups: int
+    estimated_floating_splats: int
+    small_voxel_clusters: int
+    estimated_small_cluster_splats: int
+    sparse_regions: int
+    estimated_sparse_splats: int
+    warnings: list[str]
+    recommendations: list[str]
+    notes: list[str]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "scene_name": self.scene_name,
+            "project_path": self.project_path,
+            "quality_score": self.quality_score,
+            "analysis_time": round(self.analysis_time, 6),
+            "approximate": self.approximate,
+            "report_only": self.report_only,
+            "candidate_group_count": self.candidate_group_count,
+            "estimated_affected_splats": self.estimated_affected_splats,
+            "floating_voxel_groups": self.floating_voxel_groups,
+            "estimated_floating_splats": self.estimated_floating_splats,
+            "small_voxel_clusters": self.small_voxel_clusters,
+            "estimated_small_cluster_splats": self.estimated_small_cluster_splats,
+            "sparse_regions": self.sparse_regions,
+            "estimated_sparse_splats": self.estimated_sparse_splats,
+            "warnings": list(self.warnings),
+            "recommendations": list(self.recommendations),
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SceneAnalysisContext:
     scene_name: str
     project_path: str
@@ -148,6 +190,14 @@ class VoxelConnectivityAnalysis(SceneAnalysisModule):
         floating_clusters = voxel_clusters_outside_largest(clusters)
         floating_groups = len(floating_clusters)
         floating_splats = sum(cluster.estimated_splat_count for cluster in floating_clusters)
+        small_clusters = [
+            cluster
+            for cluster in floating_clusters
+            if cluster.voxel_count < context.min_voxel_cluster_size
+        ]
+        estimated_small_cluster_splats = sum(
+            cluster.estimated_splat_count for cluster in small_clusters
+        )
         floating_ratio = _safe_ratio(floating_splats, context.analyzed_splats)
 
         warnings: list[str] = []
@@ -179,6 +229,8 @@ class VoxelConnectivityAnalysis(SceneAnalysisModule):
                 "connected": floating_groups == 0 and len(clusters) <= 1,
                 "floating_voxel_groups": floating_groups,
                 "estimated_floating_splats": floating_splats,
+                "small_voxel_clusters": len(small_clusters),
+                "estimated_small_cluster_splats": estimated_small_cluster_splats,
                 "total_voxel_clusters": len(clusters),
                 "largest_voxel_cluster_splats": 0 if largest is None else largest.estimated_splat_count,
             },
@@ -302,6 +354,7 @@ class DensityAnalysis(SceneAnalysisModule):
                 "occupied_voxels": occupied_voxels,
                 "density_histogram": histogram,
                 "sparse_regions": sparse_regions,
+                "estimated_sparse_splats": singletons,
                 "mean_splats_per_voxel": round(mean_density, 6),
             },
             warnings=warnings,
@@ -423,6 +476,101 @@ def format_scene_analysis_report(report: SceneAnalysisReport) -> str:
     for recommendation in report.recommendations:
         prefix = "OK:" if recommendation == "Scene is healthy." else "-"
         lines.append(f"{prefix} {recommendation}")
+    return "\n".join(lines)
+
+
+def build_cleanup_candidate_summary(
+    report: SceneAnalysisReport,
+) -> CleanupCandidateSummary:
+    scene_stats = report.scene_stats
+    connectivity = _result_by_name(report.results, "voxel_connectivity")
+    density = _result_by_name(report.results, "density")
+
+    floating_voxel_groups = int(
+        0 if connectivity is None else connectivity.details.get("floating_voxel_groups", 0)
+    )
+    estimated_floating_splats = int(
+        0 if connectivity is None else connectivity.details.get("estimated_floating_splats", 0)
+    )
+    small_voxel_clusters = int(
+        0 if connectivity is None else connectivity.details.get("small_voxel_clusters", 0)
+    )
+    estimated_small_cluster_splats = int(
+        0 if connectivity is None else connectivity.details.get("estimated_small_cluster_splats", 0)
+    )
+    sparse_regions = int(0 if density is None else density.details.get("sparse_regions", 0))
+    estimated_sparse_splats = int(
+        0 if density is None else density.details.get("estimated_sparse_splats", 0)
+    )
+
+    notes = ["Preview report only."]
+    if bool(scene_stats.get("approximate")):
+        notes.append("Approximate sampled preview.")
+    if small_voxel_clusters > 0 and estimated_small_cluster_splats > 0:
+        notes.append(
+            "Small voxel cluster estimates may overlap with floating island estimates."
+        )
+    if estimated_sparse_splats > 0:
+        notes.append("Sparse-region estimates are based on singleton voxels.")
+
+    candidate_group_count = floating_voxel_groups + small_voxel_clusters + sparse_regions
+    estimated_affected_splats = estimated_floating_splats + estimated_sparse_splats
+    recommendations = list(report.recommendations)
+    if candidate_group_count == 0 and "No cleanup required." not in recommendations:
+        recommendations.append("No cleanup required.")
+
+    return CleanupCandidateSummary(
+        scene_name=str(scene_stats["scene_name"]),
+        project_path=str(scene_stats["project_path"]),
+        quality_score=report.quality_score,
+        analysis_time=report.analysis_time,
+        approximate=bool(scene_stats.get("approximate")),
+        report_only=True,
+        candidate_group_count=candidate_group_count,
+        estimated_affected_splats=estimated_affected_splats,
+        floating_voxel_groups=floating_voxel_groups,
+        estimated_floating_splats=estimated_floating_splats,
+        small_voxel_clusters=small_voxel_clusters,
+        estimated_small_cluster_splats=estimated_small_cluster_splats,
+        sparse_regions=sparse_regions,
+        estimated_sparse_splats=estimated_sparse_splats,
+        warnings=list(report.warnings),
+        recommendations=_unique_strings(recommendations),
+        notes=notes,
+    )
+
+
+def format_cleanup_candidate_summary(summary: CleanupCandidateSummary) -> str:
+    lines = [
+        "Cleanup Candidate Preview",
+        f"Quality score context: {summary.quality_score}",
+        f"Candidate groups: {_format_int(summary.candidate_group_count)}",
+        f"Estimated affected splats: {_format_int(summary.estimated_affected_splats)}",
+        f"Floating voxel groups: {_format_int(summary.floating_voxel_groups)}",
+        f"Estimated floating splats: {_format_int(summary.estimated_floating_splats)}",
+        f"Small voxel clusters: {_format_int(summary.small_voxel_clusters)}",
+        f"Sparse regions: {_format_int(summary.sparse_regions)}",
+        "Selection preview: report only",
+    ]
+    if summary.approximate:
+        lines.append("Mode: approximate sampled preview")
+    else:
+        lines.append("Mode: exact preview")
+
+    if summary.notes:
+        lines.append("")
+        lines.append("Notes")
+        lines.extend(f"- {note}" for note in summary.notes)
+
+    if summary.warnings:
+        lines.append("")
+        lines.append("Warnings")
+        lines.extend(f"! {warning}" for warning in summary.warnings)
+
+    lines.append("")
+    lines.append("Suggested actions")
+    for recommendation in summary.recommendations:
+        lines.append(f"- {recommendation}")
     return "\n".join(lines)
 
 
@@ -619,6 +767,7 @@ __all__ = [
     "AnalysisResult",
     "AnalysisSeverity",
     "BoundingBoxAnalysis",
+    "CleanupCandidateSummary",
     "DensityAnalysis",
     "SceneAnalysisContext",
     "SceneAnalysisEngine",
@@ -626,6 +775,8 @@ __all__ = [
     "SceneAnalysisReport",
     "StatisticsAnalysis",
     "VoxelConnectivityAnalysis",
+    "build_cleanup_candidate_summary",
     "build_default_scene_analysis_engine",
+    "format_cleanup_candidate_summary",
     "format_scene_analysis_report",
 ]

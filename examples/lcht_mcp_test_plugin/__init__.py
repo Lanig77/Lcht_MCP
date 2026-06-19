@@ -7,6 +7,7 @@ import lichtfeld as lf
 from .operators.analyze_scene import LCHTMCP_OT_analyze_scene
 from .operators.analyze_clusters import LCHTMCP_OT_analyze_clusters
 from .operators.analyze_voxel_clusters import LCHTMCP_OT_analyze_voxel_clusters
+from .operators.preview_cleanup_candidates import LCHTMCP_OT_preview_cleanup_candidates
 from .panels.test_panel import LchtMcpTestPanel
 from .operators.diagnose_api import LCHTMCP_OT_diagnose_api
 from .operators.diagnose_native_selection import LCHTMCP_OT_diagnose_native_selection
@@ -52,6 +53,7 @@ _classes = [
     LCHTMCP_OT_analyze_scene,
     LCHTMCP_OT_analyze_clusters,
     LCHTMCP_OT_analyze_voxel_clusters,
+    LCHTMCP_OT_preview_cleanup_candidates,
     LCHTMCP_OT_arm_safe_delete,
     LCHTMCP_OT_confirm_safe_delete,
     LCHTMCP_OT_disarm_safe_delete,

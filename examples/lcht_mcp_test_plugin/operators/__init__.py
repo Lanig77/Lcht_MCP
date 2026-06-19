@@ -8,6 +8,10 @@ from .analyze_voxel_clusters import (
     ANALYZE_VOXEL_CLUSTERS_OPERATOR_ID,
     LCHTMCP_OT_analyze_voxel_clusters,
 )
+from .preview_cleanup_candidates import (
+    LCHTMCP_OT_preview_cleanup_candidates,
+    PREVIEW_CLEANUP_CANDIDATES_OPERATOR_ID,
+)
 from .diagnose_api import DIAGNOSE_API_OPERATOR_ID, LCHTMCP_OT_diagnose_api
 from .diagnose_native_selection import (
     DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID,
@@ -94,6 +98,7 @@ __all__ = [
     "ANALYZE_SCENE_OPERATOR_ID",
     "ANALYZE_CLUSTERS_OPERATOR_ID",
     "ANALYZE_VOXEL_CLUSTERS_OPERATOR_ID",
+    "PREVIEW_CLEANUP_CANDIDATES_OPERATOR_ID",
     "CONFIRM_SAFE_DELETE_OPERATOR_ID",
     "CLUSTER_DISTANCE_DOWN_OPERATOR_ID",
     "CLUSTER_DISTANCE_UP_OPERATOR_ID",
@@ -129,6 +134,7 @@ __all__ = [
     "LCHTMCP_OT_analyze_scene",
     "LCHTMCP_OT_analyze_clusters",
     "LCHTMCP_OT_analyze_voxel_clusters",
+    "LCHTMCP_OT_preview_cleanup_candidates",
     "LCHTMCP_OT_arm_safe_delete",
     "LCHTMCP_OT_cluster_distance_down",
     "LCHTMCP_OT_cluster_distance_up",

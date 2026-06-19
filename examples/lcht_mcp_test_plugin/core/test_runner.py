@@ -10,7 +10,11 @@ from pathlib import Path
 
 import lichtfeld as lf
 
-from .runtime_config import set_scene_analysis_report_lines, snapshot_runtime_config
+from .runtime_config import (
+    set_cleanup_preview_report_lines,
+    set_scene_analysis_report_lines,
+    snapshot_runtime_config,
+)
 
 
 PLUGIN_NAME = "lcht_mcp_test_plugin"
@@ -231,6 +235,68 @@ def run_scene_analysis() -> tuple[bool, str]:
     _log_info(f"analysis_time_seconds={report.analysis_time:.3f}")
     _log_info(f"Scene analysis complete. Quality score: {report.quality_score}")
     return True, f"Scene analysis complete. Quality score: {report.quality_score}"
+
+
+def run_preview_cleanup_candidates() -> tuple[bool, str]:
+    """Run a non-destructive cleanup candidate preview from scene analysis."""
+    config = snapshot_runtime_config()
+    _log_info(
+        "Starting cleanup candidate preview with "
+        f"voxel_size={config.voxel_size:.4f}, "
+        f"min_voxel_cluster_size={config.voxel_min_cluster_size}, "
+        f"max_cluster_analysis_splats={config.max_cluster_analysis_splats}, "
+        "abort_if_splat_count_above_limit="
+        f"{config.abort_if_splat_count_above_limit}."
+    )
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup preview adapter setup failed: {exc}"
+        _log_error(message)
+        set_cleanup_preview_report_lines([message])
+        return False, message
+
+    preview_cleanup_candidates = getattr(adapter, "preview_cleanup_candidates", None)
+    if not callable(preview_cleanup_candidates):
+        message = "LichtfeldAdapter does not expose preview_cleanup_candidates()."
+        _log_error(message)
+        set_cleanup_preview_report_lines([message])
+        return False, message
+
+    try:
+        from lichtfeld_mcp.core.scene_analysis import format_cleanup_candidate_summary
+    except Exception as exc:
+        message = f"Cleanup preview formatter import failed: {exc}"
+        _log_error(message)
+        set_cleanup_preview_report_lines([message])
+        return False, message
+
+    try:
+        summary = preview_cleanup_candidates(
+            voxel_size=config.voxel_size,
+            min_voxel_cluster_size=config.voxel_min_cluster_size,
+            max_splats=config.max_cluster_analysis_splats,
+            abort_if_above_limit=config.abort_if_splat_count_above_limit,
+        )
+    except Exception as exc:
+        message = f"Cleanup preview failed: {exc}"
+        _log_error(message)
+        set_cleanup_preview_report_lines([message])
+        return False, message
+
+    formatted_summary = format_cleanup_candidate_summary(summary)
+    summary_lines = formatted_summary.splitlines()
+    set_cleanup_preview_report_lines(summary_lines)
+    for line in summary_lines:
+        _log_info(line)
+    _log_info(f"analysis_time_seconds={summary.analysis_time:.3f}")
+    _log_info(
+        "Cleanup preview complete. "
+        f"Candidate groups: {summary.candidate_group_count}"
+    )
+    return True, f"Cleanup preview complete. Candidate groups: {summary.candidate_group_count}"
 
 
 def run_cluster_analysis_preview() -> tuple[bool, str]:

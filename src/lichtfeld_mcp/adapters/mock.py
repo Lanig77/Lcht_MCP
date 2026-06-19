@@ -17,7 +17,9 @@ from lichtfeld_mcp.core.constraints import validate_selection_mode
 from lichtfeld_mcp.core.scene_analysis import (
     AnalysisResult,
     AnalysisSeverity,
+    CleanupCandidateSummary,
     SceneAnalysisReport,
+    build_cleanup_candidate_summary,
 )
 from lichtfeld_mcp.core.presets import get_optimization_profile
 from lichtfeld_mcp.core.requests import (
@@ -217,6 +219,22 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             recommendations=recommendations,
             analysis_time=0.0,
             results=results,
+        )
+
+    def preview_cleanup_candidates(
+        self,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        max_splats: int = 25_000,
+        abort_if_above_limit: bool = False,
+    ) -> CleanupCandidateSummary:
+        return build_cleanup_candidate_summary(
+            self.analyze_scene(
+                voxel_size=voxel_size,
+                min_voxel_cluster_size=min_voxel_cluster_size,
+                max_splats=max_splats,
+                abort_if_above_limit=abort_if_above_limit,
+            )
         )
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:

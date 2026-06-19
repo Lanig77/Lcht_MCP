@@ -6,6 +6,7 @@ import lichtfeld as lf
 
 from ..core.runtime_config import snapshot_runtime_config
 from ..operators.analyze_scene import ANALYZE_SCENE_OPERATOR_ID
+from ..operators.preview_cleanup_candidates import PREVIEW_CLEANUP_CANDIDATES_OPERATOR_ID
 from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
 from ..operators.diagnose_native_selection import DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID
 from ..operators.diagnose_tensor_mask import DIAGNOSE_TENSOR_MASK_OPERATOR_ID
@@ -151,6 +152,12 @@ class LchtMcpTestPanel(lf.ui.Panel):
         if config.last_scene_analysis_lines:
             layout.label("Last Scene Analysis")
             for line in config.last_scene_analysis_lines:
+                layout.text_colored(line, theme.palette.text_dim)
+            layout.spacing()
+
+        if config.last_cleanup_preview_lines:
+            layout.label("Last Cleanup Preview")
+            for line in config.last_cleanup_preview_lines:
                 layout.text_colored(line, theme.palette.text_dim)
             layout.spacing()
 
@@ -318,6 +325,12 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 34 * scale),
         ):
             lf.ui.ops.invoke(ANALYZE_SCENE_OPERATOR_ID)
+        if layout.button_styled(
+            "Preview Cleanup Candidates##preview_cleanup",
+            "secondary",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(PREVIEW_CLEANUP_CANDIDATES_OPERATOR_ID)
         if layout.button_styled(
             "Analyze Clusters##analyze_clusters",
             "secondary",

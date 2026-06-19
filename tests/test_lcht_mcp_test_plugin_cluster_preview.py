@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from lichtfeld_mcp.core.scene_analysis import (
     AnalysisResult,
     AnalysisSeverity,
+    CleanupCandidateSummary,
     SceneAnalysisReport,
 )
 from test_lcht_mcp_test_plugin_undo import _load_runner_modules
@@ -160,6 +161,41 @@ class FakeClusterPreviewAdapter:
             ],
         )
 
+    def preview_cleanup_candidates(
+        self,
+        *,
+        voxel_size: float,
+        min_voxel_cluster_size: int,
+        max_splats: int,
+        abort_if_above_limit: bool,
+    ):
+        self.cleanup_preview_calls = getattr(self, "cleanup_preview_calls", 0) + 1
+        self.last_cleanup_preview_kwargs = {
+            "voxel_size": voxel_size,
+            "min_voxel_cluster_size": min_voxel_cluster_size,
+            "max_splats": max_splats,
+            "abort_if_above_limit": abort_if_above_limit,
+        }
+        return CleanupCandidateSummary(
+            scene_name="demo_scene",
+            project_path="C:/repo/demo_scene.lf",
+            quality_score=93,
+            analysis_time=0.42,
+            approximate=True,
+            report_only=True,
+            candidate_group_count=3,
+            estimated_affected_splats=512,
+            floating_voxel_groups=2,
+            estimated_floating_splats=412,
+            small_voxel_clusters=1,
+            estimated_small_cluster_splats=100,
+            sparse_regions=0,
+            estimated_sparse_splats=100,
+            warnings=["2 floating voxel groups detected."],
+            recommendations=["Preview floating islands.", "Estimated cleanup: 1.6%"],
+            notes=["Preview report only.", "Approximate sampled preview."],
+        )
+
 
 def test_run_cluster_analysis_preview_uses_runtime_config_and_returns_success(monkeypatch):
     runtime_config, test_runner = _load_runner_modules(monkeypatch)
@@ -237,3 +273,24 @@ def test_run_scene_analysis_uses_runtime_config_and_returns_success(monkeypatch)
         "max_splats": 25_000,
         "abort_if_above_limit": False,
     }
+
+
+def test_run_preview_cleanup_candidates_returns_actionable_summary(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.adjust_voxel_size(0.10)
+    runtime_config.adjust_voxel_min_cluster_size(15)
+    fake_adapter = FakeClusterPreviewAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_preview_cleanup_candidates()
+
+    assert success is True
+    assert message == "Cleanup preview complete. Candidate groups: 3"
+    assert fake_adapter.cleanup_preview_calls == 1
+    assert fake_adapter.last_cleanup_preview_kwargs == {
+        "voxel_size": 0.35,
+        "min_voxel_cluster_size": 25,
+        "max_splats": 25_000,
+        "abort_if_above_limit": False,
+    }
+    assert runtime_config.snapshot_runtime_config().last_cleanup_preview_lines

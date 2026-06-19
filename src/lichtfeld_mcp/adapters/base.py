@@ -24,7 +24,7 @@ from lichtfeld_mcp.schemas.common import (
 )
 
 if TYPE_CHECKING:
-    from lichtfeld_mcp.core.scene_analysis import SceneAnalysisReport
+    from lichtfeld_mcp.core.scene_analysis import CleanupCandidateSummary, SceneAnalysisReport
 
 
 class LichtfeldAdapter(ABC):
@@ -50,6 +50,15 @@ class LichtfeldAdapter(ABC):
         max_splats: int = 25_000,
         abort_if_above_limit: bool = False,
     ) -> SceneAnalysisReport: ...
+
+    @abstractmethod
+    def preview_cleanup_candidates(
+        self,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        max_splats: int = 25_000,
+        abort_if_above_limit: bool = False,
+    ) -> CleanupCandidateSummary: ...
 
     @abstractmethod
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult: ...

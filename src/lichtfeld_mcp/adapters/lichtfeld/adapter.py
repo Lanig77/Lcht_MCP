@@ -20,8 +20,10 @@ from lichtfeld_mcp.core.constraints import (
 )
 from lichtfeld_mcp.core.requests import HeightRange
 from lichtfeld_mcp.core.scene_analysis import (
+    CleanupCandidateSummary,
     SceneAnalysisContext,
     SceneAnalysisReport,
+    build_cleanup_candidate_summary,
     build_default_scene_analysis_engine,
 )
 from lichtfeld_mcp.core.validation import normalize_scene_path
@@ -319,6 +321,40 @@ class LichtfeldAdapter(AdapterContract):
             report.analysis_time,
         )
         return report
+
+    def preview_cleanup_candidates(
+        self,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        max_splats: int = 25_000,
+        abort_if_above_limit: bool = False,
+    ) -> CleanupCandidateSummary:
+        logger.info(
+            "LichtFeld cleanup preview: starting voxel_size=%.4f min_voxel_cluster_size=%s "
+            "max_splats=%s abort_if_above_limit=%s",
+            voxel_size,
+            min_voxel_cluster_size,
+            max_splats,
+            abort_if_above_limit,
+        )
+        report = self.analyze_scene(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+            max_splats=max_splats,
+            abort_if_above_limit=abort_if_above_limit,
+        )
+        summary = build_cleanup_candidate_summary(report)
+        logger.info(
+            "LichtFeld cleanup preview: candidate_groups=%s estimated_affected_splats=%s "
+            "floating_voxel_groups=%s small_voxel_clusters=%s sparse_regions=%s",
+            summary.candidate_group_count,
+            summary.estimated_affected_splats,
+            summary.floating_voxel_groups,
+            summary.small_voxel_clusters,
+            summary.sparse_regions,
+        )
+        logger.info("LichtFeld cleanup preview: preview report only")
+        return summary
 
     def analyze_clusters_preview(
         self,

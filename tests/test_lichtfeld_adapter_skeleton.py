@@ -840,6 +840,57 @@ def test_analyze_scene_re_raises_stage_name_when_get_means_fails(monkeypatch):
         adapter.analyze_scene()
 
 
+def test_preview_cleanup_candidates_generates_report_only_summary_without_scene_mutation(
+    monkeypatch,
+):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = ExplodingSelectionScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [0.2, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [5.2, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    fake_scene._model.deleted = NonIterableSelectionMask()
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        get_scene=lambda: fake_scene,
+        has_selection=lambda: (_ for _ in ()).throw(
+            AssertionError("Cleanup preview should not inspect lichtfeld.has_selection().")
+        ),
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    summary = adapter.preview_cleanup_candidates(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=3,
+        abort_if_above_limit=False,
+    )
+
+    assert summary.report_only is True
+    assert summary.approximate is True
+    assert summary.candidate_group_count >= 1
+    assert fake_scene.selection_mask_reads == 0
+    assert fake_scene.notify_changed_calls == 0
+    assert fake_scene._model.last_soft_delete_argument is None
+    assert fake_scene._model.apply_deleted_calls == 0
+
+
 def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module
