@@ -12,6 +12,7 @@ import lichtfeld as lf
 
 from .runtime_config import (
     set_cleanup_preview_report_lines,
+    set_cleanup_preview_summary,
     set_scene_analysis_report_lines,
     snapshot_runtime_config,
 )
@@ -27,6 +28,8 @@ SELECTION_RANGES: tuple[tuple[str, float | None, float | None], ...] = (
     ("range_3", 1.00, 1.05),
     ("range_4_empty", None, None),
 )
+_CACHED_ADAPTER = None
+_CACHED_REPOSITORY_ROOT: Path | None = None
 
 
 def _log_info(message: str) -> None:
@@ -64,10 +67,15 @@ def _configure_import_path() -> Path:
 
 
 def _build_adapter():
+    global _CACHED_ADAPTER, _CACHED_REPOSITORY_ROOT
+    if _CACHED_ADAPTER is not None and _CACHED_REPOSITORY_ROOT is not None:
+        return _CACHED_ADAPTER, _CACHED_REPOSITORY_ROOT
     repository_root = _configure_import_path()
     from lichtfeld_mcp.adapters.lichtfeld import LichtfeldAdapter
 
-    return LichtfeldAdapter(), repository_root
+    _CACHED_ADAPTER = LichtfeldAdapter()
+    _CACHED_REPOSITORY_ROOT = repository_root
+    return _CACHED_ADAPTER, _CACHED_REPOSITORY_ROOT
 
 
 def _clear_selection() -> None:
@@ -256,6 +264,7 @@ def run_preview_cleanup_candidates() -> tuple[bool, str]:
         message = f"Cleanup preview adapter setup failed: {exc}"
         _log_error(message)
         set_cleanup_preview_report_lines([message])
+        set_cleanup_preview_summary(None)
         return False, message
 
     preview_cleanup_candidates = getattr(adapter, "preview_cleanup_candidates", None)
@@ -263,6 +272,7 @@ def run_preview_cleanup_candidates() -> tuple[bool, str]:
         message = "LichtfeldAdapter does not expose preview_cleanup_candidates()."
         _log_error(message)
         set_cleanup_preview_report_lines([message])
+        set_cleanup_preview_summary(None)
         return False, message
 
     try:
@@ -271,6 +281,7 @@ def run_preview_cleanup_candidates() -> tuple[bool, str]:
         message = f"Cleanup preview formatter import failed: {exc}"
         _log_error(message)
         set_cleanup_preview_report_lines([message])
+        set_cleanup_preview_summary(None)
         return False, message
 
     try:
@@ -284,11 +295,13 @@ def run_preview_cleanup_candidates() -> tuple[bool, str]:
         message = f"Cleanup preview failed: {exc}"
         _log_error(message)
         set_cleanup_preview_report_lines([message])
+        set_cleanup_preview_summary(None)
         return False, message
 
     formatted_summary = format_cleanup_candidate_summary(summary)
     summary_lines = formatted_summary.splitlines()
     set_cleanup_preview_report_lines(summary_lines)
+    set_cleanup_preview_summary(summary.to_dict())
     for line in summary_lines:
         _log_info(line)
     _log_info(f"analysis_time_seconds={summary.analysis_time:.3f}")
@@ -297,6 +310,98 @@ def run_preview_cleanup_candidates() -> tuple[bool, str]:
         f"Candidate groups: {summary.candidate_group_count}"
     )
     return True, f"Cleanup preview complete. Candidate groups: {summary.candidate_group_count}"
+
+
+def run_soft_delete_cleanup_preview() -> tuple[bool, str]:
+    """Soft-delete the last reliable cleanup preview without finalizing deletion."""
+    config = snapshot_runtime_config()
+    _log_info(
+        "Starting cleanup preview soft delete with "
+        f"ENABLE_SAFE_DELETE={config.enable_safe_delete}, "
+        f"CONFIRM_SAFE_DELETE={config.confirm_safe_delete}, "
+        "thresholds=("
+        f"max_count={config.max_deletable_splats}, "
+        f"max_ratio={config.max_deletable_percentage:.6f})."
+    )
+
+    if not config.enable_safe_delete:
+        message = (
+            "Cleanup preview soft delete is disabled because ENABLE_SAFE_DELETE=False. "
+            "No destructive action was performed."
+        )
+        _log_info(message)
+        return True, message
+
+    if not config.confirm_safe_delete:
+        message = (
+            "Cleanup preview soft delete is armed but not confirmed because "
+            "ENABLE_SAFE_DELETE=True and CONFIRM_SAFE_DELETE=False. "
+            "No destructive action was performed."
+        )
+        _log_info(message)
+        return True, message
+
+    preview_summary = config.last_cleanup_preview_summary
+    if preview_summary is None:
+        message = "No cleanup preview is available. Run Preview Cleanup Candidates first."
+        _log_error(message)
+        return False, message
+
+    estimated_affected_splats = int(preview_summary.get("estimated_affected_splats", 0))
+    total_splats = int(preview_summary.get("total_splats", 0))
+    selected_ratio = _selected_percentage(estimated_affected_splats, total_splats)
+    _log_info(f"preview_candidate_splats={estimated_affected_splats}")
+    _log_info(f"preview_total_splats={total_splats}")
+    _log_info(f"preview_candidate_ratio={selected_ratio * 100.0:.6f}%")
+
+    if estimated_affected_splats <= 0:
+        message = "Cleanup preview refused: estimated_affected_splats == 0."
+        _log_error(message)
+        return False, message
+    if estimated_affected_splats > config.max_deletable_splats:
+        message = (
+            "Cleanup preview soft delete refused: "
+            f"estimated_affected_splats={estimated_affected_splats} exceeds "
+            f"SAFE_DELETE_MAX_COUNT={config.max_deletable_splats}."
+        )
+        _log_error(message)
+        return False, message
+    if selected_ratio > config.max_deletable_percentage:
+        message = (
+            "Cleanup preview soft delete refused: "
+            f"selected_ratio={selected_ratio:.6f} exceeds "
+            f"SAFE_DELETE_MAX_RATIO={config.max_deletable_percentage:.6f}."
+        )
+        _log_error(message)
+        return False, message
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup preview soft delete adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    soft_delete_cleanup_candidates = getattr(adapter, "soft_delete_cleanup_candidates", None)
+    if not callable(soft_delete_cleanup_candidates):
+        message = "LichtfeldAdapter does not expose soft_delete_cleanup_candidates()."
+        _log_error(message)
+        return False, message
+
+    try:
+        result = soft_delete_cleanup_candidates()
+    except Exception as exc:
+        message = f"Cleanup preview soft delete failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    _log_info(
+        "Cleanup preview soft delete complete. "
+        "Reversible only. Does not call apply_deleted()."
+    )
+    _log_info(f"cleanup_preview_soft_delete ok={result.ok} message={result.message}")
+    return result.ok, result.message
 
 
 def run_cluster_analysis_preview() -> tuple[bool, str]:

@@ -69,6 +69,7 @@ class SceneAnalysisReport:
 class CleanupCandidateSummary:
     scene_name: str
     project_path: str
+    total_splats: int
     quality_score: int
     analysis_time: float
     approximate: bool
@@ -89,6 +90,7 @@ class CleanupCandidateSummary:
         return {
             "scene_name": self.scene_name,
             "project_path": self.project_path,
+            "total_splats": self.total_splats,
             "quality_score": self.quality_score,
             "analysis_time": round(self.analysis_time, 6),
             "approximate": self.approximate,
@@ -522,6 +524,7 @@ def build_cleanup_candidate_summary(
     return CleanupCandidateSummary(
         scene_name=str(scene_stats["scene_name"]),
         project_path=str(scene_stats["project_path"]),
+        total_splats=int(scene_stats["total_splats"]),
         quality_score=report.quality_score,
         analysis_time=report.analysis_time,
         approximate=bool(scene_stats.get("approximate")),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import math
 from time import perf_counter
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter as AdapterContract
@@ -139,6 +140,12 @@ class AnalysisSceneStats:
     selected_count: int | None = None
 
 
+@dataclass(slots=True)
+class _CleanupPreviewState:
+    summary: CleanupCandidateSummary
+    selection_mask: list[bool] | None
+
+
 def _raise_analyze_scene_stage_error(stage: str, exc: Exception) -> None:
     raise AdapterUnavailableError(f"analyze_scene failed at {stage}: {exc}") from exc
 
@@ -154,6 +161,7 @@ class LichtfeldAdapter(AdapterContract):
         self._last_delete_mask: object | None = None
         self._last_delete_count = 0
         self._last_finalized_delete_count = 0
+        self._last_cleanup_preview: _CleanupPreviewState | None = None
 
     @property
     def _cached_selection_mask(self) -> list[bool] | None:
@@ -344,6 +352,41 @@ class LichtfeldAdapter(AdapterContract):
             abort_if_above_limit=abort_if_above_limit,
         )
         summary = build_cleanup_candidate_summary(report)
+        selection_mask: list[bool] | None = None
+        if not summary.approximate and not bool(report.scene_stats.get("aborted")):
+            lichtfeld_module = load_lichtfeld()
+            scene = require_active_scene(lichtfeld_module)
+            model = require_combined_model(scene)
+            position_rows = _coerce_position_rows(resolve_position_source(model))
+            selection_mask = self._build_cleanup_candidate_mask(
+                position_rows,
+                voxel_size=voxel_size,
+                min_voxel_cluster_size=min_voxel_cluster_size,
+            )
+            summary = CleanupCandidateSummary(
+                scene_name=summary.scene_name,
+                project_path=summary.project_path,
+                total_splats=summary.total_splats,
+                quality_score=summary.quality_score,
+                analysis_time=summary.analysis_time,
+                approximate=summary.approximate,
+                report_only=summary.report_only,
+                candidate_group_count=summary.candidate_group_count,
+                estimated_affected_splats=sum(selection_mask),
+                floating_voxel_groups=summary.floating_voxel_groups,
+                estimated_floating_splats=summary.estimated_floating_splats,
+                small_voxel_clusters=summary.small_voxel_clusters,
+                estimated_small_cluster_splats=summary.estimated_small_cluster_splats,
+                sparse_regions=summary.sparse_regions,
+                estimated_sparse_splats=summary.estimated_sparse_splats,
+                warnings=list(summary.warnings),
+                recommendations=list(summary.recommendations),
+                notes=list(summary.notes),
+            )
+        self._last_cleanup_preview = _CleanupPreviewState(
+            summary=summary,
+            selection_mask=selection_mask,
+        )
         logger.info(
             "LichtFeld cleanup preview: candidate_groups=%s estimated_affected_splats=%s "
             "floating_voxel_groups=%s small_voxel_clusters=%s sparse_regions=%s",
@@ -355,6 +398,53 @@ class LichtfeldAdapter(AdapterContract):
         )
         logger.info("LichtFeld cleanup preview: preview report only")
         return summary
+
+    def soft_delete_cleanup_candidates(self) -> ToolResult:
+        preview_state = self._last_cleanup_preview
+        if preview_state is None:
+            raise AdapterUnavailableError(
+                "No cleanup preview is available. Run Preview Cleanup Candidates first."
+            )
+        if preview_state.summary.approximate or preview_state.selection_mask is None:
+            raise AdapterUnavailableError(
+                "Cleanup preview is approximate-only; no reliable native selection is available."
+            )
+        selection_mask = list(preview_state.selection_mask)
+        selected_count = sum(selection_mask)
+        if selected_count <= 0:
+            raise AdapterUnavailableError(
+                "Cleanup preview did not identify any reliable cleanup candidates."
+            )
+
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        if preview_state.summary.project_path != get_scene_path(scene):
+            raise AdapterUnavailableError(
+                "Cleanup preview no longer matches the active scene. "
+                "Run Preview Cleanup Candidates again."
+            )
+
+        try:
+            self._apply_cleanup_candidate_selection(
+                scene,
+                model,
+                lichtfeld_module,
+                selection_mask,
+            )
+        except Exception as exc:
+            raise AdapterUnavailableError(
+                "Cleanup preview could not build a reliable native selection."
+            ) from exc
+
+        result = self.soft_delete_selection()
+        logger.info(
+            "LichtFeld cleanup soft delete: affected_count=%s message=%s",
+            selected_count,
+            result.message,
+        )
+        self._last_cleanup_preview = None
+        return result
 
     def analyze_clusters_preview(
         self,
@@ -1012,6 +1102,117 @@ class LichtfeldAdapter(AdapterContract):
             except Exception:
                 pass
         return get_position_source_count(position_source)
+
+    def _apply_cleanup_candidate_selection(
+        self,
+        scene: object,
+        model: object,
+        lichtfeld_module: object,
+        selection_mask: list[bool],
+    ) -> None:
+        selected_indices = self._selection.selected_indices(selection_mask)
+        try:
+            self._selection.apply_native_selection(
+                scene,
+                selected_indices,
+                lichtfeld_module,
+            )
+        except AdapterUnavailableError as exc:
+            try:
+                self._selection.apply_scene_selection_mask(
+                    scene,
+                    selection_mask,
+                    lichtfeld_module,
+                    model=model,
+                )
+            except AdapterUnavailableError as tensor_exc:
+                raise AdapterUnavailableError(
+                    f"{exc} Tensor fallback also failed: {tensor_exc}"
+                ) from tensor_exc
+        self._selection.cache_mask(selection_mask)
+        notify_scene_changed(scene)
+
+    @staticmethod
+    def _build_cleanup_candidate_mask(
+        position_rows: list[tuple[float, float, float]],
+        *,
+        voxel_size: float,
+        min_voxel_cluster_size: int,
+    ) -> list[bool]:
+        if not position_rows:
+            return []
+
+        voxel_counts: dict[tuple[int, int, int], int] = {}
+        voxel_keys: list[tuple[int, int, int]] = []
+        for x, y, z in position_rows:
+            key = (
+                math.floor(x / voxel_size),
+                math.floor(y / voxel_size),
+                math.floor(z / voxel_size),
+            )
+            voxel_keys.append(key)
+            voxel_counts[key] = voxel_counts.get(key, 0) + 1
+
+        components = LichtfeldAdapter._collect_voxel_components(set(voxel_counts))
+        if not components:
+            return [False] * len(position_rows)
+
+        largest_component = max(
+            components,
+            key=lambda keys: (
+                sum(voxel_counts[key] for key in keys),
+                len(keys),
+            ),
+        )
+        floating_keys = {
+            key
+            for keys in components
+            if keys is not largest_component
+            for key in keys
+        }
+        sparse_keys = {key for key, count in voxel_counts.items() if count <= 1}
+        return [
+            key in floating_keys or key in sparse_keys
+            for key in voxel_keys
+        ]
+
+    @staticmethod
+    def _collect_voxel_components(
+        voxel_keys: set[tuple[int, int, int]],
+    ) -> list[set[tuple[int, int, int]]]:
+        components: list[set[tuple[int, int, int]]] = []
+        visited: set[tuple[int, int, int]] = set()
+
+        for start_key in voxel_keys:
+            if start_key in visited:
+                continue
+            stack = [start_key]
+            component: set[tuple[int, int, int]] = set()
+            visited.add(start_key)
+            while stack:
+                current = stack.pop()
+                component.add(current)
+                for neighbor in LichtfeldAdapter._neighbor_voxel_keys(current):
+                    if neighbor not in voxel_keys or neighbor in visited:
+                        continue
+                    visited.add(neighbor)
+                    stack.append(neighbor)
+            components.append(component)
+        return components
+
+    @staticmethod
+    def _neighbor_voxel_keys(
+        key: tuple[int, int, int],
+    ) -> tuple[tuple[int, int, int], ...]:
+        x, y, z = key
+        return (
+            (x - 1, y, z),
+            (x + 1, y, z),
+            (x, y - 1, z),
+            (x, y + 1, z),
+            (x, y, z - 1),
+            (x, y, z + 1),
+        )
 
     @staticmethod
     def _notify_scene_changed(scene: object) -> bool:

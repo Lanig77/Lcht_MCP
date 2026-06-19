@@ -41,6 +41,7 @@ class RuntimeConfig:
     voxel_min_cluster_size: int = 10
     last_scene_analysis_lines: tuple[str, ...] = ()
     last_cleanup_preview_lines: tuple[str, ...] = ()
+    last_cleanup_preview_summary: dict[str, object] | None = None
 
 
 _runtime_config = RuntimeConfig()
@@ -73,6 +74,11 @@ def set_scene_analysis_report_lines(lines: list[str]) -> None:
 def set_cleanup_preview_report_lines(lines: list[str]) -> None:
     """Store the most recent cleanup preview summary for panel display."""
     _runtime_config.last_cleanup_preview_lines = tuple(lines)
+
+
+def set_cleanup_preview_summary(summary: dict[str, object] | None) -> None:
+    """Store the structured cleanup preview summary for follow-up actions."""
+    _runtime_config.last_cleanup_preview_summary = summary
 
 
 def arm_safe_delete() -> None:

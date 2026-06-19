@@ -891,6 +891,120 @@ def test_preview_cleanup_candidates_generates_report_only_summary_without_scene_
     assert fake_scene._model.apply_deleted_calls == 0
 
 
+def test_soft_delete_cleanup_candidates_refuses_when_no_preview_exists(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(FakeModel(means=FakeTorchTensor([[0.0, 0.0, 0.0]])))
+    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="No cleanup preview is available",
+    ):
+        adapter.soft_delete_cleanup_candidates()
+
+
+def test_soft_delete_cleanup_candidates_refuses_when_preview_is_approximate(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [0.2, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [5.2, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    preview = adapter.preview_cleanup_candidates(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=3,
+    )
+
+    assert preview.approximate is True
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="approximate-only",
+    ):
+        adapter.soft_delete_cleanup_candidates()
+
+
+def test_soft_delete_cleanup_candidates_soft_deletes_without_apply_deleted_and_can_restore(
+    monkeypatch,
+):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            ),
+            opacity=FakeTorchTensor([0.1, 0.2, 0.3, 0.4]),
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    preview = adapter.preview_cleanup_candidates(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+    )
+    deleted = adapter.soft_delete_cleanup_candidates()
+    assert fake_scene._model.apply_deleted_calls == 0
+    restored = adapter.restore_last_delete()
+    stats = adapter.get_stats()
+
+    assert preview.approximate is False
+    assert preview.estimated_affected_splats == 2
+    assert deleted.ok is True
+    assert "Soft-deleted 2 selected splats." in deleted.message
+    assert fake_scene._model.soft_delete_masks == [[False, False, True, True]]
+    assert restored.ok is True
+    assert stats.splat_count == 4
+    assert stats.selected_count == 0
+
+
 def test_get_stats_raises_clear_error_when_no_active_scene_exists(monkeypatch):
     adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
     original_import_module = adapter_module.importlib.import_module

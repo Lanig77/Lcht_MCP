@@ -69,6 +69,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._scene: MockSceneState | None = None
         self._snapshots: list[MockSceneState] = []
         self._history: list[HistoryEntry] = []
+        self._last_cleanup_preview: CleanupCandidateSummary | None = None
 
     def _require_scene(self) -> MockSceneState:
         if self._scene is None:
@@ -121,6 +122,45 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             history_length=len(self._history),
         )
 
+    def preview_cleanup_candidates(
+        self,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        max_splats: int = 25_000,
+        abort_if_above_limit: bool = False,
+    ) -> CleanupCandidateSummary:
+        report = self.analyze_scene(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+            max_splats=max_splats,
+            abort_if_above_limit=abort_if_above_limit,
+        )
+        self._last_cleanup_preview = build_cleanup_candidate_summary(report)
+        return self._last_cleanup_preview
+
+    def soft_delete_cleanup_candidates(self) -> ToolResult:
+        scene = self._require_scene()
+        if self._last_cleanup_preview is None:
+            raise ProjectNotOpenError("No cleanup preview is available. Run Preview Cleanup Candidates first.")
+        if self._last_cleanup_preview.approximate:
+            raise ProjectNotOpenError(
+                "Cleanup preview is approximate-only; no reliable native selection is available."
+            )
+        deleted = min(scene.splat_count, self._last_cleanup_preview.estimated_affected_splats)
+        if deleted <= 0:
+            raise ProjectNotOpenError("Cleanup preview did not identify any reliable cleanup candidates.")
+        self._push_history("soft_delete_cleanup_candidates", {"deleted": deleted})
+        scene.splat_count -= deleted
+        scene.selected_count = 0
+        scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
+        self._last_cleanup_preview = None
+        return ToolResult(
+            message=(
+                f"Soft-deleted {deleted:,} cleanup candidate splats. "
+                "Reversible until apply_deleted() is called."
+            )
+        )
+
     def analyze_scene(
         self,
         voxel_size: float = 0.25,
@@ -150,6 +190,8 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
                     "connected": True,
                     "floating_voxel_groups": 0,
                     "estimated_floating_splats": 0,
+                    "small_voxel_clusters": 0,
+                    "estimated_small_cluster_splats": 0,
                 },
                 recommendations=["No cleanup required."],
             ),
@@ -167,6 +209,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
                     "occupied_voxels": max(1, min(max_splats, scene.splat_count) // max(1, min_voxel_cluster_size)),
                     "density_histogram": {"1": 0, "2-4": 0, "5-9": 0, "10-24": 1, "25+": 0},
                     "sparse_regions": 0,
+                    "estimated_sparse_splats": 0,
                 },
                 recommendations=["Density looks healthy."],
             ),
@@ -219,22 +262,6 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             recommendations=recommendations,
             analysis_time=0.0,
             results=results,
-        )
-
-    def preview_cleanup_candidates(
-        self,
-        voxel_size: float = 0.25,
-        min_voxel_cluster_size: int = 10,
-        max_splats: int = 25_000,
-        abort_if_above_limit: bool = False,
-    ) -> CleanupCandidateSummary:
-        return build_cleanup_candidate_summary(
-            self.analyze_scene(
-                voxel_size=voxel_size,
-                min_voxel_cluster_size=min_voxel_cluster_size,
-                max_splats=max_splats,
-                abort_if_above_limit=abort_if_above_limit,
-            )
         )
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:

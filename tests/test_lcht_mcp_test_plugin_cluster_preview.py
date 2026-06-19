@@ -179,6 +179,7 @@ class FakeClusterPreviewAdapter:
         return CleanupCandidateSummary(
             scene_name="demo_scene",
             project_path="C:/repo/demo_scene.lf",
+            total_splats=1_998_000,
             quality_score=93,
             analysis_time=0.42,
             approximate=True,
@@ -294,3 +295,23 @@ def test_run_preview_cleanup_candidates_returns_actionable_summary(monkeypatch):
         "abort_if_above_limit": False,
     }
     assert runtime_config.snapshot_runtime_config().last_cleanup_preview_lines
+    assert runtime_config.snapshot_runtime_config().last_cleanup_preview_summary == {
+        "scene_name": "demo_scene",
+        "project_path": "C:/repo/demo_scene.lf",
+        "total_splats": 1_998_000,
+        "quality_score": 93,
+        "analysis_time": 0.42,
+        "approximate": True,
+        "report_only": True,
+        "candidate_group_count": 3,
+        "estimated_affected_splats": 512,
+        "floating_voxel_groups": 2,
+        "estimated_floating_splats": 412,
+        "small_voxel_clusters": 1,
+        "estimated_small_cluster_splats": 100,
+        "sparse_regions": 0,
+        "estimated_sparse_splats": 100,
+        "warnings": ["2 floating voxel groups detected."],
+        "recommendations": ["Preview floating islands.", "Estimated cleanup: 1.6%"],
+        "notes": ["Preview report only.", "Approximate sampled preview."],
+    }

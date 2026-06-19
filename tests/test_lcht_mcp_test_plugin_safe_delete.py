@@ -26,6 +26,27 @@ class FakeSafeDeleteAdapter:
         return SimpleNamespace(ok=True, message="Deleted 3 selected splats.")
 
 
+class FakeCleanupPreviewSoftDeleteAdapter:
+    def __init__(self, *, should_raise: bool = False):
+        self.soft_delete_cleanup_candidates_calls = 0
+        self.apply_deleted_calls = 0
+        self.should_raise = should_raise
+
+    def soft_delete_cleanup_candidates(self):
+        self.soft_delete_cleanup_candidates_calls += 1
+        if self.should_raise:
+            raise RuntimeError(
+                "Cleanup preview is approximate-only; no reliable native selection is available."
+            )
+        return SimpleNamespace(
+            ok=True,
+            message=(
+                "Soft-deleted 12 selected splats. "
+                "Reversible until apply_deleted() is called."
+            ),
+        )
+
+
 def test_run_safe_delete_test_skips_post_delete_stats_when_verification_is_disabled(monkeypatch):
     runtime_config, test_runner = _load_runner_modules(monkeypatch)
     runtime_config.arm_safe_delete()
@@ -40,3 +61,65 @@ def test_run_safe_delete_test_skips_post_delete_stats_when_verification_is_disab
     assert success is True
     assert message == "Safe delete validation complete."
     assert fake_adapter.get_stats_calls == 1
+
+
+def test_run_soft_delete_cleanup_preview_refuses_when_no_preview_exists(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.arm_safe_delete()
+    runtime_config.confirm_safe_delete()
+
+    fake_adapter = FakeCleanupPreviewSoftDeleteAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_soft_delete_cleanup_preview()
+
+    assert success is False
+    assert "No cleanup preview is available" in message
+    assert fake_adapter.soft_delete_cleanup_candidates_calls == 0
+    assert fake_adapter.apply_deleted_calls == 0
+
+
+def test_run_soft_delete_cleanup_preview_refuses_when_preview_is_approximate(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.arm_safe_delete()
+    runtime_config.confirm_safe_delete()
+    runtime_config.set_cleanup_preview_summary(
+        {
+            "total_splats": 1_000,
+            "estimated_affected_splats": 12,
+            "approximate": True,
+        }
+    )
+
+    fake_adapter = FakeCleanupPreviewSoftDeleteAdapter(should_raise=True)
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_soft_delete_cleanup_preview()
+
+    assert success is False
+    assert "approximate-only" in message
+    assert fake_adapter.soft_delete_cleanup_candidates_calls == 1
+    assert fake_adapter.apply_deleted_calls == 0
+
+
+def test_run_soft_delete_cleanup_preview_succeeds_without_apply_deleted(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.arm_safe_delete()
+    runtime_config.confirm_safe_delete()
+    runtime_config.set_cleanup_preview_summary(
+        {
+            "total_splats": 1_000,
+            "estimated_affected_splats": 12,
+            "approximate": False,
+        }
+    )
+
+    fake_adapter = FakeCleanupPreviewSoftDeleteAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_soft_delete_cleanup_preview()
+
+    assert success is True
+    assert "Soft-deleted 12 selected splats." in message
+    assert fake_adapter.soft_delete_cleanup_candidates_calls == 1
+    assert fake_adapter.apply_deleted_calls == 0

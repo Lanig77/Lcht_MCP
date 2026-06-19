@@ -61,6 +61,9 @@ class LichtfeldAdapter(ABC):
     ) -> CleanupCandidateSummary: ...
 
     @abstractmethod
+    def soft_delete_cleanup_candidates(self) -> ToolResult: ...
+
+    @abstractmethod
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult: ...
 
     @abstractmethod
