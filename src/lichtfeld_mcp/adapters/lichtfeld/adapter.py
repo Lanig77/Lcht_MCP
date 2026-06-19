@@ -368,11 +368,24 @@ class LichtfeldAdapter(AdapterContract):
                 scene_name=summary.scene_name,
                 project_path=summary.project_path,
                 total_splats=summary.total_splats,
+                analyzed_splats=summary.analyzed_splats,
                 quality_score=summary.quality_score,
                 analysis_time=summary.analysis_time,
                 approximate=summary.approximate,
                 report_only=summary.report_only,
                 candidate_group_count=summary.candidate_group_count,
+                affected_splats_in_sample=sum(selection_mask),
+                estimated_affected_splats_total=sum(selection_mask),
+                affected_percentage_of_sample=(
+                    0.0
+                    if summary.analyzed_splats <= 0
+                    else sum(selection_mask) / summary.analyzed_splats
+                ),
+                estimated_percentage_of_total=(
+                    0.0
+                    if summary.total_splats <= 0
+                    else sum(selection_mask) / summary.total_splats
+                ),
                 estimated_affected_splats=sum(selection_mask),
                 floating_voxel_groups=summary.floating_voxel_groups,
                 estimated_floating_splats=summary.estimated_floating_splats,

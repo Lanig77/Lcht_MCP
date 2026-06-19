@@ -112,5 +112,80 @@ def test_cleanup_candidate_summary_is_generated_from_scene_analysis_report():
     assert summary.approximate is True
     assert summary.candidate_group_count >= 1
     assert summary.estimated_affected_splats >= 1
+    assert summary.analyzed_splats == 6
     assert "Cleanup Candidate Preview" in formatted
+    assert "Analyzed splats: 6" in formatted
+    assert "Affected splats in analyzed sample:" in formatted
+    assert "Estimated affected splats total:" in formatted
+    assert "Affected percentage of sample:" in formatted
+    assert "Estimated percentage of total:" in formatted
     assert "Selection preview: report only" in formatted
+
+
+def test_cleanup_candidate_percentages_are_coherent_for_approximate_reports():
+    engine = build_default_scene_analysis_engine()
+    context = SceneAnalysisContext(
+        scene_name="approx_scene",
+        project_path="C:/data/approx_scene.lf",
+        positions=[
+            (0.0, 0.0, 0.0),
+            (0.1, 0.0, 0.0),
+            (0.2, 0.0, 0.0),
+            (5.0, 5.0, 5.0),
+            (10.0, 0.0, 0.0),
+            (20.0, 0.0, 0.0),
+        ],
+        total_splats=600,
+        analyzed_splats=6,
+        selected_splats=0,
+        deleted_splats=0,
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        approximate=True,
+        sampling_stride=100,
+        used_native_sampling=True,
+        max_splats=25_000,
+    )
+
+    report = engine.analyze(context)
+    summary = build_cleanup_candidate_summary(report)
+
+    assert summary.affected_splats_in_sample == 3
+    assert summary.estimated_affected_splats_total == 300
+    assert summary.affected_percentage_of_sample == 0.5
+    assert summary.estimated_percentage_of_total == 0.5
+    assert "Estimated cleanup in analyzed sample: 50.0%" in summary.recommendations
+    assert "Estimated cleanup extrapolated to full scene: 50.0%" in summary.recommendations
+
+
+def test_scene_analysis_report_displays_unambiguous_cleanup_estimates():
+    engine = build_default_scene_analysis_engine()
+    context = SceneAnalysisContext(
+        scene_name="report_scene",
+        project_path="C:/data/report_scene.lf",
+        positions=[
+            (0.0, 0.0, 0.0),
+            (0.1, 0.0, 0.0),
+            (0.2, 0.0, 0.0),
+            (5.0, 5.0, 5.0),
+        ],
+        total_splats=400,
+        analyzed_splats=4,
+        selected_splats=0,
+        deleted_splats=0,
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        approximate=True,
+        sampling_stride=100,
+        used_native_sampling=True,
+        max_splats=25_000,
+    )
+
+    report = engine.analyze(context)
+    formatted = format_scene_analysis_report(report)
+
+    assert "Affected splats in analyzed sample:" in formatted
+    assert "Estimated affected splats total:" in formatted
+    assert "Affected percentage of sample:" in formatted
+    assert "Estimated percentage of total:" in formatted
+    assert "Estimated cleanup in analyzed sample:" in formatted

@@ -70,11 +70,16 @@ class CleanupCandidateSummary:
     scene_name: str
     project_path: str
     total_splats: int
+    analyzed_splats: int
     quality_score: int
     analysis_time: float
     approximate: bool
     report_only: bool
     candidate_group_count: int
+    affected_splats_in_sample: int
+    estimated_affected_splats_total: int
+    affected_percentage_of_sample: float
+    estimated_percentage_of_total: float
     estimated_affected_splats: int
     floating_voxel_groups: int
     estimated_floating_splats: int
@@ -91,11 +96,16 @@ class CleanupCandidateSummary:
             "scene_name": self.scene_name,
             "project_path": self.project_path,
             "total_splats": self.total_splats,
+            "analyzed_splats": self.analyzed_splats,
             "quality_score": self.quality_score,
             "analysis_time": round(self.analysis_time, 6),
             "approximate": self.approximate,
             "report_only": self.report_only,
             "candidate_group_count": self.candidate_group_count,
+            "affected_splats_in_sample": self.affected_splats_in_sample,
+            "estimated_affected_splats_total": self.estimated_affected_splats_total,
+            "affected_percentage_of_sample": round(self.affected_percentage_of_sample, 6),
+            "estimated_percentage_of_total": round(self.estimated_percentage_of_total, 6),
             "estimated_affected_splats": self.estimated_affected_splats,
             "floating_voxel_groups": self.floating_voxel_groups,
             "estimated_floating_splats": self.estimated_floating_splats,
@@ -219,7 +229,9 @@ class VoxelConnectivityAnalysis(SceneAnalysisModule):
                 severity = AnalysisSeverity.WARNING
                 score_impact = 12
                 summary = "Small floating islands detected."
-            recommendations.append(f"Estimated cleanup: {floating_ratio * 100.0:.1f}%")
+            recommendations.append(
+                f"Estimated cleanup in analyzed sample: {floating_ratio * 100.0:.1f}%"
+            )
         else:
             recommendations.append("No cleanup required.")
 
@@ -392,6 +404,13 @@ class SceneAnalysisEngine:
         )
         if not warnings:
             recommendations = _unique_strings(["Scene is healthy."] + recommendations)
+        cleanup_metrics = _build_cleanup_candidate_metrics(
+            context.positions,
+            voxel_size=context.voxel_size,
+            total_splats=context.total_splats,
+            analyzed_splats=context.analyzed_splats,
+            approximate=context.approximate,
+        )
         quality_score = max(0, min(100, 100 - sum(result.score_impact for result in results)))
         return SceneAnalysisReport(
             scene_stats={
@@ -408,6 +427,10 @@ class SceneAnalysisEngine:
                 "used_native_sampling": context.used_native_sampling,
                 "max_splats": context.max_splats,
                 "aborted": context.aborted,
+                "affected_splats_in_sample": cleanup_metrics["affected_splats_in_sample"],
+                "estimated_affected_splats_total": cleanup_metrics["estimated_affected_splats_total"],
+                "affected_percentage_of_sample": cleanup_metrics["affected_percentage_of_sample"],
+                "estimated_percentage_of_total": cleanup_metrics["estimated_percentage_of_total"],
             },
             quality_score=quality_score,
             warnings=warnings,
@@ -455,6 +478,22 @@ def format_scene_analysis_report(report: SceneAnalysisReport) -> str:
             "Estimated floating splats: "
             f"{_format_int(int(connectivity.details.get('estimated_floating_splats', 0)))}"
         )
+    lines.append(
+        "Affected splats in analyzed sample: "
+        f"{_format_int(int(scene_stats.get('affected_splats_in_sample', 0)))}"
+    )
+    lines.append(
+        "Affected percentage of sample: "
+        f"{float(scene_stats.get('affected_percentage_of_sample', 0.0)) * 100.0:.1f}%"
+    )
+    lines.append(
+        "Estimated affected splats total: "
+        f"{_format_int(int(scene_stats.get('estimated_affected_splats_total', 0)))}"
+    )
+    lines.append(
+        "Estimated percentage of total: "
+        f"{float(scene_stats.get('estimated_percentage_of_total', 0.0)) * 100.0:.1f}%"
+    )
 
     if bounds is not None:
         lines.append(
@@ -504,6 +543,10 @@ def build_cleanup_candidate_summary(
     estimated_sparse_splats = int(
         0 if density is None else density.details.get("estimated_sparse_splats", 0)
     )
+    affected_splats_in_sample = int(scene_stats.get("affected_splats_in_sample", 0))
+    estimated_affected_splats_total = int(scene_stats.get("estimated_affected_splats_total", 0))
+    affected_percentage_of_sample = float(scene_stats.get("affected_percentage_of_sample", 0.0))
+    estimated_percentage_of_total = float(scene_stats.get("estimated_percentage_of_total", 0.0))
 
     notes = ["Preview report only."]
     if bool(scene_stats.get("approximate")):
@@ -516,8 +559,21 @@ def build_cleanup_candidate_summary(
         notes.append("Sparse-region estimates are based on singleton voxels.")
 
     candidate_group_count = floating_voxel_groups + small_voxel_clusters + sparse_regions
-    estimated_affected_splats = estimated_floating_splats + estimated_sparse_splats
-    recommendations = list(report.recommendations)
+    estimated_affected_splats = estimated_affected_splats_total
+    recommendations = [
+        recommendation
+        for recommendation in report.recommendations
+        if not recommendation.startswith("Estimated cleanup ")
+    ]
+    if candidate_group_count > 0:
+        recommendations.append(
+            f"Estimated cleanup in analyzed sample: {affected_percentage_of_sample * 100.0:.1f}%"
+        )
+        if bool(scene_stats.get("approximate")):
+            recommendations.append(
+                "Estimated cleanup extrapolated to full scene: "
+                f"{estimated_percentage_of_total * 100.0:.1f}%"
+            )
     if candidate_group_count == 0 and "No cleanup required." not in recommendations:
         recommendations.append("No cleanup required.")
 
@@ -525,11 +581,16 @@ def build_cleanup_candidate_summary(
         scene_name=str(scene_stats["scene_name"]),
         project_path=str(scene_stats["project_path"]),
         total_splats=int(scene_stats["total_splats"]),
+        analyzed_splats=int(scene_stats["analyzed_splats"]),
         quality_score=report.quality_score,
         analysis_time=report.analysis_time,
         approximate=bool(scene_stats.get("approximate")),
         report_only=True,
         candidate_group_count=candidate_group_count,
+        affected_splats_in_sample=affected_splats_in_sample,
+        estimated_affected_splats_total=estimated_affected_splats_total,
+        affected_percentage_of_sample=affected_percentage_of_sample,
+        estimated_percentage_of_total=estimated_percentage_of_total,
         estimated_affected_splats=estimated_affected_splats,
         floating_voxel_groups=floating_voxel_groups,
         estimated_floating_splats=estimated_floating_splats,
@@ -547,8 +608,16 @@ def format_cleanup_candidate_summary(summary: CleanupCandidateSummary) -> str:
     lines = [
         "Cleanup Candidate Preview",
         f"Quality score context: {summary.quality_score}",
+        f"Total splats: {_format_int(summary.total_splats)}",
+        f"Analyzed splats: {_format_int(summary.analyzed_splats)}",
         f"Candidate groups: {_format_int(summary.candidate_group_count)}",
-        f"Estimated affected splats: {_format_int(summary.estimated_affected_splats)}",
+        f"Affected splats in analyzed sample: {_format_int(summary.affected_splats_in_sample)}",
+        "Affected percentage of sample: "
+        f"{summary.affected_percentage_of_sample * 100.0:.1f}%",
+        "Estimated affected splats total: "
+        f"{_format_int(summary.estimated_affected_splats_total)}",
+        "Estimated percentage of total: "
+        f"{summary.estimated_percentage_of_total * 100.0:.1f}%",
         f"Floating voxel groups: {_format_int(summary.floating_voxel_groups)}",
         f"Estimated floating splats: {_format_int(summary.estimated_floating_splats)}",
         f"Small voxel clusters: {_format_int(summary.small_voxel_clusters)}",
@@ -753,6 +822,94 @@ def _safe_ratio(numerator: int | float, denominator: int | float) -> float:
     if denominator <= 0:
         return 0.0
     return float(numerator) / float(denominator)
+
+
+def _build_cleanup_candidate_metrics(
+    positions: list[tuple[float, float, float]],
+    *,
+    voxel_size: float,
+    total_splats: int,
+    analyzed_splats: int,
+    approximate: bool,
+) -> dict[str, object]:
+    selection_mask = _build_cleanup_candidate_mask(positions, voxel_size=voxel_size)
+    affected_splats_in_sample = sum(selection_mask)
+    affected_percentage_of_sample = _safe_ratio(affected_splats_in_sample, analyzed_splats)
+    if approximate and analyzed_splats > 0:
+        estimated_affected_splats_total = int(round(affected_percentage_of_sample * total_splats))
+    else:
+        estimated_affected_splats_total = affected_splats_in_sample
+    estimated_percentage_of_total = _safe_ratio(estimated_affected_splats_total, total_splats)
+    return {
+        "affected_splats_in_sample": affected_splats_in_sample,
+        "estimated_affected_splats_total": estimated_affected_splats_total,
+        "affected_percentage_of_sample": affected_percentage_of_sample,
+        "estimated_percentage_of_total": estimated_percentage_of_total,
+    }
+
+
+def _build_cleanup_candidate_mask(
+    positions: list[tuple[float, float, float]],
+    *,
+    voxel_size: float,
+) -> list[bool]:
+    if not positions:
+        return []
+
+    voxel_counts = _build_voxel_counts(positions, voxel_size)
+    voxel_keys: list[tuple[int, int, int]] = []
+    for x, y, z in positions:
+        voxel_keys.append(
+            (
+                math.floor(x / voxel_size),
+                math.floor(y / voxel_size),
+                math.floor(z / voxel_size),
+            )
+        )
+
+    components = _collect_voxel_components(set(voxel_counts))
+    if not components:
+        return [False] * len(positions)
+
+    largest_component = max(
+        components,
+        key=lambda keys: (
+            sum(voxel_counts[key] for key in keys),
+            len(keys),
+        ),
+    )
+    floating_keys = {
+        key
+        for keys in components
+        if keys is not largest_component
+        for key in keys
+    }
+    sparse_keys = {key for key, count in voxel_counts.items() if count <= 1}
+    return [key in floating_keys or key in sparse_keys for key in voxel_keys]
+
+
+def _collect_voxel_components(
+    voxel_keys: set[tuple[int, int, int]],
+) -> list[set[tuple[int, int, int]]]:
+    components: list[set[tuple[int, int, int]]] = []
+    visited: set[tuple[int, int, int]] = set()
+
+    for start_key in voxel_keys:
+        if start_key in visited:
+            continue
+        queue: deque[tuple[int, int, int]] = deque([start_key])
+        component: set[tuple[int, int, int]] = set()
+        visited.add(start_key)
+        while queue:
+            current = queue.popleft()
+            component.add(current)
+            for neighbor in _neighbor_keys(current):
+                if neighbor not in voxel_keys or neighbor in visited:
+                    continue
+                visited.add(neighbor)
+                queue.append(neighbor)
+        components.append(component)
+    return components
 
 
 def _unique_strings(values) -> list[str]:

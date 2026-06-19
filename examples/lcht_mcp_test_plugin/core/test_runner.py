@@ -347,7 +347,12 @@ def run_soft_delete_cleanup_preview() -> tuple[bool, str]:
         _log_error(message)
         return False, message
 
-    estimated_affected_splats = int(preview_summary.get("estimated_affected_splats", 0))
+    estimated_affected_splats = int(
+        preview_summary.get(
+            "estimated_affected_splats_total",
+            preview_summary.get("estimated_affected_splats", 0),
+        )
+    )
     total_splats = int(preview_summary.get("total_splats", 0))
     selected_ratio = _selected_percentage(estimated_affected_splats, total_splats)
     _log_info(f"preview_candidate_splats={estimated_affected_splats}")
