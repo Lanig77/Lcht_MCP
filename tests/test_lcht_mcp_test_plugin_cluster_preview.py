@@ -28,6 +28,7 @@ class FakeClusterPreviewAdapter:
         self.open_cleanup_workspace_calls = 0
         self.update_cleanup_workspace_calls = 0
         self.reset_cleanup_workspace_calls = 0
+        self.current_workspace = None
 
     def analyze_clusters_preview(
         self,
@@ -246,13 +247,14 @@ class FakeClusterPreviewAdapter:
             "outlier_distance": outlier_distance,
             "cleanup_aggressiveness": cleanup_aggressiveness,
         }
-        return self._workspace(
+        self.current_workspace = self._workspace(
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
             selected_count=512,
         )
+        return self.current_workspace
 
     def update_cleanup_workspace(
         self,
@@ -269,16 +271,21 @@ class FakeClusterPreviewAdapter:
             "outlier_distance": outlier_distance,
             "cleanup_aggressiveness": cleanup_aggressiveness,
         }
-        return self._workspace(
+        self.current_workspace = self._workspace(
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
             selected_count=640,
         )
+        return self.current_workspace
+
+    def get_cleanup_workspace(self):
+        return self.current_workspace
 
     def reset_cleanup_workspace(self):
         self.reset_cleanup_workspace_calls += 1
+        self.current_workspace = None
         return SimpleNamespace(ok=True, message="Cleanup workspace reset. Native preview selection cleared.")
 
     def _workspace(
@@ -320,6 +327,12 @@ class FakeClusterPreviewAdapter:
                 outlier_distance=outlier_distance,
                 cleanup_aggressiveness=cleanup_aggressiveness,
             ),
+            sampled_rows=((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+            sampled_indices=(0, 100),
+            candidate_selection_mask=(True, False),
+            preview_selected_indices=tuple(range(selected_count)),
+            preview_selection_active=True,
+            native_selection_handle="C:/repo/demo_scene.lf#cleanup-preview",
             selected_count=selected_count,
             selection_percentage=selected_count / 1_998_000,
             selection_mode="replace",
@@ -494,14 +507,20 @@ def test_run_open_cleanup_workspace_returns_interactive_workspace_summary(monkey
         "outlier_distance": 3.0,
         "cleanup_aggressiveness": 0.7,
     }
-    assert runtime_config.snapshot_runtime_config().last_cleanup_workspace_summary is not None
+    assert runtime_config.snapshot_runtime_config().last_cleanup_workspace_lines
 
 
 def test_run_update_cleanup_workspace_reuses_latest_workspace_session(monkeypatch):
     runtime_config, test_runner = _load_runner_modules(monkeypatch)
-    runtime_config.set_cleanup_workspace_summary({"active": True})
     runtime_config.adjust_cleanup_outlier_distance(-0.25)
     fake_adapter = FakeClusterPreviewAdapter()
+    fake_adapter.current_workspace = fake_adapter._workspace(
+        voxel_size=0.25,
+        min_voxel_cluster_size=10,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+        selected_count=512,
+    )
     monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
 
     success, message = test_runner.run_update_cleanup_workspace()
@@ -513,8 +532,14 @@ def test_run_update_cleanup_workspace_reuses_latest_workspace_session(monkeypatc
 
 def test_run_reset_cleanup_workspace_clears_workspace_summary(monkeypatch):
     runtime_config, test_runner = _load_runner_modules(monkeypatch)
-    runtime_config.set_cleanup_workspace_summary({"active": True})
     fake_adapter = FakeClusterPreviewAdapter()
+    fake_adapter.current_workspace = fake_adapter._workspace(
+        voxel_size=0.25,
+        min_voxel_cluster_size=10,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+        selected_count=512,
+    )
     monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
 
     success, message = test_runner.run_reset_cleanup_workspace()
@@ -522,4 +547,4 @@ def test_run_reset_cleanup_workspace_clears_workspace_summary(monkeypatch):
     assert success is True
     assert "Cleanup workspace reset" in message
     assert fake_adapter.reset_cleanup_workspace_calls == 1
-    assert runtime_config.snapshot_runtime_config().last_cleanup_workspace_summary is None
+    assert runtime_config.snapshot_runtime_config().last_cleanup_workspace_lines == ()

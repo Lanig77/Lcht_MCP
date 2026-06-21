@@ -14,7 +14,6 @@ from .runtime_config import (
     set_cleanup_preview_report_lines,
     set_cleanup_preview_summary,
     set_cleanup_workspace_report_lines,
-    set_cleanup_workspace_summary,
     set_scene_analysis_report_lines,
     snapshot_runtime_config,
 )
@@ -125,6 +124,26 @@ def _cleanup_workspace_kwargs(config) -> dict[str, object]:
         "outlier_distance": config.cleanup_outlier_distance,
         "cleanup_aggressiveness": config.cleanup_aggressiveness,
     }
+
+
+def _get_cleanup_workspace(adapter):
+    get_cleanup_workspace = getattr(adapter, "get_cleanup_workspace", None)
+    if not callable(get_cleanup_workspace):
+        return None
+    return get_cleanup_workspace()
+
+
+def _sync_cleanup_workspace_display(adapter) -> None:
+    try:
+        from lichtfeld_mcp.core.cleanup_workspace import format_cleanup_workspace
+    except Exception:
+        set_cleanup_workspace_report_lines([])
+        return
+    workspace = _get_cleanup_workspace(adapter)
+    if workspace is None:
+        set_cleanup_workspace_report_lines([])
+        return
+    set_cleanup_workspace_report_lines(format_cleanup_workspace(workspace).splitlines())
 
 
 def _materialize_sequence(value: object) -> list[object] | None:
@@ -252,7 +271,6 @@ def run_scene_analysis() -> tuple[bool, str]:
     set_cleanup_preview_report_lines([])
     set_cleanup_preview_summary(None)
     set_cleanup_workspace_report_lines([])
-    set_cleanup_workspace_summary(None)
     for line in report_lines:
         _log_info(line)
     _log_info(f"analysis_time_seconds={report.analysis_time:.3f}")
@@ -382,7 +400,6 @@ def run_open_cleanup_workspace() -> tuple[bool, str]:
         message = f"Cleanup workspace adapter setup failed: {exc}"
         _log_error(message)
         set_cleanup_workspace_report_lines([message])
-        set_cleanup_workspace_summary(None)
         return False, message
 
     open_cleanup_workspace = getattr(adapter, "open_cleanup_workspace", None)
@@ -390,7 +407,6 @@ def run_open_cleanup_workspace() -> tuple[bool, str]:
         message = "LichtfeldAdapter does not expose open_cleanup_workspace()."
         _log_error(message)
         set_cleanup_workspace_report_lines([message])
-        set_cleanup_workspace_summary(None)
         return False, message
 
     try:
@@ -399,7 +415,6 @@ def run_open_cleanup_workspace() -> tuple[bool, str]:
         message = f"Cleanup workspace formatter import failed: {exc}"
         _log_error(message)
         set_cleanup_workspace_report_lines([message])
-        set_cleanup_workspace_summary(None)
         return False, message
 
     try:
@@ -408,13 +423,11 @@ def run_open_cleanup_workspace() -> tuple[bool, str]:
         message = f"Cleanup workspace failed: {exc}"
         _log_error(message)
         set_cleanup_workspace_report_lines([message])
-        set_cleanup_workspace_summary(None)
         return False, message
 
     formatted_workspace = format_cleanup_workspace(workspace)
     workspace_lines = formatted_workspace.splitlines()
     set_cleanup_workspace_report_lines(workspace_lines)
-    set_cleanup_workspace_summary(workspace.to_dict())
     set_cleanup_preview_report_lines([])
     set_cleanup_preview_summary(workspace.cleanup_candidate_summary.to_dict())
     for line in workspace_lines:
@@ -467,7 +480,6 @@ def run_update_cleanup_workspace() -> tuple[bool, str]:
     formatted_workspace = format_cleanup_workspace(workspace)
     workspace_lines = formatted_workspace.splitlines()
     set_cleanup_workspace_report_lines(workspace_lines)
-    set_cleanup_workspace_summary(workspace.to_dict())
     set_cleanup_preview_summary(workspace.cleanup_candidate_summary.to_dict())
     for line in workspace_lines:
         _log_info(line)
@@ -502,7 +514,6 @@ def run_reset_cleanup_workspace() -> tuple[bool, str]:
         return False, message
 
     set_cleanup_workspace_report_lines([])
-    set_cleanup_workspace_summary(None)
     set_cleanup_preview_report_lines([])
     set_cleanup_preview_summary(None)
     _log_info(result.message)
@@ -538,21 +549,22 @@ def run_soft_delete_cleanup_selection() -> tuple[bool, str]:
         _log_info(message)
         return True, message
 
-    workspace_summary = config.last_cleanup_workspace_summary
-    if workspace_summary is None:
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup workspace soft delete adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    workspace = _get_cleanup_workspace(adapter)
+    if workspace is None:
         message = "No cleanup workspace is active. Open Cleanup Workspace first."
         _log_error(message)
         return False, message
 
-    selected_count = int(workspace_summary.get("selected_count", 0))
-    total_splats = int(
-        workspace_summary.get(
-            "scene_profile",
-            {},
-        ).get("total_splats", workspace_summary.get("total_splats", 0))
-        if isinstance(workspace_summary.get("scene_profile"), dict)
-        else workspace_summary.get("total_splats", 0)
-    )
+    selected_count = workspace.selected_count
+    total_splats = workspace.scene_profile.total_splats
     selected_ratio = _selected_percentage(selected_count, total_splats)
     _log_info(f"initial_splat_count={total_splats}")
     _log_info(f"selected_count={selected_count}")
@@ -576,14 +588,6 @@ def run_soft_delete_cleanup_selection() -> tuple[bool, str]:
             f"selected_ratio={selected_ratio:.6f} exceeds "
             f"SAFE_DELETE_MAX_RATIO={config.max_deletable_percentage:.6f}."
         )
-        _log_error(message)
-        return False, message
-
-    try:
-        adapter, repository_root = _build_adapter()
-        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
-    except Exception as exc:
-        message = f"Cleanup workspace soft delete adapter setup failed: {exc}"
         _log_error(message)
         return False, message
 
@@ -611,8 +615,7 @@ def run_soft_delete_cleanup_selection() -> tuple[bool, str]:
         "Reversible only. Does not call apply_deleted(). "
         "Use Restore Last Delete to undo."
     )
-    set_cleanup_workspace_report_lines([])
-    set_cleanup_workspace_summary(None)
+    _sync_cleanup_workspace_display(adapter)
     return result.ok, result.message
 
 
@@ -639,6 +642,8 @@ def run_restore_last_delete() -> tuple[bool, str]:
         message = f"Restore last delete failed: {exc}"
         _log_error(message)
         return False, message
+
+    _sync_cleanup_workspace_display(adapter)
 
     _log_info(result.message)
     return result.ok, result.message
@@ -809,6 +814,7 @@ def run_apply_confirmed_cleanup() -> tuple[bool, str]:
         "Permanent cleanup is no longer restorable."
     )
     _log_info(f"confirmed_cleanup_apply ok={result.ok} message={result.message}")
+    _sync_cleanup_workspace_display(adapter)
     return result.ok, result.message
 
 

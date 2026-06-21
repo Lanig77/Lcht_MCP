@@ -49,6 +49,12 @@ class CleanupWorkspace:
     cleanup_candidate_summary: CleanupCandidateSummary
     scene_profile: SceneProfile
     current_cleanup_parameters: CleanupParameters
+    sampled_rows: tuple[tuple[float, float, float], ...]
+    sampled_indices: tuple[int, ...]
+    candidate_selection_mask: tuple[bool, ...]
+    preview_selected_indices: tuple[int, ...]
+    preview_selection_active: bool
+    native_selection_handle: str | None
     selected_count: int
     selection_percentage: float
     selection_mode: str
@@ -64,6 +70,17 @@ class CleanupWorkspace:
             "cleanup_candidate_summary": self.cleanup_candidate_summary.to_dict(),
             "scene_profile": self.scene_profile.to_dict(),
             "current_cleanup_parameters": self.current_cleanup_parameters.to_dict(),
+            "sample_metadata": {
+                "analyzed_splats": len(self.sampled_rows),
+                "sampled_index_count": len(self.sampled_indices),
+                "approximate": self.approximate,
+            },
+            "full_scene_metadata": {
+                "total_splats": self.scene_profile.total_splats,
+                "project_path": self.scene_profile.project_path,
+            },
+            "preview_selection_active": self.preview_selection_active,
+            "native_selection_handle": self.native_selection_handle,
             "selected_count": self.selected_count,
             "selection_percentage": round(self.selection_percentage, 6),
             "selection_mode": self.selection_mode,
@@ -77,12 +94,6 @@ class CleanupWorkspace:
 
 @dataclass(slots=True)
 class CleanupSession:
-    project_path: str
-    scene_analysis_report: SceneAnalysisReport
-    sampled_rows: list[tuple[float, float, float]]
-    sampled_indices: list[int]
-    total_splats: int
-    approximate: bool
     workspace: CleanupWorkspace
 
 
@@ -131,7 +142,8 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
         f"Selection count: {workspace.selected_count:,}",
         f"Selection source: {workspace.selection_source}",
     ]
+    if not workspace.preview_selection_active:
+        lines.append("Selection preview: inactive. Run Update Preview to rebuild it.")
     if workspace.approximate:
         lines.append("Approximate sampled selection preview.")
     return "\n".join(lines)
-

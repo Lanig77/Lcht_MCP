@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter
@@ -197,15 +197,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
         )
-        self._cleanup_workspace_session = CleanupSession(
-            project_path=workspace.scene_profile.project_path,
-            scene_analysis_report=workspace.scene_analysis_report,
-            sampled_rows=[],
-            sampled_indices=[],
-            total_splats=workspace.scene_profile.total_splats,
-            approximate=workspace.approximate,
-            workspace=workspace,
-        )
+        self._cleanup_workspace_session = CleanupSession(workspace=workspace)
         return workspace
 
     def update_cleanup_workspace(
@@ -227,6 +219,11 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._cleanup_workspace_session.workspace = workspace
         return workspace
 
+    def get_cleanup_workspace(self) -> CleanupWorkspace | None:
+        if self._cleanup_workspace_session is None:
+            return None
+        return self._cleanup_workspace_session.workspace
+
     def reset_cleanup_workspace(self) -> ToolResult:
         scene = self._require_scene()
         scene.selected_count = 0
@@ -246,7 +243,16 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         scene.splat_count -= deleted
         scene.selected_count = 0
         scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
-        self._cleanup_workspace_session = None
+        self._cleanup_workspace_session.workspace = replace(
+            self._cleanup_workspace_session.workspace,
+            candidate_selection_mask=(),
+            preview_selected_indices=(),
+            preview_selection_active=False,
+            native_selection_handle=None,
+            selected_count=0,
+            selection_percentage=0.0,
+            selection_source="no active cleanup preview",
+        )
         self._pending_cleanup_apply_count = deleted
         return CleanupSoftDeleteResult(
             soft_deleted_count=deleted,
@@ -475,6 +481,12 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
                 outlier_distance=outlier_distance,
                 cleanup_aggressiveness=cleanup_aggressiveness,
             ),
+            sampled_rows=tuple((0.0, 0.0, 0.0) for _ in range(min(summary.analyzed_splats, 32))),
+            sampled_indices=tuple(range(min(summary.analyzed_splats, 32))),
+            candidate_selection_mask=tuple(True for _ in range(selected_count)),
+            preview_selected_indices=tuple(range(selected_count)),
+            preview_selection_active=True,
+            native_selection_handle=f"{scene.path}#cleanup-preview",
             selected_count=selected_count,
             selection_percentage=selection_percentage,
             selection_mode="replace",

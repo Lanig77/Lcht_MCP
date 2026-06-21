@@ -207,11 +207,13 @@ def _log_runtime_state(action: str) -> None:
 
 
 def _refresh_cleanup_workspace_if_open() -> None:
-    config = snapshot_runtime_config()
-    if config.last_cleanup_workspace_summary is None:
-        return
     try:
-        from ..core.test_runner import run_update_cleanup_workspace
+        from ..core.test_runner import _build_adapter, run_update_cleanup_workspace
+
+        adapter, _ = _build_adapter()
+        get_cleanup_workspace = getattr(adapter, "get_cleanup_workspace", None)
+        if not callable(get_cleanup_workspace) or get_cleanup_workspace() is None:
+            return
 
         success, message = run_update_cleanup_workspace()
         log_fn = lf.log.info if success else lf.log.error
