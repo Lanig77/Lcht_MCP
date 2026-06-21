@@ -57,11 +57,16 @@ The adapter now supports a read-only analysis pipeline that feeds a native clean
 preview workflow:
 
 1. `analyze_scene()` samples or scans scene positions within a bounded execution budget
-2. `preview_cleanup_candidates()` derives a cached cleanup summary from the latest
+2. `open_cleanup_workspace()` creates a workspace session from the latest
    `SceneAnalysisReport`
-3. `preview_cleanup_selection()` clears any existing selection and rebuilds a native
-   LichtFeld selection for the latest cleanup candidates
-4. optional edit steps can later consume that validated selection for soft delete,
+3. `update_cleanup_workspace()` reuses the same sampled analysis inputs while
+   rebuilding the candidate summary and native selection preview from updated
+   cleanup parameters
+4. `reset_cleanup_workspace()` clears the preview selection and invalidates the
+   active workspace session
+5. `preview_cleanup_candidates()` and `preview_cleanup_selection()` remain available
+   as compatibility helpers over the same non-destructive cleanup logic
+6. optional edit steps can later consume that validated selection for soft delete,
    restore, and explicit permanent apply
 
 This keeps analysis, preview, and destructive editing as separate stages.
@@ -88,6 +93,35 @@ Selection sources currently include:
 When the latest analysis is sampled, the preview is explicitly labeled as approximate.
 The selected splats then represent sampled cleanup regions rather than an exact
 full-scene selection.
+
+### Cleanup workspace
+
+The cleanup workspace is the new interactive layer between scene analysis and any
+future delete flow.
+
+It stores:
+
+- the latest `SceneAnalysisReport`
+- the latest `CleanupCandidateSummary`
+- the latest `SceneProfile`
+- the current cleanup parameters
+
+The workspace is invalidated when:
+
+- another scene becomes active
+- `analyze_scene()` is run again
+- the user explicitly resets the workspace
+
+Interactive parameters currently include:
+
+- `voxel_size`
+- `min_voxel_cluster_size`
+- `outlier_distance`
+- `cleanup_aggressiveness`
+
+The adapter rebuilds the selection preview from cached sampled positions whenever
+possible. This avoids recomputing the full analysis on every parameter change and
+keeps the default update path bounded for large scenes.
 
 ## Availability behavior
 
@@ -242,9 +276,11 @@ The current selection flow follows the same lifecycle across implemented selecto
 The cleanup preview flow adds one more non-destructive branch:
 
 1. `analyze_scene()` captures bounded scene analysis metadata
-2. `preview_cleanup_candidates()` caches a cleanup summary without touching the scene
-3. `preview_cleanup_selection()` rebuilds a fresh native selection for inspection only
-4. later edit workflows may choose to reuse that validated selection for soft delete
+2. `open_cleanup_workspace()` caches a workspace session without mutating splats
+3. `update_cleanup_workspace()` refreshes the native preview selection from the
+   cached analysis sample and current parameters
+4. `reset_cleanup_workspace()` clears the preview selection and closes the session
+5. later edit workflows may choose to reuse that validated selection for soft delete
 
 ## No-selection behavior
 
@@ -269,7 +305,7 @@ Cleanup now follows the staged architecture below:
 
 ```text
 Analyze Scene
-  -> Cleanup Candidate Detection
+  -> Cleanup Workspace
   -> Native Selection Preview
   -> Soft Delete
   -> Restore

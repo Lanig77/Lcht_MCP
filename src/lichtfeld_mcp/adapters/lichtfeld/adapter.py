@@ -8,6 +8,12 @@ import math
 from time import perf_counter
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter as AdapterContract
+from lichtfeld_mcp.core.cleanup_workspace import (
+    CleanupParameters,
+    CleanupSession,
+    CleanupWorkspace,
+    build_scene_profile,
+)
 from lichtfeld_mcp.core.cluster_analysis import (
     analyze_clusters,
     clusters_outside_largest,
@@ -24,7 +30,6 @@ from lichtfeld_mcp.core.scene_analysis import (
     CleanupCandidateSummary,
     SceneAnalysisContext,
     SceneAnalysisReport,
-    build_cleanup_candidate_summary,
     build_default_scene_analysis_engine,
 )
 from lichtfeld_mcp.core.validation import normalize_scene_path
@@ -160,6 +165,14 @@ class _CleanupPreviewState:
     approximate: bool
 
 
+@dataclass(slots=True)
+class _CleanupCandidateBuild:
+    summary: CleanupCandidateSummary
+    selection_mask: list[bool]
+    selected_indices: list[int]
+    selection_sources: tuple[str, ...]
+
+
 def _raise_analyze_scene_stage_error(stage: str, exc: Exception) -> None:
     raise AdapterUnavailableError(f"analyze_scene failed at {stage}: {exc}") from exc
 
@@ -177,6 +190,7 @@ class LichtfeldAdapter(AdapterContract):
         self._last_finalized_delete_count = 0
         self._last_scene_analysis: _SceneAnalysisState | None = None
         self._last_cleanup_preview: _CleanupPreviewState | None = None
+        self._cleanup_workspace_session: CleanupSession | None = None
         self._pending_cleanup_apply_project_path: str | None = None
 
     @property
@@ -358,6 +372,7 @@ class LichtfeldAdapter(AdapterContract):
             approximate=approximate,
         )
         self._last_cleanup_preview = None
+        self._cleanup_workspace_session = None
         return report
 
     def preview_cleanup_candidates(
@@ -372,74 +387,33 @@ class LichtfeldAdapter(AdapterContract):
             raise AdapterUnavailableError(
                 "No previous scene analysis is available. Run Analyze Scene first."
             )
-        report = analysis_state.report
-        summary = build_cleanup_candidate_summary(report)
-        selection_mask = self._build_cleanup_candidate_mask(
-            analysis_state.sampled_rows,
-            voxel_size=float(report.scene_stats.get("voxel_size", voxel_size)),
-            min_voxel_cluster_size=int(
-                report.scene_stats.get("min_voxel_cluster_size", min_voxel_cluster_size)
+        build = self._build_cleanup_candidate_preview(
+            analysis_state,
+            CleanupParameters(
+                voxel_size=float(voxel_size),
+                min_voxel_cluster_size=int(min_voxel_cluster_size),
+                outlier_distance=2.5,
+                cleanup_aggressiveness=0.5,
             ),
         )
-        selected_indices = [
-            analysis_state.sampled_indices[index]
-            for index, selected in enumerate(selection_mask)
-            if selected and index < len(analysis_state.sampled_indices)
-        ]
-        selection_sources = self._cleanup_selection_sources(report)
-        if not summary.approximate and not bool(report.scene_stats.get("aborted")):
-            exact_selected_count = sum(selection_mask)
-            summary = CleanupCandidateSummary(
-                scene_name=summary.scene_name,
-                project_path=summary.project_path,
-                total_splats=summary.total_splats,
-                analyzed_splats=summary.analyzed_splats,
-                quality_score=summary.quality_score,
-                analysis_time=summary.analysis_time,
-                approximate=summary.approximate,
-                report_only=summary.report_only,
-                candidate_group_count=summary.candidate_group_count,
-                affected_splats_in_sample=exact_selected_count,
-                estimated_affected_splats_total=exact_selected_count,
-                affected_percentage_of_sample=(
-                    0.0
-                    if summary.analyzed_splats <= 0
-                    else exact_selected_count / summary.analyzed_splats
-                ),
-                estimated_percentage_of_total=(
-                    0.0
-                    if summary.total_splats <= 0
-                    else exact_selected_count / summary.total_splats
-                ),
-                estimated_affected_splats=exact_selected_count,
-                floating_voxel_groups=summary.floating_voxel_groups,
-                estimated_floating_splats=summary.estimated_floating_splats,
-                small_voxel_clusters=summary.small_voxel_clusters,
-                estimated_small_cluster_splats=summary.estimated_small_cluster_splats,
-                sparse_regions=summary.sparse_regions,
-                estimated_sparse_splats=summary.estimated_sparse_splats,
-                warnings=list(summary.warnings),
-                recommendations=list(summary.recommendations),
-                notes=list(summary.notes),
-            )
         self._last_cleanup_preview = _CleanupPreviewState(
-            summary=summary,
-            selection_mask=list(selection_mask),
-            selected_indices=selected_indices,
-            selection_sources=selection_sources,
-            approximate=summary.approximate,
+            summary=build.summary,
+            selection_mask=list(build.selection_mask),
+            selected_indices=list(build.selected_indices),
+            selection_sources=build.selection_sources,
+            approximate=build.summary.approximate,
         )
         logger.info(
             "LichtFeld cleanup preview: candidate_groups=%s estimated_affected_splats=%s "
             "floating_voxel_groups=%s small_voxel_clusters=%s sparse_regions=%s",
-            summary.candidate_group_count,
-            summary.estimated_affected_splats,
-            summary.floating_voxel_groups,
-            summary.small_voxel_clusters,
-            summary.sparse_regions,
+            build.summary.candidate_group_count,
+            build.summary.estimated_affected_splats,
+            build.summary.floating_voxel_groups,
+            build.summary.small_voxel_clusters,
+            build.summary.sparse_regions,
         )
         logger.info("LichtFeld cleanup preview: cached for native selection preview")
-        return summary
+        return build.summary
 
     def preview_cleanup_selection(self) -> CleanupSelectionPreviewResult:
         analysis_state = self._last_scene_analysis
@@ -509,6 +483,81 @@ class LichtfeldAdapter(AdapterContract):
             approximate=approximate,
             message=message,
         )
+
+    def open_cleanup_workspace(
+        self,
+        *,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        outlier_distance: float = 2.5,
+        cleanup_aggressiveness: float = 0.5,
+    ) -> CleanupWorkspace:
+        analysis_state = self._require_cleanup_analysis_state()
+        params = self._normalize_cleanup_parameters(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+            outlier_distance=outlier_distance,
+            cleanup_aggressiveness=cleanup_aggressiveness,
+        )
+        workspace = self._materialize_cleanup_workspace(analysis_state, params)
+        self._cleanup_workspace_session = CleanupSession(
+            project_path=analysis_state.project_path,
+            scene_analysis_report=analysis_state.report,
+            sampled_rows=list(analysis_state.sampled_rows),
+            sampled_indices=list(analysis_state.sampled_indices),
+            total_splats=analysis_state.total_splats,
+            approximate=analysis_state.approximate,
+            workspace=workspace,
+        )
+        return workspace
+
+    def update_cleanup_workspace(
+        self,
+        *,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        outlier_distance: float = 2.5,
+        cleanup_aggressiveness: float = 0.5,
+    ) -> CleanupWorkspace:
+        session = self._cleanup_workspace_session
+        if session is None:
+            raise AdapterUnavailableError("No cleanup workspace is active. Open Cleanup Workspace first.")
+        analysis_state = self._require_cleanup_analysis_state()
+        if analysis_state.project_path != session.project_path:
+            self._cleanup_workspace_session = None
+            self._last_cleanup_preview = None
+            raise AdapterUnavailableError(
+                "Cleanup workspace no longer matches the active scene. Open Cleanup Workspace again."
+            )
+        params = self._normalize_cleanup_parameters(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+            outlier_distance=outlier_distance,
+            cleanup_aggressiveness=cleanup_aggressiveness,
+        )
+        workspace = self._materialize_cleanup_workspace(analysis_state, params)
+        session.scene_analysis_report = analysis_state.report
+        session.sampled_rows = list(analysis_state.sampled_rows)
+        session.sampled_indices = list(analysis_state.sampled_indices)
+        session.total_splats = analysis_state.total_splats
+        session.approximate = analysis_state.approximate
+        session.workspace = workspace
+        return workspace
+
+    def reset_cleanup_workspace(self) -> ToolResult:
+        session = self._cleanup_workspace_session
+        self._cleanup_workspace_session = None
+        self._last_cleanup_preview = None
+        if session is None:
+            return ToolResult(message="Cleanup workspace was already reset.")
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        if get_scene_path(scene) != session.project_path:
+            return ToolResult(message="Cleanup workspace reset after scene change.")
+        self._clear_native_selection_preview(scene, model, lichtfeld_module)
+        logger.info("LichtFeld cleanup workspace reset: selection cleared")
+        return ToolResult(message="Cleanup workspace reset. Native preview selection cleared.")
 
     def soft_delete_cleanup_candidates(self) -> ToolResult:
         preview_state = self._last_cleanup_preview
@@ -1245,6 +1294,134 @@ class LichtfeldAdapter(AdapterContract):
         self._last_delete_count = 0
         self._pending_cleanup_apply_project_path = None
 
+    def _require_cleanup_analysis_state(self) -> _SceneAnalysisState:
+        analysis_state = self._last_scene_analysis
+        if analysis_state is None:
+            raise AdapterUnavailableError(
+                "No previous scene analysis is available. Run Analyze Scene first."
+            )
+        return analysis_state
+
+    @staticmethod
+    def _normalize_cleanup_parameters(
+        *,
+        voxel_size: float,
+        min_voxel_cluster_size: int,
+        outlier_distance: float,
+        cleanup_aggressiveness: float,
+    ) -> CleanupParameters:
+        if voxel_size <= 0.0:
+            raise InvalidParameterError("voxel_size must be strictly positive.")
+        if min_voxel_cluster_size < 1:
+            raise InvalidParameterError("min_voxel_cluster_size must be at least 1.")
+        if outlier_distance <= 0.0:
+            raise InvalidParameterError("outlier_distance must be strictly positive.")
+        if cleanup_aggressiveness < 0.0 or cleanup_aggressiveness > 1.0:
+            raise InvalidParameterError("cleanup_aggressiveness must be between 0.0 and 1.0.")
+        return CleanupParameters(
+            voxel_size=float(voxel_size),
+            min_voxel_cluster_size=int(min_voxel_cluster_size),
+            outlier_distance=float(outlier_distance),
+            cleanup_aggressiveness=float(cleanup_aggressiveness),
+        )
+
+    def _materialize_cleanup_workspace(
+        self,
+        analysis_state: _SceneAnalysisState,
+        params: CleanupParameters,
+    ) -> CleanupWorkspace:
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        scene_path = get_scene_path(scene)
+        if scene_path != analysis_state.project_path:
+            self._cleanup_workspace_session = None
+            self._last_cleanup_preview = None
+            raise AdapterUnavailableError(
+                "Cleanup workspace no longer matches the active scene. Run Analyze Scene again."
+            )
+
+        workspace_start = perf_counter()
+        build = self._build_cleanup_candidate_preview(analysis_state, params)
+        workspace_update_time = _elapsed_seconds(workspace_start)
+
+        selection_start = perf_counter()
+        if build.summary.approximate:
+            self._apply_cleanup_candidate_selection_indices_only(
+                scene,
+                lichtfeld_module,
+                build.selected_indices,
+            )
+        else:
+            self._apply_cleanup_candidate_selection(
+                scene,
+                model,
+                lichtfeld_module,
+                build.selection_mask,
+            )
+        selection_update_time = _elapsed_seconds(selection_start)
+
+        selection_source = ", ".join(build.selection_sources) or "no cleanup candidates"
+        selection_percentage = (
+            0.0
+            if analysis_state.total_splats <= 0
+            else len(build.selected_indices) / analysis_state.total_splats
+        )
+        self._last_cleanup_preview = _CleanupPreviewState(
+            summary=build.summary,
+            selection_mask=list(build.selection_mask),
+            selected_indices=list(build.selected_indices),
+            selection_sources=build.selection_sources,
+            approximate=build.summary.approximate,
+        )
+        workspace = CleanupWorkspace(
+            scene_analysis_report=analysis_state.report,
+            cleanup_candidate_summary=build.summary,
+            scene_profile=build_scene_profile(analysis_state.report),
+            current_cleanup_parameters=params,
+            selected_count=len(build.selected_indices),
+            selection_percentage=selection_percentage,
+            selection_mode="replace",
+            selection_source=selection_source,
+            approximate=build.summary.approximate,
+            workspace_update_time=workspace_update_time,
+            selection_update_time=selection_update_time,
+            estimated_sample_reuse=1.0,
+        )
+        logger.info(
+            "LichtFeld cleanup workspace: workspace_update_time=%.6fs selection_update_time=%.6fs "
+            "estimated_sample_reuse=%.2f selected_count=%s",
+            workspace.workspace_update_time,
+            workspace.selection_update_time,
+            workspace.estimated_sample_reuse,
+            workspace.selected_count,
+        )
+        return workspace
+
+    def _clear_native_selection_preview(
+        self,
+        scene: object,
+        model: object,
+        lichtfeld_module: object,
+    ) -> None:
+        if self._selection.clear_selection_via_scene(scene):
+            self._selection.clear_cache()
+            notify_scene_changed(scene)
+            return
+        if self._selection.deselect_all(lichtfeld_module):
+            self._selection.clear_cache()
+            notify_scene_changed(scene)
+            return
+        expected_length = len(extract_position_rows(model))
+        self._selection.clear_scene_selection_mask(
+            scene,
+            expected_length,
+            lichtfeld_module,
+            model=model,
+        )
+        self._selection.clear_cache()
+        notify_scene_changed(scene)
+
     @staticmethod
     def _read_splat_count_without_selection(
         model: object,
@@ -1306,28 +1483,107 @@ class LichtfeldAdapter(AdapterContract):
         self._selection.clear_cache()
         notify_scene_changed(scene)
 
-    @staticmethod
-    def _cleanup_selection_sources(report: SceneAnalysisReport) -> tuple[str, ...]:
-        sources: list[str] = []
-        connectivity = next(
-            (result for result in report.results if result.name == "voxel_connectivity"),
-            None,
+    def _build_cleanup_candidate_preview(
+        self,
+        analysis_state: _SceneAnalysisState,
+        params: CleanupParameters,
+    ) -> _CleanupCandidateBuild:
+        report = analysis_state.report
+        position_rows = analysis_state.sampled_rows
+        (
+            selection_mask,
+            selection_sources,
+            floating_groups,
+            estimated_floating_splats,
+            small_voxel_clusters,
+            estimated_small_cluster_splats,
+            sparse_regions,
+            estimated_sparse_splats,
+        ) = self._build_cleanup_candidate_mask(
+            position_rows,
+            voxel_size=params.voxel_size,
+            min_voxel_cluster_size=params.min_voxel_cluster_size,
+            outlier_distance=params.outlier_distance,
+            cleanup_aggressiveness=params.cleanup_aggressiveness,
         )
-        bounds = next((result for result in report.results if result.name == "bounding_box"), None)
-        density = next((result for result in report.results if result.name == "density"), None)
-
-        if connectivity is not None and int(connectivity.details.get("floating_voxel_groups", 0)) > 0:
-            sources.extend(["floating voxel clusters", "disconnected clusters"])
-        if bounds is not None and int(bounds.details.get("distant_splats", 0)) > 0:
-            sources.append("distant outliers")
-        if density is not None and int(density.details.get("estimated_sparse_splats", 0)) > 0:
-            sources.append("sparse singleton regions")
-
-        unique_sources: list[str] = []
-        for source in sources:
-            if source not in unique_sources:
-                unique_sources.append(source)
-        return tuple(unique_sources)
+        selected_indices = [
+            analysis_state.sampled_indices[index]
+            for index, selected in enumerate(selection_mask)
+            if selected and index < len(analysis_state.sampled_indices)
+        ]
+        affected_splats_in_sample = sum(selection_mask)
+        total_splats = int(report.scene_stats.get("total_splats", analysis_state.total_splats))
+        analyzed_splats = int(report.scene_stats.get("analyzed_splats", len(position_rows)))
+        approximate = bool(report.scene_stats.get("approximate", analysis_state.approximate))
+        affected_percentage_of_sample = (
+            0.0 if analyzed_splats <= 0 else affected_splats_in_sample / analyzed_splats
+        )
+        estimated_affected_splats_total = (
+            int(round(affected_percentage_of_sample * total_splats))
+            if approximate
+            else affected_splats_in_sample
+        )
+        estimated_percentage_of_total = (
+            0.0 if total_splats <= 0 else estimated_affected_splats_total / total_splats
+        )
+        warnings: list[str] = []
+        recommendations: list[str] = []
+        notes = ["Workspace selection preview.", "Scene remains unchanged."]
+        if approximate:
+            notes.append("Approximate sampled preview.")
+        if floating_groups > 0:
+            warnings.append(f"{floating_groups} floating voxel groups detected.")
+            recommendations.append("Preview floating islands.")
+        if "distant outliers" in selection_sources:
+            warnings.append("Distant outliers detected.")
+            recommendations.append("Inspect distant outliers before cleanup.")
+        if "sparse singleton regions" in selection_sources:
+            recommendations.append("Scene appears sparse.")
+        if estimated_affected_splats_total <= 0:
+            recommendations.append("No cleanup required.")
+        else:
+            recommendations.append(
+                f"Estimated cleanup in analyzed sample: {affected_percentage_of_sample * 100.0:.1f}%"
+            )
+            if approximate:
+                recommendations.append(
+                    f"Estimated cleanup extrapolated to full scene: {estimated_percentage_of_total * 100.0:.1f}%"
+                )
+        summary = CleanupCandidateSummary(
+            scene_name=str(report.scene_stats.get("scene_name", "unknown_scene")),
+            project_path=str(report.scene_stats.get("project_path", analysis_state.project_path)),
+            total_splats=total_splats,
+            analyzed_splats=analyzed_splats,
+            quality_score=report.quality_score,
+            analysis_time=report.analysis_time,
+            approximate=approximate,
+            report_only=True,
+            candidate_group_count=(
+                floating_groups
+                + sparse_regions
+                + (1 if "distant outliers" in selection_sources else 0)
+            ),
+            affected_splats_in_sample=affected_splats_in_sample,
+            estimated_affected_splats_total=estimated_affected_splats_total,
+            affected_percentage_of_sample=affected_percentage_of_sample,
+            estimated_percentage_of_total=estimated_percentage_of_total,
+            estimated_affected_splats=estimated_affected_splats_total,
+            floating_voxel_groups=floating_groups,
+            estimated_floating_splats=estimated_floating_splats,
+            small_voxel_clusters=small_voxel_clusters,
+            estimated_small_cluster_splats=estimated_small_cluster_splats,
+            sparse_regions=sparse_regions,
+            estimated_sparse_splats=estimated_sparse_splats,
+            warnings=warnings,
+            recommendations=recommendations,
+            notes=notes,
+        )
+        return _CleanupCandidateBuild(
+            summary=summary,
+            selection_mask=selection_mask,
+            selected_indices=selected_indices,
+            selection_sources=selection_sources,
+        )
 
     @staticmethod
     def _build_cleanup_candidate_mask(
@@ -1335,9 +1591,11 @@ class LichtfeldAdapter(AdapterContract):
         *,
         voxel_size: float,
         min_voxel_cluster_size: int,
-    ) -> list[bool]:
+        outlier_distance: float,
+        cleanup_aggressiveness: float,
+    ) -> tuple[list[bool], tuple[str, ...], int, int, int, int, int, int]:
         if not position_rows:
-            return []
+            return [], (), 0, 0, 0, 0, 0, 0
 
         voxel_counts: dict[tuple[int, int, int], int] = {}
         voxel_keys: list[tuple[int, int, int]] = []
@@ -1352,7 +1610,7 @@ class LichtfeldAdapter(AdapterContract):
 
         components = LichtfeldAdapter._collect_voxel_components(set(voxel_counts))
         if not components:
-            return [False] * len(position_rows)
+            return [False] * len(position_rows), (), 0, 0, 0, 0, 0, 0
 
         largest_component = max(
             components,
@@ -1361,23 +1619,70 @@ class LichtfeldAdapter(AdapterContract):
                 len(keys),
             ),
         )
+        floating_components = [keys for keys in components if keys is not largest_component]
         floating_keys = {
             key
-            for keys in components
-            if keys is not largest_component
+            for keys in floating_components
             for key in keys
         }
-        sparse_keys = {key for key, count in voxel_counts.items() if count <= 1}
-        distant_flags = LichtfeldAdapter._distant_outlier_flags(position_rows, voxel_size)
-        return [
-            (key in floating_keys or key in sparse_keys or distant_flags[index])
+        sparse_threshold = 1 if cleanup_aggressiveness < 0.75 else 2
+        sparse_keys = {
+            key
+            for key, count in voxel_counts.items()
+            if count <= sparse_threshold and cleanup_aggressiveness >= 0.35
+        }
+        sparse_selected_flags = [key in sparse_keys for key in voxel_keys]
+        distant_flags = LichtfeldAdapter._distant_outlier_flags(
+            position_rows,
+            voxel_size=voxel_size,
+            outlier_distance=outlier_distance,
+            cleanup_aggressiveness=cleanup_aggressiveness,
+        )
+        selection_mask = [
+            (key in floating_keys or sparse_selected_flags[index] or distant_flags[index])
             for index, key in enumerate(voxel_keys)
         ]
+        sources: list[str] = []
+        if floating_keys:
+            sources.extend(["floating voxel clusters", "disconnected clusters"])
+        if any(distant_flags):
+            sources.append("distant outliers")
+        if any(sparse_selected_flags):
+            sources.append("sparse singleton regions")
+        small_voxel_clusters = sum(
+            1
+            for keys in floating_components
+            if len(keys) < max(1, min_voxel_cluster_size)
+        )
+        estimated_small_cluster_splats = sum(
+            voxel_counts[key]
+            for keys in floating_components
+            if len(keys) < max(1, min_voxel_cluster_size)
+            for key in keys
+        )
+        estimated_floating_splats = sum(voxel_counts[key] for key in floating_keys)
+        sparse_regions = len(sparse_keys)
+        estimated_sparse_splats = sum(
+            1 for selected in sparse_selected_flags if selected
+        )
+        return (
+            selection_mask,
+            tuple(dict.fromkeys(sources)),
+            len(floating_components),
+            estimated_floating_splats,
+            small_voxel_clusters,
+            estimated_small_cluster_splats,
+            sparse_regions,
+            estimated_sparse_splats,
+        )
 
     @staticmethod
     def _distant_outlier_flags(
         position_rows: list[tuple[float, float, float]],
+        *,
         voxel_size: float,
+        outlier_distance: float,
+        cleanup_aggressiveness: float,
     ) -> list[bool]:
         if len(position_rows) < 5:
             return [False] * len(position_rows)
@@ -1390,7 +1695,10 @@ class LichtfeldAdapter(AdapterContract):
             low = LichtfeldAdapter._percentile(values, 0.05)
             high = LichtfeldAdapter._percentile(values, 0.95)
             robust_span = max(high - low, voxel_size * 4.0, 1.0)
-            margin = robust_span * 2.5
+            margin = max(
+                outlier_distance,
+                robust_span * max(0.5, 1.5 - cleanup_aggressiveness),
+            )
             bounds.append((low - margin, high + margin))
 
         flags: list[bool] = []

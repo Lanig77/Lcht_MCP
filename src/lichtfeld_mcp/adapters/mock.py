@@ -13,6 +13,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter
+from lichtfeld_mcp.core.cleanup_workspace import (
+    CleanupParameters,
+    CleanupSession,
+    CleanupWorkspace,
+    build_scene_profile,
+)
 from lichtfeld_mcp.core.constraints import validate_selection_mode
 from lichtfeld_mcp.core.scene_analysis import (
     AnalysisResult,
@@ -72,6 +78,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._history: list[HistoryEntry] = []
         self._last_scene_analysis: SceneAnalysisReport | None = None
         self._last_cleanup_preview: CleanupCandidateSummary | None = None
+        self._cleanup_workspace_session: CleanupSession | None = None
         self._pending_cleanup_apply_count = 0
 
     def _require_scene(self) -> MockSceneState:
@@ -94,6 +101,9 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._scene = MockSceneState(path=normalized, name=name, splat_count=splats, file_size_mb=size)
         self._snapshots.clear()
         self._history.clear()
+        self._last_scene_analysis = None
+        self._last_cleanup_preview = None
+        self._cleanup_workspace_session = None
         self._push_history("open_project", {"path": normalized})
         return ProjectInfo(path=normalized, name=name, splat_count=splats, selected_count=0)
 
@@ -107,6 +117,9 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         name = scene.name
         self._push_history("close_project", {"name": name})
         self._scene = None
+        self._last_scene_analysis = None
+        self._last_cleanup_preview = None
+        self._cleanup_workspace_session = None
         return ToolResult(message=f"Project closed: {name}")
 
     def get_scene_stats(self) -> SceneStats:
@@ -168,6 +181,57 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
                 else "Exact cleanup selection preview."
             ),
         )
+
+    def open_cleanup_workspace(
+        self,
+        *,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        outlier_distance: float = 2.5,
+        cleanup_aggressiveness: float = 0.5,
+    ) -> CleanupWorkspace:
+        workspace = self._build_cleanup_workspace(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+            outlier_distance=outlier_distance,
+            cleanup_aggressiveness=cleanup_aggressiveness,
+        )
+        self._cleanup_workspace_session = CleanupSession(
+            project_path=workspace.scene_profile.project_path,
+            scene_analysis_report=workspace.scene_analysis_report,
+            sampled_rows=[],
+            sampled_indices=[],
+            total_splats=workspace.scene_profile.total_splats,
+            approximate=workspace.approximate,
+            workspace=workspace,
+        )
+        return workspace
+
+    def update_cleanup_workspace(
+        self,
+        *,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        outlier_distance: float = 2.5,
+        cleanup_aggressiveness: float = 0.5,
+    ) -> CleanupWorkspace:
+        if self._cleanup_workspace_session is None:
+            raise ProjectNotOpenError("No cleanup workspace is active. Open Cleanup Workspace first.")
+        workspace = self._build_cleanup_workspace(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+            outlier_distance=outlier_distance,
+            cleanup_aggressiveness=cleanup_aggressiveness,
+        )
+        self._cleanup_workspace_session.workspace = workspace
+        return workspace
+
+    def reset_cleanup_workspace(self) -> ToolResult:
+        scene = self._require_scene()
+        scene.selected_count = 0
+        self._cleanup_workspace_session = None
+        self._last_cleanup_preview = None
+        return ToolResult(message="Cleanup workspace reset. Native preview selection cleared.")
 
     def soft_delete_cleanup_candidates(self) -> ToolResult:
         scene = self._require_scene()
@@ -312,7 +376,88 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             results=results,
         )
         self._last_scene_analysis = report
+        self._cleanup_workspace_session = None
         return report
+
+    def _build_cleanup_workspace(
+        self,
+        *,
+        voxel_size: float,
+        min_voxel_cluster_size: int,
+        outlier_distance: float,
+        cleanup_aggressiveness: float,
+    ) -> CleanupWorkspace:
+        scene = self._require_scene()
+        if self._last_scene_analysis is None:
+            raise ProjectNotOpenError("No previous scene analysis is available. Run Analyze Scene first.")
+        summary = build_cleanup_candidate_summary(self._last_scene_analysis)
+        estimated_total = max(
+            0,
+            min(
+                scene.splat_count,
+                int(round(summary.estimated_affected_splats_total * (0.5 + cleanup_aggressiveness))),
+            ),
+        )
+        selected_count = (
+            max(0, min(scene.splat_count, estimated_total // 4))
+            if summary.approximate
+            else estimated_total
+        )
+        scene.selected_count = selected_count
+        selection_percentage = 0.0 if scene.splat_count <= 0 else selected_count / scene.splat_count
+        selection_source_parts = ["floating voxel clusters", "disconnected clusters"]
+        if cleanup_aggressiveness >= 0.5:
+            selection_source_parts.append("sparse singleton regions")
+        if outlier_distance <= 2.5:
+            selection_source_parts.append("distant outliers")
+        selection_source = ", ".join(selection_source_parts)
+        summary = CleanupCandidateSummary(
+            scene_name=summary.scene_name,
+            project_path=summary.project_path,
+            total_splats=summary.total_splats,
+            analyzed_splats=summary.analyzed_splats,
+            quality_score=summary.quality_score,
+            analysis_time=summary.analysis_time,
+            approximate=summary.approximate,
+            report_only=True,
+            candidate_group_count=summary.candidate_group_count,
+            affected_splats_in_sample=max(summary.affected_splats_in_sample, selected_count),
+            estimated_affected_splats_total=max(summary.estimated_affected_splats_total, estimated_total),
+            affected_percentage_of_sample=summary.affected_percentage_of_sample,
+            estimated_percentage_of_total=(
+                0.0 if scene.splat_count <= 0 else estimated_total / scene.splat_count
+            ),
+            estimated_affected_splats=max(summary.estimated_affected_splats, estimated_total),
+            floating_voxel_groups=summary.floating_voxel_groups,
+            estimated_floating_splats=summary.estimated_floating_splats,
+            small_voxel_clusters=summary.small_voxel_clusters,
+            estimated_small_cluster_splats=summary.estimated_small_cluster_splats,
+            sparse_regions=summary.sparse_regions,
+            estimated_sparse_splats=summary.estimated_sparse_splats,
+            warnings=list(summary.warnings),
+            recommendations=list(summary.recommendations),
+            notes=list(summary.notes) + ["Workspace selection preview."],
+        )
+        self._last_cleanup_preview = summary
+        return CleanupWorkspace(
+            scene_analysis_report=self._last_scene_analysis,
+            cleanup_candidate_summary=summary,
+            scene_profile=build_scene_profile(self._last_scene_analysis),
+            current_cleanup_parameters=CleanupParameters(
+                voxel_size=voxel_size,
+                min_voxel_cluster_size=min_voxel_cluster_size,
+                outlier_distance=outlier_distance,
+                cleanup_aggressiveness=cleanup_aggressiveness,
+            ),
+            selected_count=selected_count,
+            selection_percentage=selection_percentage,
+            selection_mode="replace",
+            selection_source=selection_source,
+            approximate=summary.approximate,
+            workspace_update_time=0.01,
+            selection_update_time=0.01,
+            estimated_sample_reuse=1.0,
+        )
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:
         scene = self._require_scene()

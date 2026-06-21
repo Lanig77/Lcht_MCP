@@ -7,7 +7,10 @@ import lichtfeld as lf
 from .operators.analyze_scene import LCHTMCP_OT_analyze_scene
 from .operators.analyze_clusters import LCHTMCP_OT_analyze_clusters
 from .operators.analyze_voxel_clusters import LCHTMCP_OT_analyze_voxel_clusters
+from .operators.open_cleanup_workspace import LCHTMCP_OT_open_cleanup_workspace
 from .operators.preview_cleanup_candidates import LCHTMCP_OT_preview_cleanup_candidates
+from .operators.reset_cleanup_workspace import LCHTMCP_OT_reset_cleanup_workspace
+from .operators.update_cleanup_workspace import LCHTMCP_OT_update_cleanup_workspace
 from .operators.apply_confirmed_cleanup import LCHTMCP_OT_apply_confirmed_cleanup
 from .operators.soft_delete_cleanup_preview import LCHTMCP_OT_soft_delete_cleanup_preview
 from .panels.test_panel import LchtMcpTestPanel
@@ -15,6 +18,10 @@ from .operators.diagnose_api import LCHTMCP_OT_diagnose_api
 from .operators.diagnose_native_selection import LCHTMCP_OT_diagnose_native_selection
 from .operators.diagnose_tensor_mask import LCHTMCP_OT_diagnose_tensor_mask
 from .operators.runtime_controls import (
+    LCHTMCP_OT_cleanup_aggressiveness_down,
+    LCHTMCP_OT_cleanup_aggressiveness_up,
+    LCHTMCP_OT_cleanup_outlier_distance_down,
+    LCHTMCP_OT_cleanup_outlier_distance_up,
     LCHTMCP_OT_cluster_distance_down,
     LCHTMCP_OT_cluster_distance_up,
     LCHTMCP_OT_cluster_min_size_down,
@@ -56,6 +63,9 @@ _classes = [
     LCHTMCP_OT_analyze_clusters,
     LCHTMCP_OT_analyze_voxel_clusters,
     LCHTMCP_OT_preview_cleanup_candidates,
+    LCHTMCP_OT_open_cleanup_workspace,
+    LCHTMCP_OT_update_cleanup_workspace,
+    LCHTMCP_OT_reset_cleanup_workspace,
     LCHTMCP_OT_apply_confirmed_cleanup,
     LCHTMCP_OT_soft_delete_cleanup_preview,
     LCHTMCP_OT_arm_safe_delete,
@@ -81,6 +91,10 @@ _classes = [
     LCHTMCP_OT_max_deletable_percentage_up,
     LCHTMCP_OT_cluster_distance_down,
     LCHTMCP_OT_cluster_distance_up,
+    LCHTMCP_OT_cleanup_outlier_distance_down,
+    LCHTMCP_OT_cleanup_outlier_distance_up,
+    LCHTMCP_OT_cleanup_aggressiveness_down,
+    LCHTMCP_OT_cleanup_aggressiveness_up,
     LCHTMCP_OT_cluster_min_size_down,
     LCHTMCP_OT_cluster_min_size_up,
     LCHTMCP_OT_max_cluster_analysis_splats_down,

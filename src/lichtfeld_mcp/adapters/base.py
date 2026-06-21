@@ -10,6 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from lichtfeld_mcp.core.cleanup_workspace import CleanupWorkspace
 from lichtfeld_mcp.schemas.common import (
     Box3D,
     CleanupSelectionPreviewResult,
@@ -63,6 +64,29 @@ class LichtfeldAdapter(ABC):
 
     @abstractmethod
     def preview_cleanup_selection(self) -> CleanupSelectionPreviewResult: ...
+
+    @abstractmethod
+    def open_cleanup_workspace(
+        self,
+        *,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        outlier_distance: float = 2.5,
+        cleanup_aggressiveness: float = 0.5,
+    ) -> CleanupWorkspace: ...
+
+    @abstractmethod
+    def update_cleanup_workspace(
+        self,
+        *,
+        voxel_size: float = 0.25,
+        min_voxel_cluster_size: int = 10,
+        outlier_distance: float = 2.5,
+        cleanup_aggressiveness: float = 0.5,
+    ) -> CleanupWorkspace: ...
+
+    @abstractmethod
+    def reset_cleanup_workspace(self) -> ToolResult: ...
 
     @abstractmethod
     def soft_delete_cleanup_candidates(self) -> ToolResult: ...

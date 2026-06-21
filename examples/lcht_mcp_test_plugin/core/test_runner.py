@@ -13,6 +13,8 @@ import lichtfeld as lf
 from .runtime_config import (
     set_cleanup_preview_report_lines,
     set_cleanup_preview_summary,
+    set_cleanup_workspace_report_lines,
+    set_cleanup_workspace_summary,
     set_scene_analysis_report_lines,
     snapshot_runtime_config,
 )
@@ -114,6 +116,15 @@ def _selected_percentage(selected_count: int, total_splats: int) -> float:
     if total_splats <= 0:
         return 0.0
     return selected_count / total_splats
+
+
+def _cleanup_workspace_kwargs(config) -> dict[str, object]:
+    return {
+        "voxel_size": config.voxel_size,
+        "min_voxel_cluster_size": config.voxel_min_cluster_size,
+        "outlier_distance": config.cleanup_outlier_distance,
+        "cleanup_aggressiveness": config.cleanup_aggressiveness,
+    }
 
 
 def _materialize_sequence(value: object) -> list[object] | None:
@@ -238,6 +249,10 @@ def run_scene_analysis() -> tuple[bool, str]:
     formatted_report = format_scene_analysis_report(report)
     report_lines = formatted_report.splitlines()
     set_scene_analysis_report_lines(report_lines)
+    set_cleanup_preview_report_lines([])
+    set_cleanup_preview_summary(None)
+    set_cleanup_workspace_report_lines([])
+    set_cleanup_workspace_summary(None)
     for line in report_lines:
         _log_info(line)
     _log_info(f"analysis_time_seconds={report.analysis_time:.3f}")
@@ -347,6 +362,151 @@ def run_preview_cleanup_selection() -> tuple[bool, str]:
     _log_info(f"selection approximation={'approximate' if result.approximate else 'exact'}")
     _log_info(result.message)
     return True, result.message
+
+
+def run_open_cleanup_workspace() -> tuple[bool, str]:
+    """Open an interactive cleanup workspace and build the first native preview."""
+    config = snapshot_runtime_config()
+    _log_info(
+        "Opening cleanup workspace with "
+        f"voxel_size={config.voxel_size:.4f}, "
+        f"min_voxel_cluster_size={config.voxel_min_cluster_size}, "
+        f"outlier_distance={config.cleanup_outlier_distance:.4f}, "
+        f"cleanup_aggressiveness={config.cleanup_aggressiveness:.4f}."
+    )
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup workspace adapter setup failed: {exc}"
+        _log_error(message)
+        set_cleanup_workspace_report_lines([message])
+        set_cleanup_workspace_summary(None)
+        return False, message
+
+    open_cleanup_workspace = getattr(adapter, "open_cleanup_workspace", None)
+    if not callable(open_cleanup_workspace):
+        message = "LichtfeldAdapter does not expose open_cleanup_workspace()."
+        _log_error(message)
+        set_cleanup_workspace_report_lines([message])
+        set_cleanup_workspace_summary(None)
+        return False, message
+
+    try:
+        from lichtfeld_mcp.core.cleanup_workspace import format_cleanup_workspace
+    except Exception as exc:
+        message = f"Cleanup workspace formatter import failed: {exc}"
+        _log_error(message)
+        set_cleanup_workspace_report_lines([message])
+        set_cleanup_workspace_summary(None)
+        return False, message
+
+    try:
+        workspace = open_cleanup_workspace(**_cleanup_workspace_kwargs(config))
+    except Exception as exc:
+        message = f"Cleanup workspace failed: {exc}"
+        _log_error(message)
+        set_cleanup_workspace_report_lines([message])
+        set_cleanup_workspace_summary(None)
+        return False, message
+
+    formatted_workspace = format_cleanup_workspace(workspace)
+    workspace_lines = formatted_workspace.splitlines()
+    set_cleanup_workspace_report_lines(workspace_lines)
+    set_cleanup_workspace_summary(workspace.to_dict())
+    set_cleanup_preview_report_lines([])
+    set_cleanup_preview_summary(workspace.cleanup_candidate_summary.to_dict())
+    for line in workspace_lines:
+        _log_info(line)
+    _log_info(f"workspace_update_time={workspace.workspace_update_time:.6f}")
+    _log_info(f"selection_update_time={workspace.selection_update_time:.6f}")
+    _log_info(f"estimated_sample_reuse={workspace.estimated_sample_reuse:.2f}")
+    return True, "Cleanup workspace opened."
+
+
+def run_update_cleanup_workspace() -> tuple[bool, str]:
+    """Refresh the cleanup workspace preview from the latest sampled analysis."""
+    config = snapshot_runtime_config()
+    _log_info(
+        "Updating cleanup workspace with "
+        f"voxel_size={config.voxel_size:.4f}, "
+        f"min_voxel_cluster_size={config.voxel_min_cluster_size}, "
+        f"outlier_distance={config.cleanup_outlier_distance:.4f}, "
+        f"cleanup_aggressiveness={config.cleanup_aggressiveness:.4f}."
+    )
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup workspace adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    update_cleanup_workspace = getattr(adapter, "update_cleanup_workspace", None)
+    if not callable(update_cleanup_workspace):
+        message = "LichtfeldAdapter does not expose update_cleanup_workspace()."
+        _log_error(message)
+        return False, message
+
+    try:
+        from lichtfeld_mcp.core.cleanup_workspace import format_cleanup_workspace
+    except Exception as exc:
+        message = f"Cleanup workspace formatter import failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    try:
+        workspace = update_cleanup_workspace(**_cleanup_workspace_kwargs(config))
+    except Exception as exc:
+        message = f"Cleanup workspace update failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    formatted_workspace = format_cleanup_workspace(workspace)
+    workspace_lines = formatted_workspace.splitlines()
+    set_cleanup_workspace_report_lines(workspace_lines)
+    set_cleanup_workspace_summary(workspace.to_dict())
+    set_cleanup_preview_summary(workspace.cleanup_candidate_summary.to_dict())
+    for line in workspace_lines:
+        _log_info(line)
+    _log_info(f"workspace_update_time={workspace.workspace_update_time:.6f}")
+    _log_info(f"selection_update_time={workspace.selection_update_time:.6f}")
+    _log_info(f"estimated_sample_reuse={workspace.estimated_sample_reuse:.2f}")
+    return True, "Cleanup workspace updated."
+
+
+def run_reset_cleanup_workspace() -> tuple[bool, str]:
+    """Clear the native cleanup preview selection and invalidate the active workspace."""
+    _log_info("Resetting cleanup workspace preview.")
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup workspace adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    reset_cleanup_workspace = getattr(adapter, "reset_cleanup_workspace", None)
+    if not callable(reset_cleanup_workspace):
+        message = "LichtfeldAdapter does not expose reset_cleanup_workspace()."
+        _log_error(message)
+        return False, message
+
+    try:
+        result = reset_cleanup_workspace()
+    except Exception as exc:
+        message = f"Cleanup workspace reset failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    set_cleanup_workspace_report_lines([])
+    set_cleanup_workspace_summary(None)
+    set_cleanup_preview_report_lines([])
+    set_cleanup_preview_summary(None)
+    _log_info(result.message)
+    return result.ok, result.message
 
 
 def run_soft_delete_cleanup_preview() -> tuple[bool, str]:

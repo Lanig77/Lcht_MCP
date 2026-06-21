@@ -164,6 +164,25 @@ Soft delete
 
 Restore or Apply Deleted
 
+### Cleanup workspace session reuse
+
+Interactive cleanup tuning must prefer session reuse over full recomputation.
+
+Rules:
+
+- `Open Cleanup Workspace` should reuse the latest `SceneAnalysisReport`.
+- parameter changes should rebuild the cleanup preview from the latest sampled
+  analysis whenever possible.
+- selection generation should scale with the analyzed sample, not with full-scene
+  Python materialization.
+- the UI must clearly report whether the workspace is operating in approximate or
+  exact mode.
+- resetting the workspace must clear preview selection state without modifying the
+  scene.
+
+This keeps parameter iteration interactive on `1M-10M` scenes while preserving the
+future path toward heavier exact or native implementations.
+
 ## Complexity expectations
 
 Every future analysis algorithm should document:

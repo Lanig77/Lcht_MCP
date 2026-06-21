@@ -12,6 +12,18 @@ from .preview_cleanup_candidates import (
     LCHTMCP_OT_preview_cleanup_candidates,
     PREVIEW_CLEANUP_CANDIDATES_OPERATOR_ID,
 )
+from .open_cleanup_workspace import (
+    LCHTMCP_OT_open_cleanup_workspace,
+    OPEN_CLEANUP_WORKSPACE_OPERATOR_ID,
+)
+from .update_cleanup_workspace import (
+    LCHTMCP_OT_update_cleanup_workspace,
+    UPDATE_CLEANUP_WORKSPACE_OPERATOR_ID,
+)
+from .reset_cleanup_workspace import (
+    LCHTMCP_OT_reset_cleanup_workspace,
+    RESET_CLEANUP_WORKSPACE_OPERATOR_ID,
+)
 from .apply_confirmed_cleanup import (
     APPLY_CONFIRMED_CLEANUP_OPERATOR_ID,
     LCHTMCP_OT_apply_confirmed_cleanup,
@@ -31,6 +43,10 @@ from .diagnose_tensor_mask import (
 )
 from .runtime_controls import (
     ARM_SAFE_DELETE_OPERATOR_ID,
+    CLEANUP_AGGRESSIVENESS_DOWN_OPERATOR_ID,
+    CLEANUP_AGGRESSIVENESS_UP_OPERATOR_ID,
+    CLEANUP_OUTLIER_DISTANCE_DOWN_OPERATOR_ID,
+    CLEANUP_OUTLIER_DISTANCE_UP_OPERATOR_ID,
     CLUSTER_DISTANCE_DOWN_OPERATOR_ID,
     CLUSTER_DISTANCE_UP_OPERATOR_ID,
     CLUSTER_MIN_SIZE_DOWN_OPERATOR_ID,
@@ -61,6 +77,10 @@ from .runtime_controls import (
     VOXEL_SIZE_DOWN_OPERATOR_ID,
     VOXEL_SIZE_UP_OPERATOR_ID,
     LCHTMCP_OT_arm_safe_delete,
+    LCHTMCP_OT_cleanup_aggressiveness_down,
+    LCHTMCP_OT_cleanup_aggressiveness_up,
+    LCHTMCP_OT_cleanup_outlier_distance_down,
+    LCHTMCP_OT_cleanup_outlier_distance_up,
     LCHTMCP_OT_cluster_distance_down,
     LCHTMCP_OT_cluster_distance_up,
     LCHTMCP_OT_cluster_min_size_down,
@@ -107,9 +127,16 @@ __all__ = [
     "ANALYZE_CLUSTERS_OPERATOR_ID",
     "ANALYZE_VOXEL_CLUSTERS_OPERATOR_ID",
     "PREVIEW_CLEANUP_CANDIDATES_OPERATOR_ID",
+    "OPEN_CLEANUP_WORKSPACE_OPERATOR_ID",
+    "UPDATE_CLEANUP_WORKSPACE_OPERATOR_ID",
+    "RESET_CLEANUP_WORKSPACE_OPERATOR_ID",
     "APPLY_CONFIRMED_CLEANUP_OPERATOR_ID",
     "SOFT_DELETE_CLEANUP_PREVIEW_OPERATOR_ID",
     "CONFIRM_SAFE_DELETE_OPERATOR_ID",
+    "CLEANUP_AGGRESSIVENESS_DOWN_OPERATOR_ID",
+    "CLEANUP_AGGRESSIVENESS_UP_OPERATOR_ID",
+    "CLEANUP_OUTLIER_DISTANCE_DOWN_OPERATOR_ID",
+    "CLEANUP_OUTLIER_DISTANCE_UP_OPERATOR_ID",
     "CLUSTER_DISTANCE_DOWN_OPERATOR_ID",
     "CLUSTER_DISTANCE_UP_OPERATOR_ID",
     "CLUSTER_MIN_SIZE_DOWN_OPERATOR_ID",
@@ -145,9 +172,16 @@ __all__ = [
     "LCHTMCP_OT_analyze_clusters",
     "LCHTMCP_OT_analyze_voxel_clusters",
     "LCHTMCP_OT_preview_cleanup_candidates",
+    "LCHTMCP_OT_open_cleanup_workspace",
+    "LCHTMCP_OT_update_cleanup_workspace",
+    "LCHTMCP_OT_reset_cleanup_workspace",
     "LCHTMCP_OT_apply_confirmed_cleanup",
     "LCHTMCP_OT_soft_delete_cleanup_preview",
     "LCHTMCP_OT_arm_safe_delete",
+    "LCHTMCP_OT_cleanup_aggressiveness_down",
+    "LCHTMCP_OT_cleanup_aggressiveness_up",
+    "LCHTMCP_OT_cleanup_outlier_distance_down",
+    "LCHTMCP_OT_cleanup_outlier_distance_up",
     "LCHTMCP_OT_cluster_distance_down",
     "LCHTMCP_OT_cluster_distance_up",
     "LCHTMCP_OT_cluster_min_size_down",

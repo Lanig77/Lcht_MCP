@@ -15,6 +15,8 @@ CLUSTER_DISTANCE_STEP = 0.05
 CLUSTER_MIN_SIZE_STEP = 50
 VOXEL_SIZE_STEP = 0.05
 VOXEL_MIN_CLUSTER_SIZE_STEP = 10
+OUTLIER_DISTANCE_STEP = 0.25
+CLEANUP_AGGRESSIVENESS_STEP = 0.1
 CLUSTER_ANALYSIS_SPLATS_STEP = 10_000
 CLUSTER_ANALYSIS_FAST_SPLATS = 10_000
 CLUSTER_ANALYSIS_BALANCED_SPLATS = 25_000
@@ -39,9 +41,13 @@ class RuntimeConfig:
     abort_if_splat_count_above_limit: bool = False
     voxel_size: float = 0.25
     voxel_min_cluster_size: int = 10
+    cleanup_outlier_distance: float = 2.5
+    cleanup_aggressiveness: float = 0.5
     last_scene_analysis_lines: tuple[str, ...] = ()
     last_cleanup_preview_lines: tuple[str, ...] = ()
     last_cleanup_preview_summary: dict[str, object] | None = None
+    last_cleanup_workspace_lines: tuple[str, ...] = ()
+    last_cleanup_workspace_summary: dict[str, object] | None = None
 
 
 _runtime_config = RuntimeConfig()
@@ -79,6 +85,16 @@ def set_cleanup_preview_report_lines(lines: list[str]) -> None:
 def set_cleanup_preview_summary(summary: dict[str, object] | None) -> None:
     """Store the structured cleanup preview summary for follow-up actions."""
     _runtime_config.last_cleanup_preview_summary = summary
+
+
+def set_cleanup_workspace_report_lines(lines: list[str]) -> None:
+    """Store the most recent cleanup workspace report for panel display."""
+    _runtime_config.last_cleanup_workspace_lines = tuple(lines)
+
+
+def set_cleanup_workspace_summary(summary: dict[str, object] | None) -> None:
+    """Store the structured cleanup workspace summary for panel display."""
+    _runtime_config.last_cleanup_workspace_summary = summary
 
 
 def arm_safe_delete() -> None:
@@ -171,6 +187,18 @@ def adjust_voxel_min_cluster_size(delta: int) -> None:
         1,
         _runtime_config.voxel_min_cluster_size + delta,
     )
+
+
+def adjust_cleanup_outlier_distance(delta: float) -> None:
+    """Adjust the cleanup workspace outlier distance threshold."""
+    updated = _runtime_config.cleanup_outlier_distance + delta
+    _runtime_config.cleanup_outlier_distance = _round_z(max(0.1, updated))
+
+
+def adjust_cleanup_aggressiveness(delta: float) -> None:
+    """Adjust the cleanup workspace aggressiveness."""
+    updated = _runtime_config.cleanup_aggressiveness + delta
+    _runtime_config.cleanup_aggressiveness = _round_ratio(min(1.0, max(0.0, updated)))
 
 
 def enable_cluster_analysis_abort() -> None:

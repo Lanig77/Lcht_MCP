@@ -8,6 +8,7 @@ import lichtfeld as lf
 from lfs_plugins.types import Event, Operator
 
 from ..core.runtime_config import (
+    CLEANUP_AGGRESSIVENESS_STEP,
     CLUSTER_ANALYSIS_BALANCED_SPLATS,
     CLUSTER_ANALYSIS_DETAILED_SPLATS,
     CLUSTER_ANALYSIS_FAST_SPLATS,
@@ -16,10 +17,13 @@ from ..core.runtime_config import (
     CLUSTER_MIN_SIZE_STEP,
     MAX_RATIO_STEP,
     MAX_SPLATS_STEP,
+    OUTLIER_DISTANCE_STEP,
     SAFE_DELETE_Z_STEP,
     SMOKE_Z_STEP,
     VOXEL_MIN_CLUSTER_SIZE_STEP,
     VOXEL_SIZE_STEP,
+    adjust_cleanup_aggressiveness,
+    adjust_cleanup_outlier_distance,
     adjust_max_cluster_analysis_splats,
     adjust_cluster_distance_threshold,
     adjust_cluster_min_cluster_size,
@@ -161,6 +165,22 @@ SET_CLUSTER_ANALYSIS_DETAILED_OPERATOR_ID = (
     "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
     "LCHTMCP_OT_set_cluster_analysis_detailed"
 )
+CLEANUP_OUTLIER_DISTANCE_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_cleanup_outlier_distance_down"
+)
+CLEANUP_OUTLIER_DISTANCE_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_cleanup_outlier_distance_up"
+)
+CLEANUP_AGGRESSIVENESS_DOWN_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_cleanup_aggressiveness_down"
+)
+CLEANUP_AGGRESSIVENESS_UP_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_cleanup_aggressiveness_up"
+)
 
 
 def _log_runtime_state(action: str) -> None:
@@ -179,18 +199,37 @@ def _log_runtime_state(action: str) -> None:
         f"max_cluster_analysis_splats={config.max_cluster_analysis_splats}, "
         f"voxel_size={config.voxel_size:.4f}, "
         f"voxel_min_cluster_size={config.voxel_min_cluster_size}, "
+        f"cleanup_outlier_distance={config.cleanup_outlier_distance:.4f}, "
+        f"cleanup_aggressiveness={config.cleanup_aggressiveness:.4f}, "
         "abort_if_splat_count_above_limit="
         f"{config.abort_if_splat_count_above_limit}"
     )
+
+
+def _refresh_cleanup_workspace_if_open() -> None:
+    config = snapshot_runtime_config()
+    if config.last_cleanup_workspace_summary is None:
+        return
+    try:
+        from ..core.test_runner import run_update_cleanup_workspace
+
+        success, message = run_update_cleanup_workspace()
+        log_fn = lf.log.info if success else lf.log.error
+        log_fn(f"lcht_mcp_test_plugin: cleanup workspace auto-refresh: {message}")
+    except Exception as exc:
+        lf.log.error(f"lcht_mcp_test_plugin: cleanup workspace auto-refresh failed: {exc}")
 
 
 class _ConfigOperator(Operator):
     """Base operator for stateful panel controls."""
 
     action_label = "Updated runtime config"
+    refresh_cleanup_workspace = False
 
     def invoke(self, context, event: Event) -> set:
         self._apply()
+        if self.refresh_cleanup_workspace:
+            _refresh_cleanup_workspace_if_open()
         _log_runtime_state(self.action_label)
         return {"FINISHED"}
 
@@ -415,6 +454,7 @@ class LCHTMCP_OT_voxel_size_down(_ConfigOperator):
     label = "Voxel Size -"
     description = "Decrease the voxel preview voxel size"
     action_label = f"Decreased voxel size by {VOXEL_SIZE_STEP:.2f}"
+    refresh_cleanup_workspace = True
 
     def _apply(self) -> None:
         adjust_voxel_size(-VOXEL_SIZE_STEP)
@@ -424,6 +464,7 @@ class LCHTMCP_OT_voxel_size_up(_ConfigOperator):
     label = "Voxel Size +"
     description = "Increase the voxel preview voxel size"
     action_label = f"Increased voxel size by {VOXEL_SIZE_STEP:.2f}"
+    refresh_cleanup_workspace = True
 
     def _apply(self) -> None:
         adjust_voxel_size(VOXEL_SIZE_STEP)
@@ -433,6 +474,7 @@ class LCHTMCP_OT_voxel_min_cluster_size_down(_ConfigOperator):
     label = "Voxel Min Size -"
     description = "Decrease the voxel preview minimum cluster size"
     action_label = f"Decreased voxel min cluster size by {VOXEL_MIN_CLUSTER_SIZE_STEP}"
+    refresh_cleanup_workspace = True
 
     def _apply(self) -> None:
         adjust_voxel_min_cluster_size(-VOXEL_MIN_CLUSTER_SIZE_STEP)
@@ -442,9 +484,54 @@ class LCHTMCP_OT_voxel_min_cluster_size_up(_ConfigOperator):
     label = "Voxel Min Size +"
     description = "Increase the voxel preview minimum cluster size"
     action_label = f"Increased voxel min cluster size by {VOXEL_MIN_CLUSTER_SIZE_STEP}"
+    refresh_cleanup_workspace = True
 
     def _apply(self) -> None:
         adjust_voxel_min_cluster_size(VOXEL_MIN_CLUSTER_SIZE_STEP)
+
+
+class LCHTMCP_OT_cleanup_outlier_distance_down(_ConfigOperator):
+    label = "Outlier Distance -"
+    description = "Decrease the cleanup workspace outlier distance threshold"
+    action_label = f"Decreased cleanup outlier distance by {OUTLIER_DISTANCE_STEP:.2f}"
+    refresh_cleanup_workspace = True
+
+    def _apply(self) -> None:
+        adjust_cleanup_outlier_distance(-OUTLIER_DISTANCE_STEP)
+
+
+class LCHTMCP_OT_cleanup_outlier_distance_up(_ConfigOperator):
+    label = "Outlier Distance +"
+    description = "Increase the cleanup workspace outlier distance threshold"
+    action_label = f"Increased cleanup outlier distance by {OUTLIER_DISTANCE_STEP:.2f}"
+    refresh_cleanup_workspace = True
+
+    def _apply(self) -> None:
+        adjust_cleanup_outlier_distance(OUTLIER_DISTANCE_STEP)
+
+
+class LCHTMCP_OT_cleanup_aggressiveness_down(_ConfigOperator):
+    label = "Cleanup Aggressiveness -"
+    description = "Decrease cleanup workspace aggressiveness"
+    action_label = (
+        f"Decreased cleanup aggressiveness by {CLEANUP_AGGRESSIVENESS_STEP:.2f}"
+    )
+    refresh_cleanup_workspace = True
+
+    def _apply(self) -> None:
+        adjust_cleanup_aggressiveness(-CLEANUP_AGGRESSIVENESS_STEP)
+
+
+class LCHTMCP_OT_cleanup_aggressiveness_up(_ConfigOperator):
+    label = "Cleanup Aggressiveness +"
+    description = "Increase cleanup workspace aggressiveness"
+    action_label = (
+        f"Increased cleanup aggressiveness by {CLEANUP_AGGRESSIVENESS_STEP:.2f}"
+    )
+    refresh_cleanup_workspace = True
+
+    def _apply(self) -> None:
+        adjust_cleanup_aggressiveness(CLEANUP_AGGRESSIVENESS_STEP)
 
 
 class LCHTMCP_OT_set_cluster_analysis_fast(_ConfigOperator):
