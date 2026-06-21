@@ -7,7 +7,9 @@ import lichtfeld as lf
 from ..core.runtime_config import snapshot_runtime_config
 from ..operators.analyze_scene import ANALYZE_SCENE_OPERATOR_ID
 from ..operators.open_cleanup_workspace import OPEN_CLEANUP_WORKSPACE_OPERATOR_ID
+from ..operators.restore_last_delete import RESTORE_LAST_DELETE_OPERATOR_ID
 from ..operators.reset_cleanup_workspace import RESET_CLEANUP_WORKSPACE_OPERATOR_ID
+from ..operators.soft_delete_cleanup_selection import SOFT_DELETE_CLEANUP_SELECTION_OPERATOR_ID
 from ..operators.update_cleanup_workspace import UPDATE_CLEANUP_WORKSPACE_OPERATOR_ID
 from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
 from ..operators.diagnose_native_selection import DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID
@@ -391,6 +393,22 @@ class LchtMcpTestPanel(lf.ui.Panel):
             "Selection preview only. Does not delete, hide, or modify splats.",
             theme.palette.text_dim,
         )
+        if layout.button_styled(
+            "Soft Delete Cleanup Selection##soft_delete_cleanup_selection",
+            "warning",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(SOFT_DELETE_CLEANUP_SELECTION_OPERATOR_ID)
+        layout.text_colored(
+            "Reversible only. Does not call apply_deleted(). Use Restore Last Delete to undo.",
+            theme.palette.text_dim,
+        )
+        if layout.button_styled(
+            "Restore Last Delete##restore_last_delete",
+            "secondary",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(RESTORE_LAST_DELETE_OPERATOR_ID)
         if layout.button_styled(
             "Analyze Clusters##analyze_clusters",
             "secondary",

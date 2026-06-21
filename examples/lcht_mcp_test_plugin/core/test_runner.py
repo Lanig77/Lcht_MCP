@@ -509,6 +509,141 @@ def run_reset_cleanup_workspace() -> tuple[bool, str]:
     return result.ok, result.message
 
 
+def run_soft_delete_cleanup_selection() -> tuple[bool, str]:
+    """Soft-delete the current cleanup workspace selection without permanent apply."""
+    config = snapshot_runtime_config()
+    _log_info(
+        "Starting cleanup workspace soft delete with "
+        f"ENABLE_SAFE_DELETE={config.enable_safe_delete}, "
+        f"CONFIRM_SAFE_DELETE={config.confirm_safe_delete}, "
+        "thresholds=("
+        f"max_count={config.max_deletable_splats}, "
+        f"max_ratio={config.max_deletable_percentage:.6f})."
+    )
+
+    if not config.enable_safe_delete:
+        message = (
+            "Cleanup workspace soft delete is disabled because ENABLE_SAFE_DELETE=False. "
+            "No destructive action was performed."
+        )
+        _log_info(message)
+        return True, message
+
+    if not config.confirm_safe_delete:
+        message = (
+            "Cleanup workspace soft delete is armed but not confirmed because "
+            "ENABLE_SAFE_DELETE=True and CONFIRM_SAFE_DELETE=False. "
+            "No destructive action was performed."
+        )
+        _log_info(message)
+        return True, message
+
+    workspace_summary = config.last_cleanup_workspace_summary
+    if workspace_summary is None:
+        message = "No cleanup workspace is active. Open Cleanup Workspace first."
+        _log_error(message)
+        return False, message
+
+    selected_count = int(workspace_summary.get("selected_count", 0))
+    total_splats = int(
+        workspace_summary.get(
+            "scene_profile",
+            {},
+        ).get("total_splats", workspace_summary.get("total_splats", 0))
+        if isinstance(workspace_summary.get("scene_profile"), dict)
+        else workspace_summary.get("total_splats", 0)
+    )
+    selected_ratio = _selected_percentage(selected_count, total_splats)
+    _log_info(f"initial_splat_count={total_splats}")
+    _log_info(f"selected_count={selected_count}")
+    _log_info(f"selected_percentage={selected_ratio * 100.0:.6f}%")
+
+    if selected_count <= 0:
+        message = "Cleanup workspace soft delete refused: selected_count == 0."
+        _log_error(message)
+        return False, message
+    if selected_count > config.max_deletable_splats:
+        message = (
+            "Cleanup workspace soft delete refused: "
+            f"selected_count={selected_count} exceeds "
+            f"SAFE_DELETE_MAX_COUNT={config.max_deletable_splats}."
+        )
+        _log_error(message)
+        return False, message
+    if selected_ratio > config.max_deletable_percentage:
+        message = (
+            "Cleanup workspace soft delete refused: "
+            f"selected_ratio={selected_ratio:.6f} exceeds "
+            f"SAFE_DELETE_MAX_RATIO={config.max_deletable_percentage:.6f}."
+        )
+        _log_error(message)
+        return False, message
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup workspace soft delete adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    soft_delete_current_cleanup_selection = getattr(
+        adapter,
+        "soft_delete_current_cleanup_selection",
+        None,
+    )
+    if not callable(soft_delete_current_cleanup_selection):
+        message = "LichtfeldAdapter does not expose soft_delete_current_cleanup_selection()."
+        _log_error(message)
+        return False, message
+
+    try:
+        result = soft_delete_current_cleanup_selection()
+    except Exception as exc:
+        message = f"Cleanup workspace soft delete failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    _log_info(f"soft_delete ok={result.ok}")
+    _log_info(f"restore available={result.restore_available}")
+    _log_info(
+        "Cleanup workspace soft delete complete. "
+        "Reversible only. Does not call apply_deleted(). "
+        "Use Restore Last Delete to undo."
+    )
+    set_cleanup_workspace_report_lines([])
+    set_cleanup_workspace_summary(None)
+    return result.ok, result.message
+
+
+def run_restore_last_delete() -> tuple[bool, str]:
+    """Restore the last reversible delete without applying permanent changes."""
+    _log_info("Starting restore_last_delete.")
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Restore last delete adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    restore_last_delete = getattr(adapter, "restore_last_delete", None)
+    if not callable(restore_last_delete):
+        message = "LichtfeldAdapter does not expose restore_last_delete()."
+        _log_error(message)
+        return False, message
+
+    try:
+        result = restore_last_delete()
+    except Exception as exc:
+        message = f"Restore last delete failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    _log_info(result.message)
+    return result.ok, result.message
+
+
 def run_soft_delete_cleanup_preview() -> tuple[bool, str]:
     """Soft-delete the last reliable cleanup preview without finalizing deletion."""
     config = snapshot_runtime_config()

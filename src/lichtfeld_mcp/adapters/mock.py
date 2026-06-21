@@ -39,6 +39,7 @@ from lichtfeld_mcp.core.validation import normalize_measurement_unit, normalize_
 from lichtfeld_mcp.errors import ProjectNotOpenError
 from lichtfeld_mcp.schemas.common import (
     Box3D,
+    CleanupSoftDeleteResult,
     CleanupSelectionPreviewResult,
     ExportResult,
     HistoryEntry,
@@ -232,6 +233,31 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._cleanup_workspace_session = None
         self._last_cleanup_preview = None
         return ToolResult(message="Cleanup workspace reset. Native preview selection cleared.")
+
+    def soft_delete_current_cleanup_selection(self) -> CleanupSoftDeleteResult:
+        scene = self._require_scene()
+        if self._cleanup_workspace_session is None:
+            raise ProjectNotOpenError("No cleanup workspace is active. Open Cleanup Workspace first.")
+        selected_count = self._cleanup_workspace_session.workspace.selected_count
+        if selected_count <= 0:
+            raise ProjectNotOpenError("Cleanup workspace preview selection is empty.")
+        deleted = min(scene.splat_count, selected_count)
+        self._push_history("soft_delete_current_cleanup_selection", {"deleted": deleted})
+        scene.splat_count -= deleted
+        scene.selected_count = 0
+        scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
+        self._cleanup_workspace_session = None
+        self._pending_cleanup_apply_count = deleted
+        return CleanupSoftDeleteResult(
+            soft_deleted_count=deleted,
+            total_splats=scene.splat_count + deleted,
+            percentage=(0.0 if scene.splat_count + deleted <= 0 else deleted / (scene.splat_count + deleted)),
+            restore_available=True,
+            message=(
+                f"Soft-deleted {deleted:,} cleanup workspace splats. "
+                "Reversible until apply_deleted() is called."
+            ),
+        )
 
     def soft_delete_cleanup_candidates(self) -> ToolResult:
         scene = self._require_scene()

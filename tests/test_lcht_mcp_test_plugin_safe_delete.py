@@ -47,6 +47,34 @@ class FakeCleanupPreviewSoftDeleteAdapter:
         )
 
 
+class FakeCleanupWorkspaceSoftDeleteAdapter:
+    def __init__(self, *, should_raise: str | None = None):
+        self.soft_delete_current_cleanup_selection_calls = 0
+        self.restore_last_delete_calls = 0
+        self.apply_deleted_calls = 0
+        self.should_raise = should_raise
+
+    def soft_delete_current_cleanup_selection(self):
+        self.soft_delete_current_cleanup_selection_calls += 1
+        if self.should_raise is not None:
+            raise RuntimeError(self.should_raise)
+        return SimpleNamespace(
+            ok=True,
+            soft_deleted_count=12,
+            total_splats=1_000,
+            percentage=0.012,
+            restore_available=True,
+            message=(
+                "Soft-deleted 12 cleanup workspace splats. "
+                "Reversible until apply_deleted() is called."
+            ),
+        )
+
+    def restore_last_delete(self):
+        self.restore_last_delete_calls += 1
+        return SimpleNamespace(ok=True, message="Restored 12 deleted splats.")
+
+
 class FakeConfirmedCleanupAdapter:
     def __init__(self, *, should_raise: bool = False):
         self.apply_cleanup_candidates_calls = 0
@@ -163,6 +191,95 @@ def test_run_apply_confirmed_cleanup_returns_early_without_confirmation(monkeypa
 
     assert success is True
     assert "CONFIRM_SAFE_DELETE=False" in message
+
+
+def test_run_soft_delete_cleanup_selection_refuses_without_workspace(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.arm_safe_delete()
+    runtime_config.confirm_safe_delete()
+    fake_adapter = FakeCleanupWorkspaceSoftDeleteAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_soft_delete_cleanup_selection()
+
+    assert success is False
+    assert "No cleanup workspace is active" in message
+    assert fake_adapter.soft_delete_current_cleanup_selection_calls == 0
+    assert fake_adapter.apply_deleted_calls == 0
+
+
+def test_run_soft_delete_cleanup_selection_refuses_when_selected_count_is_zero(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.arm_safe_delete()
+    runtime_config.confirm_safe_delete()
+    runtime_config.set_cleanup_workspace_summary(
+        {
+            "selected_count": 0,
+            "scene_profile": {"total_splats": 1_000},
+        }
+    )
+    fake_adapter = FakeCleanupWorkspaceSoftDeleteAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_soft_delete_cleanup_selection()
+
+    assert success is False
+    assert "selected_count == 0" in message
+    assert fake_adapter.soft_delete_current_cleanup_selection_calls == 0
+
+
+def test_run_soft_delete_cleanup_selection_refuses_when_threshold_is_exceeded(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.arm_safe_delete()
+    runtime_config.confirm_safe_delete()
+    runtime_config.set_cleanup_workspace_summary(
+        {
+            "selected_count": 60_000,
+            "scene_profile": {"total_splats": 100_000},
+        }
+    )
+    fake_adapter = FakeCleanupWorkspaceSoftDeleteAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_soft_delete_cleanup_selection()
+
+    assert success is False
+    assert "SAFE_DELETE_MAX_COUNT" in message or "SAFE_DELETE_MAX_RATIO" in message
+    assert fake_adapter.soft_delete_current_cleanup_selection_calls == 0
+
+
+def test_run_soft_delete_cleanup_selection_succeeds_without_apply_deleted(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.arm_safe_delete()
+    runtime_config.confirm_safe_delete()
+    runtime_config.set_cleanup_workspace_summary(
+        {
+            "selected_count": 12,
+            "scene_profile": {"total_splats": 1_000},
+        }
+    )
+    fake_adapter = FakeCleanupWorkspaceSoftDeleteAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_soft_delete_cleanup_selection()
+
+    assert success is True
+    assert "Soft-deleted 12 cleanup workspace splats." in message
+    assert fake_adapter.soft_delete_current_cleanup_selection_calls == 1
+    assert fake_adapter.apply_deleted_calls == 0
+    assert runtime_config.snapshot_runtime_config().last_cleanup_workspace_summary is None
+
+
+def test_run_restore_last_delete_succeeds_after_workspace_soft_delete(monkeypatch):
+    _, test_runner = _load_runner_modules(monkeypatch)
+    fake_adapter = FakeCleanupWorkspaceSoftDeleteAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_restore_last_delete()
+
+    assert success is True
+    assert "Restored 12 deleted splats." == message
+    assert fake_adapter.restore_last_delete_calls == 1
 
 
 def test_run_apply_confirmed_cleanup_refuses_without_pending_cleanup_soft_delete(monkeypatch):

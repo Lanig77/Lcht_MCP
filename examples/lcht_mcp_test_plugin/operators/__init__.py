@@ -24,6 +24,14 @@ from .reset_cleanup_workspace import (
     LCHTMCP_OT_reset_cleanup_workspace,
     RESET_CLEANUP_WORKSPACE_OPERATOR_ID,
 )
+from .soft_delete_cleanup_selection import (
+    LCHTMCP_OT_soft_delete_cleanup_selection,
+    SOFT_DELETE_CLEANUP_SELECTION_OPERATOR_ID,
+)
+from .restore_last_delete import (
+    LCHTMCP_OT_restore_last_delete,
+    RESTORE_LAST_DELETE_OPERATOR_ID,
+)
 from .apply_confirmed_cleanup import (
     APPLY_CONFIRMED_CLEANUP_OPERATOR_ID,
     LCHTMCP_OT_apply_confirmed_cleanup,
@@ -130,6 +138,8 @@ __all__ = [
     "OPEN_CLEANUP_WORKSPACE_OPERATOR_ID",
     "UPDATE_CLEANUP_WORKSPACE_OPERATOR_ID",
     "RESET_CLEANUP_WORKSPACE_OPERATOR_ID",
+    "SOFT_DELETE_CLEANUP_SELECTION_OPERATOR_ID",
+    "RESTORE_LAST_DELETE_OPERATOR_ID",
     "APPLY_CONFIRMED_CLEANUP_OPERATOR_ID",
     "SOFT_DELETE_CLEANUP_PREVIEW_OPERATOR_ID",
     "CONFIRM_SAFE_DELETE_OPERATOR_ID",
@@ -175,6 +185,8 @@ __all__ = [
     "LCHTMCP_OT_open_cleanup_workspace",
     "LCHTMCP_OT_update_cleanup_workspace",
     "LCHTMCP_OT_reset_cleanup_workspace",
+    "LCHTMCP_OT_soft_delete_cleanup_selection",
+    "LCHTMCP_OT_restore_last_delete",
     "LCHTMCP_OT_apply_confirmed_cleanup",
     "LCHTMCP_OT_soft_delete_cleanup_preview",
     "LCHTMCP_OT_arm_safe_delete",

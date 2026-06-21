@@ -42,6 +42,7 @@ from lichtfeld_mcp.core.voxel_analysis import (
 from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 from lichtfeld_mcp.schemas.common import (
     Box3D,
+    CleanupSoftDeleteResult,
     CleanupSelectionPreviewResult,
     ExportResult,
     HistoryEntry,
@@ -558,6 +559,78 @@ class LichtfeldAdapter(AdapterContract):
         self._clear_native_selection_preview(scene, model, lichtfeld_module)
         logger.info("LichtFeld cleanup workspace reset: selection cleared")
         return ToolResult(message="Cleanup workspace reset. Native preview selection cleared.")
+
+    def soft_delete_current_cleanup_selection(self) -> CleanupSoftDeleteResult:
+        session = self._cleanup_workspace_session
+        if session is None:
+            raise AdapterUnavailableError("No cleanup workspace is active. Open Cleanup Workspace first.")
+        preview_state = self._last_cleanup_preview
+        if preview_state is None:
+            raise AdapterUnavailableError(
+                "No cleanup workspace preview selection is available. Update Preview first."
+            )
+
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        scene_path = get_scene_path(scene)
+        if scene_path != session.project_path:
+            self._cleanup_workspace_session = None
+            self._last_cleanup_preview = None
+            raise AdapterUnavailableError(
+                "Cleanup workspace no longer matches the active scene. Open Cleanup Workspace again."
+            )
+
+        total_splats = session.total_splats
+        selected_count = session.workspace.selected_count
+        if selected_count <= 0:
+            raise AdapterUnavailableError("Cleanup workspace preview selection is empty.")
+
+        selection_mask = self._selection.current_selection_mask(
+            scene,
+            total_splats,
+            lf_module=lichtfeld_module,
+        )
+        current_selected_count = 0 if selection_mask is None else sum(selection_mask)
+        if current_selected_count <= 0:
+            raise AdapterUnavailableError("No active cleanup workspace selection is available to soft-delete.")
+        if current_selected_count != selected_count:
+            raise AdapterUnavailableError(
+                "The active native selection no longer matches the cleanup workspace preview. "
+                "Update Preview again before soft delete."
+            )
+
+        selected_percentage = 0.0 if total_splats <= 0 else current_selected_count / total_splats
+        logger.info("LichtFeld cleanup workspace soft delete: initial_splat_count=%s", total_splats)
+        logger.info("LichtFeld cleanup workspace soft delete: selected_count=%s", current_selected_count)
+        logger.info(
+            "LichtFeld cleanup workspace soft delete: selected_percentage=%.6f",
+            selected_percentage,
+        )
+        try:
+            result = self.soft_delete_selection()
+        except Exception:
+            logger.info("LichtFeld cleanup workspace soft delete: soft_delete failed")
+            raise
+
+        restore_available = self._last_delete_mask is not None and self._last_delete_count > 0
+        logger.info(
+            "LichtFeld cleanup workspace soft delete: ok=%s restore_available=%s",
+            result.ok,
+            restore_available,
+        )
+        self._cleanup_workspace_session = None
+        self._last_cleanup_preview = None
+        return CleanupSoftDeleteResult(
+            ok=result.ok,
+            soft_deleted_count=current_selected_count,
+            total_splats=total_splats,
+            percentage=selected_percentage,
+            restore_available=restore_available,
+            message=(
+                f"Soft-deleted {current_selected_count} cleanup workspace splats. "
+                "Reversible until apply_deleted() is called."
+            ),
+        )
 
     def soft_delete_cleanup_candidates(self) -> ToolResult:
         preview_state = self._last_cleanup_preview

@@ -73,6 +73,17 @@ class CleanupSelectionPreviewResult(BaseModel):
     message: str
 
 
+class CleanupSoftDeleteResult(BaseModel):
+    """Reversible cleanup soft-delete result."""
+
+    ok: bool = True
+    soft_deleted_count: int
+    total_splats: int
+    percentage: float
+    restore_available: bool
+    message: str
+
+
 class ExportResult(BaseModel):
     """Export operation result."""
 

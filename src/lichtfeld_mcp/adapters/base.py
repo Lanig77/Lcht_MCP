@@ -10,9 +10,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from lichtfeld_mcp.core.cleanup_workspace import CleanupWorkspace
 from lichtfeld_mcp.schemas.common import (
     Box3D,
+    CleanupSoftDeleteResult,
     CleanupSelectionPreviewResult,
     ExportResult,
     HistoryEntry,
@@ -26,6 +26,7 @@ from lichtfeld_mcp.schemas.common import (
 )
 
 if TYPE_CHECKING:
+    from lichtfeld_mcp.core.cleanup_workspace import CleanupWorkspace
     from lichtfeld_mcp.core.scene_analysis import CleanupCandidateSummary, SceneAnalysisReport
 
 
@@ -87,6 +88,9 @@ class LichtfeldAdapter(ABC):
 
     @abstractmethod
     def reset_cleanup_workspace(self) -> ToolResult: ...
+
+    @abstractmethod
+    def soft_delete_current_cleanup_selection(self) -> CleanupSoftDeleteResult: ...
 
     @abstractmethod
     def soft_delete_cleanup_candidates(self) -> ToolResult: ...

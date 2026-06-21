@@ -10,6 +10,8 @@ from .operators.analyze_voxel_clusters import LCHTMCP_OT_analyze_voxel_clusters
 from .operators.open_cleanup_workspace import LCHTMCP_OT_open_cleanup_workspace
 from .operators.preview_cleanup_candidates import LCHTMCP_OT_preview_cleanup_candidates
 from .operators.reset_cleanup_workspace import LCHTMCP_OT_reset_cleanup_workspace
+from .operators.restore_last_delete import LCHTMCP_OT_restore_last_delete
+from .operators.soft_delete_cleanup_selection import LCHTMCP_OT_soft_delete_cleanup_selection
 from .operators.update_cleanup_workspace import LCHTMCP_OT_update_cleanup_workspace
 from .operators.apply_confirmed_cleanup import LCHTMCP_OT_apply_confirmed_cleanup
 from .operators.soft_delete_cleanup_preview import LCHTMCP_OT_soft_delete_cleanup_preview
@@ -66,6 +68,8 @@ _classes = [
     LCHTMCP_OT_open_cleanup_workspace,
     LCHTMCP_OT_update_cleanup_workspace,
     LCHTMCP_OT_reset_cleanup_workspace,
+    LCHTMCP_OT_soft_delete_cleanup_selection,
+    LCHTMCP_OT_restore_last_delete,
     LCHTMCP_OT_apply_confirmed_cleanup,
     LCHTMCP_OT_soft_delete_cleanup_preview,
     LCHTMCP_OT_arm_safe_delete,
