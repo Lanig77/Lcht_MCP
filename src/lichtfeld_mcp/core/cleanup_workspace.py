@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from lichtfeld_mcp.core.scene_analysis import CleanupCandidateSummary, SceneAnalysisReport
+from lichtfeld_mcp.core.scene_analysis import (
+    AnalysisSeverity,
+    CleanupCandidateSummary,
+    SceneAnalysisReport,
+)
 
 if TYPE_CHECKING:
     from lichtfeld_mcp.core.gaussian_cloud import GaussianCloud
@@ -79,6 +83,8 @@ class CleanupWorkspace:
             "cleanup_candidate_summary": self.cleanup_candidate_summary.to_dict(),
             "scene_profile": self.scene_profile.to_dict(),
             "current_cleanup_parameters": self.current_cleanup_parameters.to_dict(),
+            "scene_health": self.scene_profile.profile_label,
+            "quality_score": self.scene_profile.quality_score,
             "sample_metadata": {
                 "analyzed_splats": len(self.sampled_rows),
                 "sampled_index_count": len(self.sampled_indices),
@@ -91,9 +97,17 @@ class CleanupWorkspace:
             "preview_selection_active": self.preview_selection_active,
             "native_selection_handle": self.native_selection_handle,
             "selected_count": self.selected_count,
+            "preview_selected_splats": self.selected_count,
             "selection_percentage": round(self.selection_percentage, 6),
             "selection_mode": self.selection_mode,
             "selection_source": self.selection_source,
+            "estimated_affected_splats_total": (
+                self.cleanup_candidate_summary.estimated_affected_splats_total
+            ),
+            "estimated_cleanup_percentage": round(
+                self.cleanup_candidate_summary.estimated_percentage_of_total,
+                6,
+            ),
             "approximate": self.approximate,
             "analysis_reused": self.analysis_reused,
             "candidate_update_time": round(self.candidate_update_time, 6),
@@ -110,15 +124,33 @@ class CleanupSession:
     sampled_gaussian_cloud: "GaussianCloud"
 
 
+_CLEANUP_NEEDS_REVIEW_THRESHOLD = 0.05
+
+
+def determine_scene_health(report: SceneAnalysisReport) -> str:
+    estimated_cleanup_ratio = float(report.scene_stats.get("estimated_percentage_of_total", 0.0))
+    estimated_cleanup_count = int(report.scene_stats.get("estimated_affected_splats_total", 0))
+    has_cleanup_signal = estimated_cleanup_count > 0 or estimated_cleanup_ratio > 0.0
+    has_warning_results = any(
+        result.severity is AnalysisSeverity.WARNING for result in report.results
+    )
+    has_critical_results = any(
+        result.severity is AnalysisSeverity.CRITICAL for result in report.results
+    )
+
+    if has_critical_results:
+        return "critical"
+    if estimated_cleanup_ratio >= _CLEANUP_NEEDS_REVIEW_THRESHOLD:
+        return "needs_cleanup"
+    if report.warnings or has_warning_results or has_cleanup_signal:
+        return "needs_review"
+    return "healthy"
+
+
 def build_scene_profile(report: SceneAnalysisReport) -> SceneProfile:
     scene_stats = report.scene_stats
     quality_score = int(report.quality_score)
-    if quality_score >= 90:
-        profile_label = "healthy"
-    elif quality_score >= 75:
-        profile_label = "watch"
-    else:
-        profile_label = "cleanup_recommended"
+    profile_label = determine_scene_health(report)
     return SceneProfile(
         scene_name=str(scene_stats.get("scene_name", "unknown_scene")),
         project_path=str(scene_stats.get("project_path", "")),
@@ -134,15 +166,13 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
     summary = workspace.cleanup_candidate_summary
     params = workspace.current_cleanup_parameters
     mode_label = "Approximate sampled" if workspace.approximate else "Exact"
-    scene_type = workspace.scene_profile.profile_label.replace("_", " ").title()
-    cleanup_percentage = (
-        summary.estimated_percentage_of_total
-        if workspace.approximate
-        else workspace.selection_percentage
-    )
+    scene_health = workspace.scene_profile.profile_label.replace("_", " ").title()
+    cleanup_percentage = summary.estimated_percentage_of_total
     lines = [
         "Cleanup Workspace",
-        f"Current Scene Type: {scene_type}",
+        "Scene Health:",
+        scene_health,
+        f"Quality score: {workspace.scene_profile.quality_score}",
         f"Analysis Mode: {mode_label}",
         "Workspace Active: Yes",
         (
@@ -153,15 +183,15 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
             f"outlier_distance={params.outlier_distance:.2f}, "
             f"cleanup_aggressiveness={params.cleanup_aggressiveness:.2f}"
         ),
-        f"Estimated affected splats: {summary.estimated_affected_splats_total:,}",
-        f"Estimated Cleanup %: {cleanup_percentage * 100.0:.2f}%",
-        f"Selection count: {workspace.selected_count:,}",
+        f"Estimated affected splats total: {summary.estimated_affected_splats_total:,}",
+        f"Estimated cleanup percentage: {cleanup_percentage * 100.0:.2f}%",
+        f"Preview selected splats: {workspace.selected_count:,}",
         f"Selection source: {workspace.selection_source}",
         f"Analysis reused: {'Yes' if workspace.analysis_reused else 'No'}",
         f"Update time: {workspace.total_workspace_update_time:.6f}s",
     ]
     if not workspace.preview_selection_active:
-        lines.append("Selection preview: inactive. Run Update Preview to rebuild it.")
+        lines.append("Preview selection: inactive. Run Update Preview to rebuild it.")
     if workspace.approximate:
         lines.append("Approximate sampled selection preview.")
     return "\n".join(lines)

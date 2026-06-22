@@ -60,6 +60,7 @@ class MockSceneState:
     name: str
     splat_count: int = 4_200_000
     selected_count: int = 0
+    generation: int = 0
     file_size_mb: float = 840.0
     bounds: Box3D = field(
         default_factory=lambda: Box3D(
@@ -79,6 +80,10 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._snapshots: list[MockSceneState] = []
         self._history: list[HistoryEntry] = []
         self._last_scene_analysis: SceneAnalysisReport | None = None
+        self._last_scene_analysis_generation: int | None = None
+        self._last_scene_analysis_total_splats = 0
+        self._last_scene_analysis_voxel_size: float | None = None
+        self._last_scene_analysis_min_voxel_cluster_size: int | None = None
         self._last_cleanup_preview: CleanupCandidateSummary | None = None
         self._cleanup_workspace_session: CleanupSession | None = None
         self._pending_cleanup_apply_count = 0
@@ -88,10 +93,43 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             raise ProjectNotOpenError("No Lichtfeld project is currently open.")
         return self._scene
 
+    def _resolve_workspace_analysis(
+        self,
+        *,
+        voxel_size: float,
+        min_voxel_cluster_size: int,
+    ) -> tuple[SceneAnalysisReport, bool, bool]:
+        scene = self._require_scene()
+        cached_report = self._last_scene_analysis
+        cached_scene_is_valid = (
+            cached_report is not None
+            and self._last_scene_analysis_generation == scene.generation
+            and self._last_scene_analysis_total_splats == scene.splat_count
+        )
+        cached_params_match = (
+            cached_scene_is_valid
+            and self._last_scene_analysis_voxel_size == voxel_size
+            and self._last_scene_analysis_min_voxel_cluster_size == min_voxel_cluster_size
+        )
+        if cached_params_match:
+            return cached_report, True, True
+
+        sample_reused = cached_scene_is_valid
+        report = self.analyze_scene(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+        )
+        return report, False, sample_reused
+
     def _push_history(self, action: str, details: dict[str, object]) -> None:
         if self._scene is not None:
             self._snapshots.append(deepcopy(self._scene))
         self._history.append(HistoryEntry(index=len(self._history), action=action, details=details))
+
+    def _bump_scene_generation(self) -> None:
+        if self._scene is None:
+            return
+        self._scene.generation += 1
 
     def open_project(self, path: str) -> ProjectInfo:
         normalized = normalize_scene_path(path, label="project path")
@@ -104,6 +142,10 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._snapshots.clear()
         self._history.clear()
         self._last_scene_analysis = None
+        self._last_scene_analysis_generation = None
+        self._last_scene_analysis_total_splats = 0
+        self._last_scene_analysis_voxel_size = None
+        self._last_scene_analysis_min_voxel_cluster_size = None
         self._last_cleanup_preview = None
         self._cleanup_workspace_session = None
         self._push_history("open_project", {"path": normalized})
@@ -120,6 +162,10 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._push_history("close_project", {"name": name})
         self._scene = None
         self._last_scene_analysis = None
+        self._last_scene_analysis_generation = None
+        self._last_scene_analysis_total_splats = 0
+        self._last_scene_analysis_voxel_size = None
+        self._last_scene_analysis_min_voxel_cluster_size = None
         self._last_cleanup_preview = None
         self._cleanup_workspace_session = None
         return ToolResult(message=f"Project closed: {name}")
@@ -193,12 +239,18 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         outlier_distance: float = 2.5,
         cleanup_aggressiveness: float = 0.5,
     ) -> CleanupWorkspace:
+        _, analysis_reused, sample_reused = self._resolve_workspace_analysis(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+        )
         workspace = self._build_cleanup_workspace(
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
             cluster_distance_threshold=cluster_distance_threshold,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
+            analysis_reused=analysis_reused,
+            sample_reused=sample_reused,
         )
         self._cleanup_workspace_session = CleanupSession(
             workspace=workspace,
@@ -217,12 +269,18 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
     ) -> CleanupWorkspace:
         if self._cleanup_workspace_session is None:
             raise ProjectNotOpenError("No cleanup workspace is active. Open Cleanup Workspace first.")
+        _, analysis_reused, sample_reused = self._resolve_workspace_analysis(
+            voxel_size=voxel_size,
+            min_voxel_cluster_size=min_voxel_cluster_size,
+        )
         workspace = self._build_cleanup_workspace(
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
             cluster_distance_threshold=cluster_distance_threshold,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
+            analysis_reused=analysis_reused,
+            sample_reused=sample_reused,
         )
         self._cleanup_workspace_session.workspace = workspace
         return workspace
@@ -251,6 +309,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         scene.splat_count -= deleted
         scene.selected_count = 0
         scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
+        self._bump_scene_generation()
         self._cleanup_workspace_session.workspace = replace(
             self._cleanup_workspace_session.workspace,
             candidate_selection_mask=(),
@@ -290,6 +349,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         scene.splat_count -= deleted
         scene.selected_count = 0
         scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
+        self._bump_scene_generation()
         self._last_cleanup_preview = None
         self._pending_cleanup_apply_count = deleted
         return ToolResult(
@@ -408,6 +468,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
                 "used_native_sampling": False,
                 "max_splats": max_splats,
                 "aborted": aborted,
+                "scene_generation": scene.generation,
             },
             quality_score=max(0, 100 - sum(result.score_impact for result in results)),
             warnings=warnings,
@@ -416,6 +477,10 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             results=results,
         )
         self._last_scene_analysis = report
+        self._last_scene_analysis_generation = scene.generation
+        self._last_scene_analysis_total_splats = scene.splat_count
+        self._last_scene_analysis_voxel_size = voxel_size
+        self._last_scene_analysis_min_voxel_cluster_size = min_voxel_cluster_size
         self._cleanup_workspace_session = None
         return report
 
@@ -427,6 +492,8 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         cluster_distance_threshold: float,
         outlier_distance: float,
         cleanup_aggressiveness: float,
+        analysis_reused: bool,
+        sample_reused: bool,
     ) -> CleanupWorkspace:
         scene = self._require_scene()
         if self._last_scene_analysis is None:
@@ -480,10 +547,19 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             notes=list(summary.notes) + ["Workspace selection preview."],
         )
         self._last_cleanup_preview = summary
+        workspace_report = replace(
+            self._last_scene_analysis,
+            scene_stats={
+                **self._last_scene_analysis.scene_stats,
+                "estimated_affected_splats_total": summary.estimated_affected_splats_total,
+                "estimated_percentage_of_total": summary.estimated_percentage_of_total,
+            },
+            warnings=list(summary.warnings) or list(self._last_scene_analysis.warnings),
+        )
         return CleanupWorkspace(
-            scene_analysis_report=self._last_scene_analysis,
+            scene_analysis_report=workspace_report,
             cleanup_candidate_summary=summary,
-            scene_profile=build_scene_profile(self._last_scene_analysis),
+            scene_profile=build_scene_profile(workspace_report),
             current_cleanup_parameters=CleanupParameters(
                 voxel_size=voxel_size,
                 min_voxel_cluster_size=min_voxel_cluster_size,
@@ -502,12 +578,12 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             selection_mode="replace",
             selection_source=selection_source,
             approximate=summary.approximate,
-            analysis_reused=self._cleanup_workspace_session is not None,
+            analysis_reused=analysis_reused,
             candidate_update_time=0.01,
             workspace_update_time=0.01,
             selection_update_time=0.01,
             total_workspace_update_time=0.01,
-            estimated_sample_reuse=1.0 if self._cleanup_workspace_session is not None else 0.0,
+            estimated_sample_reuse=1.0 if sample_reused else 0.0,
         )
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:
@@ -589,6 +665,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         scene.splat_count = max(0, scene.splat_count - deleted)
         scene.selected_count = 0
         scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
+        self._bump_scene_generation()
         return ToolResult(message=f"Deleted {deleted:,} selected splats.")
 
     def crop_by_box(self, box: Box3D, keep_inside: bool = True) -> ToolResult:
@@ -600,6 +677,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         scene.splat_count = int(scene.splat_count * factor)
         scene.selected_count = 0
         scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
+        self._bump_scene_generation()
         return ToolResult(message=f"Cropped scene from {before:,} to {scene.splat_count:,} splats.")
 
     def crop_by_height(self, z_min: float | None, z_max: float | None, keep_inside: bool = True) -> ToolResult:
@@ -613,6 +691,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         before = scene.splat_count
         scene.splat_count = int(scene.splat_count * factor)
         scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
+        self._bump_scene_generation()
         return ToolResult(message=f"Height crop applied from {before:,} to {scene.splat_count:,} splats.")
 
     def optimize_for_target(self, target: str, max_splats: int | None = None) -> OptimizationResult:
@@ -626,6 +705,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             scene.splat_count = min(scene.splat_count, int(cap))
         scene.sh_degree = profile.sh_degree
         scene.file_size_mb = round(scene.splat_count / 6500.0, 2)
+        self._bump_scene_generation()
         estimated_vram = round(scene.splat_count * (32 + scene.sh_degree * 12) / 1_000_000, 2)
         return OptimizationResult(
             target=request.target,

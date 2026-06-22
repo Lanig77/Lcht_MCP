@@ -1230,15 +1230,15 @@ def test_open_cleanup_workspace_reuses_latest_analysis_and_builds_native_selecti
     )
 
     assert workspace.scene_analysis_report is report
-    assert workspace.scene_profile.profile_label in {"watch", "cleanup_recommended"}
+    assert workspace.scene_profile.profile_label in {"needs_cleanup", "critical"}
     assert workspace.current_cleanup_parameters.outlier_distance == pytest.approx(2.5)
     assert workspace.current_cleanup_parameters.cleanup_aggressiveness == pytest.approx(0.5)
     assert workspace.current_cleanup_parameters.cluster_distance_threshold == pytest.approx(0.10)
     assert workspace.selected_count == 2
     assert "floating voxel clusters" in workspace.selection_source
     assert "disconnected clusters" in workspace.selection_source
-    assert workspace.analysis_reused is False
-    assert workspace.estimated_sample_reuse == pytest.approx(0.0)
+    assert workspace.analysis_reused is True
+    assert workspace.estimated_sample_reuse == pytest.approx(1.0)
     assert native_selection.deselect_all_calls == 1
     assert native_selection.add_to_selection_calls == [[2, 3]]
     assert fake_scene.notify_changed_calls == 1
@@ -1314,7 +1314,7 @@ def test_update_cleanup_workspace_refreshes_selection_without_reanalyzing_scene(
     assert updated.current_cleanup_parameters.voxel_size == pytest.approx(2.0)
     assert updated.current_cleanup_parameters.cluster_distance_threshold == pytest.approx(0.50)
     assert updated.current_cleanup_parameters.cleanup_aggressiveness == pytest.approx(0.9)
-    assert updated.analysis_reused is True
+    assert updated.analysis_reused is False
     assert updated.candidate_update_time >= 0.0
     assert updated.total_workspace_update_time >= updated.selection_update_time
     assert build_cloud_calls == 1
@@ -1323,6 +1323,137 @@ def test_update_cleanup_workspace_refreshes_selection_without_reanalyzing_scene(
     assert fake_scene.notify_changed_calls == 2
     assert fake_scene._model.last_soft_delete_argument is None
     assert fake_scene._model.apply_deleted_calls == 0
+
+
+def test_open_cleanup_workspace_reuses_latest_scene_analysis_when_valid(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    adapter_impl_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld.adapter")
+    original_import_module = adapter_module.importlib.import_module
+    original_build_engine = adapter_impl_module.build_default_scene_analysis_engine
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+
+    engine_build_calls = 0
+
+    def counting_build_engine():
+        nonlocal engine_build_calls
+        engine_build_calls += 1
+        return original_build_engine()
+
+    monkeypatch.setattr(
+        adapter_impl_module,
+        "build_default_scene_analysis_engine",
+        counting_build_engine,
+    )
+
+    workspace = adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        cluster_distance_threshold=0.10,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+
+    assert workspace.analysis_reused is True
+    assert engine_build_calls == 0
+
+
+def test_open_cleanup_workspace_recomputes_when_scene_generation_changes(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    adapter_impl_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld.adapter")
+    original_import_module = adapter_module.importlib.import_module
+    original_build_engine = adapter_impl_module.build_default_scene_analysis_engine
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    fake_scene.generation = 1
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+    fake_scene.generation = 2
+
+    engine_build_calls = 0
+
+    def counting_build_engine():
+        nonlocal engine_build_calls
+        engine_build_calls += 1
+        return original_build_engine()
+
+    monkeypatch.setattr(
+        adapter_impl_module,
+        "build_default_scene_analysis_engine",
+        counting_build_engine,
+    )
+
+    workspace = adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        cluster_distance_threshold=0.10,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+
+    assert workspace.analysis_reused is False
+    assert workspace.scene_analysis_report.scene_stats["scene_generation"] == 2
+    assert engine_build_calls == 1
 
 
 def test_reset_cleanup_workspace_clears_native_selection_without_scene_mutation(monkeypatch):
@@ -1832,9 +1963,9 @@ def test_cleanup_workspace_reuses_sampled_analysis_on_large_scene_updates(monkey
     )
 
     assert opened.approximate is True
-    assert opened.analysis_reused is False
+    assert opened.analysis_reused is True
     assert updated.approximate is True
-    assert updated.analysis_reused is True
+    assert updated.analysis_reused is False
     assert updated.selected_count >= 0
     assert fake_scene._model.last_soft_delete_argument is None
     assert fake_scene._model.apply_deleted_calls == 0

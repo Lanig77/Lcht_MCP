@@ -155,6 +155,7 @@ class _SceneAnalysisState:
     project_path: str
     total_splats: int
     approximate: bool
+    scene_generation: object | None = None
 
 
 @dataclass(slots=True)
@@ -172,6 +173,14 @@ class _CleanupCandidateBuild:
     selection_mask: list[bool]
     selected_indices: list[int]
     selection_sources: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SceneAnalysisReuseDecision:
+    analysis_state: _SceneAnalysisState
+    analysis_reused: bool
+    sample_reused: bool
+    reason: str
 
 
 def _raise_analyze_scene_stage_error(stage: str, exc: Exception) -> None:
@@ -320,6 +329,7 @@ class LichtfeldAdapter(AdapterContract):
 
         approximate = len(sampled_rows) != analysis_stats.splat_count
         aborted = abort_if_above_limit and analysis_stats.splat_count > max_splats
+        scene_generation = self._read_scene_generation(scene, model)
         logger.info(
             "LichtFeld scene analysis: total_splats=%s analyzed_splats=%s "
             "approximate=%s sampling_stride=%s native_sampling=%s aborted=%s",
@@ -356,6 +366,13 @@ class LichtfeldAdapter(AdapterContract):
             report = engine.analyze(context)
         except Exception as exc:
             _raise_analyze_scene_stage_error("engine_run", exc)
+        report = replace(
+            report,
+            scene_stats={
+                **report.scene_stats,
+                "scene_generation": scene_generation,
+            },
+        )
         logger.info(
             "LichtFeld scene analysis complete: quality_score=%s warnings=%s "
             "recommendations=%s analysis_time=%.3fs",
@@ -371,6 +388,7 @@ class LichtfeldAdapter(AdapterContract):
             project_path=project_path,
             total_splats=analysis_stats.splat_count,
             approximate=approximate,
+            scene_generation=scene_generation,
         )
         self._last_cleanup_preview = None
         self._invalidate_cleanup_workspace()
@@ -496,7 +514,6 @@ class LichtfeldAdapter(AdapterContract):
         outlier_distance: float = 2.5,
         cleanup_aggressiveness: float = 0.5,
     ) -> CleanupWorkspace:
-        analysis_state = self._require_cleanup_analysis_state()
         params = self._normalize_cleanup_parameters(
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
@@ -504,7 +521,26 @@ class LichtfeldAdapter(AdapterContract):
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
         )
-        session = self._build_cleanup_workspace_session(analysis_state, params)
+        analysis_decision = self._resolve_cleanup_analysis_state_for_workspace(params)
+        logger.info(
+            "LichtFeld cleanup workspace analysis: analysis_reused=%s sample_reused=%s reason=%s",
+            analysis_decision.analysis_reused,
+            analysis_decision.sample_reused,
+            analysis_decision.reason,
+        )
+        session = self._build_cleanup_workspace_session(
+            analysis_decision.analysis_state,
+            params,
+            existing_session=(
+                self._reusable_cleanup_session_for_scene(
+                    analysis_decision.analysis_state.project_path
+                )
+                if analysis_decision.sample_reused
+                else None
+            ),
+            analysis_reused=analysis_decision.analysis_reused,
+            sample_reused=analysis_decision.sample_reused,
+        )
         self._last_cleanup_preview = None
         self._cleanup_workspace_session = session
         return session.workspace
@@ -519,7 +555,7 @@ class LichtfeldAdapter(AdapterContract):
         cleanup_aggressiveness: float = 0.5,
     ) -> CleanupWorkspace:
         session = self._require_cleanup_session()
-        workspace = self._ensure_workspace_scene_matches(session.workspace)
+        self._ensure_workspace_scene_matches(session.workspace)
         params = self._normalize_cleanup_parameters(
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
@@ -527,10 +563,19 @@ class LichtfeldAdapter(AdapterContract):
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
         )
+        analysis_decision = self._resolve_cleanup_analysis_state_for_workspace(params)
+        logger.info(
+            "LichtFeld cleanup workspace analysis: analysis_reused=%s sample_reused=%s reason=%s",
+            analysis_decision.analysis_reused,
+            analysis_decision.sample_reused,
+            analysis_decision.reason,
+        )
         updated_session = self._build_cleanup_workspace_session(
-            self._analysis_state_from_workspace(workspace),
+            analysis_decision.analysis_state,
             params,
-            existing_session=session,
+            existing_session=session if analysis_decision.sample_reused else None,
+            analysis_reused=analysis_decision.analysis_reused,
+            sample_reused=analysis_decision.sample_reused,
         )
         self._last_cleanup_preview = None
         self._cleanup_workspace_session = updated_session
@@ -1454,7 +1499,154 @@ class LichtfeldAdapter(AdapterContract):
             project_path=workspace.scene_profile.project_path,
             total_splats=workspace.scene_profile.total_splats,
             approximate=workspace.approximate,
+            scene_generation=workspace.scene_analysis_report.scene_stats.get("scene_generation"),
         )
+
+    def _resolve_cleanup_analysis_state_for_workspace(
+        self,
+        params: CleanupParameters,
+    ) -> _SceneAnalysisReuseDecision:
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        project_path = get_scene_path(scene)
+        scene_generation = self._read_scene_generation(scene, model)
+        cached_state = self._last_scene_analysis
+        if cached_state is None:
+            return _SceneAnalysisReuseDecision(
+                analysis_state=self._recompute_cleanup_analysis_from_scene(params),
+                analysis_reused=False,
+                sample_reused=False,
+                reason="missing_analysis",
+            )
+        if project_path != cached_state.project_path:
+            return _SceneAnalysisReuseDecision(
+                analysis_state=self._recompute_cleanup_analysis_from_scene(params),
+                analysis_reused=False,
+                sample_reused=False,
+                reason="scene_path_changed",
+            )
+        if self._scene_generation_changed(cached_state.scene_generation, scene_generation):
+            return _SceneAnalysisReuseDecision(
+                analysis_state=self._recompute_cleanup_analysis_from_scene(params),
+                analysis_reused=False,
+                sample_reused=False,
+                reason="scene_generation_changed",
+            )
+
+        position_source = resolve_position_source(model)
+        total_splats = self._read_splat_count_without_selection(model, position_source)
+        if total_splats is not None and total_splats != cached_state.total_splats:
+            return _SceneAnalysisReuseDecision(
+                analysis_state=self._recompute_cleanup_analysis_from_scene(params),
+                analysis_reused=False,
+                sample_reused=False,
+                reason="scene_splat_count_changed",
+            )
+        if self._analysis_requires_recomputation(cached_state, params):
+            updated_state = self._recompute_cleanup_analysis_from_cached_sample(
+                cached_state,
+                params,
+                scene_generation=scene_generation,
+            )
+            self._last_scene_analysis = updated_state
+            return _SceneAnalysisReuseDecision(
+                analysis_state=updated_state,
+                analysis_reused=False,
+                sample_reused=True,
+                reason="analysis_parameters_changed",
+            )
+        return _SceneAnalysisReuseDecision(
+            analysis_state=cached_state,
+            analysis_reused=True,
+            sample_reused=True,
+            reason="cached_analysis_valid",
+        )
+
+    def _recompute_cleanup_analysis_from_scene(
+        self,
+        params: CleanupParameters,
+    ) -> _SceneAnalysisState:
+        self.analyze_scene(
+            voxel_size=params.voxel_size,
+            min_voxel_cluster_size=params.min_voxel_cluster_size,
+        )
+        analysis_state = self._last_scene_analysis
+        if analysis_state is None:
+            raise AdapterUnavailableError(
+                "Cleanup workspace could not refresh scene analysis for the active scene."
+            )
+        return analysis_state
+
+    def _recompute_cleanup_analysis_from_cached_sample(
+        self,
+        analysis_state: _SceneAnalysisState,
+        params: CleanupParameters,
+        *,
+        scene_generation: object | None,
+    ) -> _SceneAnalysisState:
+        scene_stats = analysis_state.report.scene_stats
+        context = SceneAnalysisContext(
+            scene_name=str(scene_stats.get("scene_name", "unknown_scene")),
+            project_path=analysis_state.project_path,
+            positions=list(analysis_state.sampled_rows),
+            total_splats=analysis_state.total_splats,
+            analyzed_splats=len(analysis_state.sampled_rows),
+            selected_splats=int(scene_stats.get("selected_splats", 0)),
+            deleted_splats=int(scene_stats.get("deleted_splats", 0)),
+            voxel_size=params.voxel_size,
+            min_voxel_cluster_size=params.min_voxel_cluster_size,
+            approximate=analysis_state.approximate,
+            sampling_stride=int(scene_stats.get("sampling_stride", 1)),
+            used_native_sampling=bool(scene_stats.get("used_native_sampling", False)),
+            max_splats=int(scene_stats.get("max_splats", max(1, len(analysis_state.sampled_rows)))),
+            aborted=bool(scene_stats.get("aborted", False)),
+        )
+        report = build_default_scene_analysis_engine().analyze(context)
+        report = replace(
+            report,
+            scene_stats={
+                **report.scene_stats,
+                "scene_generation": scene_generation,
+            },
+        )
+        return _SceneAnalysisState(
+            report=report,
+            sampled_rows=list(analysis_state.sampled_rows),
+            sampled_indices=list(analysis_state.sampled_indices),
+            project_path=analysis_state.project_path,
+            total_splats=analysis_state.total_splats,
+            approximate=analysis_state.approximate,
+            scene_generation=scene_generation,
+        )
+
+    @staticmethod
+    def _analysis_requires_recomputation(
+        analysis_state: _SceneAnalysisState,
+        params: CleanupParameters,
+    ) -> bool:
+        scene_stats = analysis_state.report.scene_stats
+        cached_voxel_size = float(scene_stats.get("voxel_size", params.voxel_size))
+        cached_min_cluster_size = int(
+            scene_stats.get("min_voxel_cluster_size", params.min_voxel_cluster_size)
+        )
+        return not math.isclose(
+            cached_voxel_size,
+            params.voxel_size,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ) or cached_min_cluster_size != params.min_voxel_cluster_size
+
+    def _reusable_cleanup_session_for_scene(
+        self,
+        project_path: str,
+    ) -> CleanupSession | None:
+        session = self._cleanup_workspace_session
+        if session is None:
+            return None
+        if session.workspace.scene_profile.project_path != project_path:
+            return None
+        return session
 
     @staticmethod
     def _normalize_cleanup_parameters(
@@ -1489,6 +1681,8 @@ class LichtfeldAdapter(AdapterContract):
         params: CleanupParameters,
         *,
         existing_session: CleanupSession | None = None,
+        analysis_reused: bool,
+        sample_reused: bool,
     ) -> CleanupSession:
         lichtfeld_module = load_lichtfeld()
         scene = require_active_scene(lichtfeld_module)
@@ -1506,7 +1700,6 @@ class LichtfeldAdapter(AdapterContract):
             if existing_session is not None
             else build_gaussian_cloud_from_positions(list(analysis_state.sampled_rows))
         )
-        analysis_reused = existing_session is not None
 
         candidate_update_start = perf_counter()
         build = self._build_cleanup_candidate_preview(
@@ -1560,17 +1753,21 @@ class LichtfeldAdapter(AdapterContract):
             workspace_update_time=total_workspace_update_time,
             selection_update_time=selection_update_time,
             total_workspace_update_time=total_workspace_update_time,
-            estimated_sample_reuse=1.0 if analysis_reused else 0.0,
+            estimated_sample_reuse=1.0 if sample_reused else 0.0,
         )
         logger.info(
             "LichtFeld cleanup workspace: analysis_reused=%s candidate_update_time=%.6fs "
-            "selection_update_time=%.6fs total_workspace_update_time=%.6fs estimated_sample_reuse=%.2f "
-            "selected_count=%s",
+            "selection_update_time=%.6fs total_workspace_update_time=%.6fs "
+            "estimated_sample_reuse=%.2f quality_score=%s scene_health=%s "
+            "estimated_affected_splats_total=%s selected_count=%s",
             workspace.analysis_reused,
             workspace.candidate_update_time,
             workspace.selection_update_time,
             workspace.total_workspace_update_time,
             workspace.estimated_sample_reuse,
+            workspace.scene_profile.quality_score,
+            workspace.scene_profile.profile_label,
+            workspace.cleanup_candidate_summary.estimated_affected_splats_total,
             workspace.selected_count,
         )
         return CleanupSession(
@@ -1601,6 +1798,44 @@ class LichtfeldAdapter(AdapterContract):
         )
         self._selection.clear_cache()
         notify_scene_changed(scene)
+
+    @staticmethod
+    def _read_scene_generation(
+        scene: object,
+        model: object,
+    ) -> object | None:
+        for owner in (scene, model):
+            for attribute_name in (
+                "scene_generation",
+                "generation",
+                "generation_id",
+                "change_generation",
+                "content_generation",
+            ):
+                value = getattr(owner, attribute_name, None)
+                if callable(value):
+                    try:
+                        value = value()
+                    except Exception:
+                        continue
+                if value is None:
+                    continue
+                if isinstance(value, (str, int, float, bool)):
+                    return value
+                try:
+                    return int(value)
+                except Exception:
+                    return str(value)
+        return None
+
+    @staticmethod
+    def _scene_generation_changed(
+        cached_generation: object | None,
+        current_generation: object | None,
+    ) -> bool:
+        if cached_generation is None and current_generation is None:
+            return False
+        return cached_generation != current_generation
 
     @staticmethod
     def _read_splat_count_without_selection(

@@ -411,7 +411,7 @@ class SceneAnalysisEngine:
             analyzed_splats=context.analyzed_splats,
             approximate=context.approximate,
         )
-        quality_score = max(0, min(100, 100 - sum(result.score_impact for result in results)))
+        quality_score = _calculate_quality_score(results, cleanup_metrics)
         return SceneAnalysisReport(
             scene_stats={
                 "scene_name": context.scene_name,
@@ -675,6 +675,30 @@ def _analysis_log_label(name: str) -> str:
     if name == "density":
         return "density analysis"
     return f"{name} analysis"
+
+
+def _calculate_quality_score(
+    results: list[AnalysisResult],
+    cleanup_metrics: dict[str, object],
+) -> int:
+    warning_results = sum(result.severity is AnalysisSeverity.WARNING for result in results)
+    critical_results = sum(result.severity is AnalysisSeverity.CRITICAL for result in results)
+    score = 100 - sum(result.score_impact for result in results)
+    score -= warning_results * 4
+    score -= critical_results * 8
+
+    estimated_cleanup_ratio = float(cleanup_metrics.get("estimated_percentage_of_total", 0.0))
+    estimated_cleanup_count = int(cleanup_metrics.get("estimated_affected_splats_total", 0))
+    has_cleanup_signal = estimated_cleanup_count > 0 or estimated_cleanup_ratio > 0.0
+
+    if critical_results > 0:
+        score = min(score, 54)
+    elif estimated_cleanup_ratio >= 0.05:
+        score = min(score, 72)
+    elif warning_results > 0 or has_cleanup_signal:
+        score = min(score, 84)
+
+    return max(0, min(100, int(round(score))))
 
 
 def _serialize_value(value: object) -> object:
