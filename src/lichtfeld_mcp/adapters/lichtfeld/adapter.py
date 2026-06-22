@@ -625,16 +625,32 @@ class LichtfeldAdapter(AdapterContract):
         scene = require_active_scene(lichtfeld_module)
         model = require_combined_model(scene)
         self._ensure_workspace_scene_matches(workspace)
+        current_splat_count = self._read_current_model_splat_count(model)
 
         current_scene_generation = self._read_scene_generation(scene, model)
         if self._scene_generation_changed(workspace.scene_generation, current_scene_generation):
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="scene_content_stamp_changed",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_splat_count,
+            )
+            self._invalidate_cleanup_workspace()
             raise AdapterUnavailableError(
                 "Cleanup workspace no longer matches the current scene generation. "
                 "Open Cleanup Workspace again."
             )
 
-        current_splat_count = self._read_current_model_splat_count(model)
         if current_splat_count != workspace.scene_profile.total_splats:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="scene_splat_count_changed",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_splat_count,
+            )
+            self._invalidate_cleanup_workspace()
             raise AdapterUnavailableError(
                 "Cleanup workspace no longer matches the current scene splat count. "
                 "Open Cleanup Workspace again."
@@ -652,10 +668,25 @@ class LichtfeldAdapter(AdapterContract):
 
         native_mask_size = workspace.native_selection_mask_size
         if native_mask_size is None:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="workspace_mask_size_unavailable",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_splat_count,
+            )
             raise AdapterUnavailableError(
                 "Cleanup workspace native selection mask size is unavailable for soft delete."
             )
         if native_mask_size != current_splat_count:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="workspace_mask_size_mismatch",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_splat_count,
+            )
+            self._invalidate_cleanup_workspace()
             raise AdapterUnavailableError(
                 "Cleanup workspace native selection mask size does not match the current scene "
                 "splat count."
@@ -758,17 +789,32 @@ class LichtfeldAdapter(AdapterContract):
         scene = require_active_scene(lichtfeld_module)
         model = require_combined_model(scene)
         self._ensure_workspace_scene_matches(workspace)
+        current_splat_count = self._read_current_model_splat_count(model)
 
         current_scene_generation = self._read_scene_generation(scene, model)
         if self._scene_generation_changed(workspace.scene_generation, current_scene_generation):
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="scene_content_stamp_changed",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_splat_count,
+            )
             self._invalidate_cleanup_workspace()
             raise AdapterUnavailableError(
                 "Cleanup workspace no longer matches the current scene generation. "
                 "Open Cleanup Workspace again."
             )
 
-        initial_splat_count = self._read_current_model_splat_count(model)
+        initial_splat_count = current_splat_count
         if initial_splat_count != workspace.scene_profile.total_splats:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="scene_splat_count_changed",
+                current_generation=current_scene_generation,
+                current_splat_count=initial_splat_count,
+                current_model_splat_count=initial_splat_count,
+            )
             self._invalidate_cleanup_workspace()
             raise AdapterUnavailableError(
                 "Cleanup workspace no longer matches the current scene splat count. "
@@ -784,10 +830,25 @@ class LichtfeldAdapter(AdapterContract):
 
         delete_mask_size = self._native_mask_size(self._last_delete_mask)
         if delete_mask_size is None:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="delete_mask_size_unavailable",
+                current_generation=current_scene_generation,
+                current_splat_count=initial_splat_count,
+                current_model_splat_count=initial_splat_count,
+            )
             raise AdapterUnavailableError(
                 "Cleanup workspace soft delete mask size is unavailable for permanent apply."
             )
         if delete_mask_size != initial_splat_count:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="delete_mask_size_mismatch",
+                current_generation=current_scene_generation,
+                current_splat_count=initial_splat_count,
+                current_model_splat_count=initial_splat_count,
+                workspace_mask_size=delete_mask_size,
+            )
             self._invalidate_cleanup_workspace()
             raise AdapterUnavailableError(
                 "Cleanup workspace soft delete mask size does not match the current scene "
@@ -1687,6 +1748,21 @@ class LichtfeldAdapter(AdapterContract):
         lichtfeld_module = load_lichtfeld()
         scene = require_active_scene(lichtfeld_module)
         if get_scene_path(scene) != workspace.scene_profile.project_path:
+            current_generation = None
+            current_model_splat_count = None
+            try:
+                model = require_combined_model(scene)
+                current_generation = self._read_scene_generation(scene, model)
+                current_model_splat_count = self._read_current_model_splat_count(model)
+            except Exception:
+                pass
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="scene_path_changed",
+                current_generation=current_generation,
+                current_splat_count=current_model_splat_count,
+                current_model_splat_count=current_model_splat_count,
+            )
             self._invalidate_cleanup_workspace()
             raise AdapterUnavailableError(
                 "Cleanup workspace no longer matches the active scene. Open Cleanup Workspace again."
@@ -1702,7 +1778,7 @@ class LichtfeldAdapter(AdapterContract):
             project_path=workspace.scene_profile.project_path,
             total_splats=workspace.scene_profile.total_splats,
             approximate=workspace.approximate,
-            scene_generation=workspace.scene_analysis_report.scene_stats.get("scene_generation"),
+            scene_generation=workspace.scene_generation,
         )
 
     def _resolve_cleanup_analysis_state_for_workspace(
@@ -2018,11 +2094,13 @@ class LichtfeldAdapter(AdapterContract):
     ) -> object | None:
         for owner in (scene, model):
             for attribute_name in (
-                "scene_generation",
-                "generation",
-                "generation_id",
-                "change_generation",
+                "scene_content_stamp",
+                "scene_content_generation",
+                "content_stamp",
                 "content_generation",
+                "scene_generation",
+                "content_version",
+                "data_generation",
             ):
                 value = getattr(owner, attribute_name, None)
                 if callable(value):
@@ -2039,6 +2117,31 @@ class LichtfeldAdapter(AdapterContract):
                 except Exception:
                     return str(value)
         return None
+
+    def _log_cleanup_workspace_validation_failure(
+        self,
+        workspace: CleanupWorkspace,
+        *,
+        invalidation_reason: str,
+        current_generation: object | None,
+        current_splat_count: int | None,
+        current_model_splat_count: int | None,
+        workspace_mask_size: int | None = None,
+    ) -> None:
+        logger.info(
+            "LichtFeld cleanup workspace validity: workspace_generation=%s "
+            "current_generation=%s workspace_splat_count=%s current_splat_count=%s "
+            "workspace_mask_size=%s current_model_splat_count=%s invalidation_reason=%s",
+            workspace.scene_generation,
+            current_generation,
+            workspace.scene_profile.total_splats,
+            current_splat_count,
+            workspace.native_selection_mask_size
+            if workspace_mask_size is None
+            else workspace_mask_size,
+            current_model_splat_count,
+            invalidation_reason,
+        )
 
     @staticmethod
     def _scene_generation_changed(
