@@ -40,6 +40,7 @@ from lichtfeld_mcp.core.validation import normalize_measurement_unit, normalize_
 from lichtfeld_mcp.errors import ProjectNotOpenError
 from lichtfeld_mcp.schemas.common import (
     Box3D,
+    CleanupApplyDeletedResult,
     CleanupSoftDeleteResult,
     CleanupSelectionPreviewResult,
     ExportResult,
@@ -362,10 +363,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             )
         deleted = min(scene.splat_count, selected_count)
         self._push_history("soft_delete_cleanup_workspace_selection", {"deleted": deleted})
-        scene.splat_count -= deleted
         scene.selected_count = 0
-        scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
-        self._bump_scene_generation()
         self._cleanup_workspace_session.workspace = replace(
             workspace,
             candidate_selection_mask=(),
@@ -382,8 +380,8 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._pending_cleanup_apply_count = deleted
         return CleanupSoftDeleteResult(
             soft_deleted_count=deleted,
-            total_splats=scene.splat_count + deleted,
-            percentage=(0.0 if scene.splat_count + deleted <= 0 else deleted / (scene.splat_count + deleted)),
+            total_splats=scene.splat_count,
+            percentage=(0.0 if scene.splat_count <= 0 else deleted / scene.splat_count),
             restore_available=True,
             message=(
                 f"Soft-deleted {deleted:,} cleanup workspace splats. "
@@ -433,6 +431,52 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._pending_cleanup_apply_count = 0
         return ToolResult(
             message=f"Permanently applied cleanup of {deleted:,} soft-deleted splats."
+        )
+
+    def apply_cleanup_workspace_deleted(self) -> CleanupApplyDeletedResult:
+        scene = self._require_scene()
+        if self._cleanup_workspace_session is None:
+            raise ProjectNotOpenError("No cleanup workspace is active. Open Cleanup Workspace first.")
+        workspace = self._cleanup_workspace_session.workspace
+        if workspace.workspace_state != "soft_deleted":
+            raise ProjectNotOpenError(
+                "No cleanup workspace soft delete is available. "
+                "Run Soft Delete Cleanup Workspace Selection first."
+            )
+        if self._pending_cleanup_apply_count <= 0:
+            raise ProjectNotOpenError(
+                "No reversible cleanup workspace soft delete is available to apply."
+            )
+        if workspace.scene_generation != scene.generation:
+            self._cleanup_workspace_session = None
+            raise ProjectNotOpenError(
+                "Cleanup workspace no longer matches the current scene generation. "
+                "Open Cleanup Workspace again."
+            )
+        if workspace.scene_profile.total_splats != scene.splat_count:
+            self._cleanup_workspace_session = None
+            raise ProjectNotOpenError(
+                "Cleanup workspace no longer matches the current scene splat count. "
+                "Open Cleanup Workspace again."
+            )
+
+        initial_splat_count = scene.splat_count
+        soft_deleted_count = min(scene.splat_count, self._pending_cleanup_apply_count)
+        self._push_history("apply_cleanup_workspace_deleted", {"deleted": soft_deleted_count})
+        scene.splat_count -= soft_deleted_count
+        scene.selected_count = 0
+        scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
+        self._pending_cleanup_apply_count = 0
+        self._bump_scene_generation()
+        self._cleanup_workspace_session = None
+        return CleanupApplyDeletedResult(
+            initial_splat_count=initial_splat_count,
+            soft_deleted_count=soft_deleted_count,
+            permanently_deleted_count=soft_deleted_count,
+            final_splat_count=scene.splat_count,
+            restore_available=False,
+            workspace_state="invalidated",
+            message=f"Permanently applied cleanup of {soft_deleted_count:,} soft-deleted splats.",
         )
 
     def analyze_scene(

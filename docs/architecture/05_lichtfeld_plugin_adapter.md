@@ -66,8 +66,12 @@ preview workflow:
    active workspace session
 5. `preview_cleanup_candidates()` and `preview_cleanup_selection()` remain available
    as compatibility helpers over the same non-destructive cleanup logic
-6. optional edit steps can later consume that validated selection for soft delete,
-   restore, and explicit permanent apply
+6. `soft_delete_cleanup_workspace_selection()` consumes the workspace-owned native
+   preview mask for a reversible cleanup soft delete
+7. `restore_last_delete()` reverses that workspace soft delete while it is still
+   pending
+8. `apply_cleanup_workspace_deleted()` is the only cleanup workspace operation that
+   may call `model.apply_deleted()` to permanently finalize the workspace soft delete
 
 This keeps analysis, preview, and destructive editing as separate stages.
 
@@ -109,6 +113,7 @@ The session owns:
 - the sampled `GaussianCloud` reused for parameter updates
 - the current cleanup parameters
 - the current native selection handle and preview mask state
+- the current cleanup workspace lifecycle state (`active` or `soft_deleted`)
 - the current selection statistics and update timings
 
 The workspace rendered to the plugin UI is the session snapshot for the current
@@ -332,11 +337,11 @@ Cleanup now follows the staged architecture below:
 
 ```text
 Analyze Scene
-  -> Cleanup Workspace
-  -> Native Selection Preview
-  -> Soft Delete
-  -> Restore
-  -> Apply Deleted
+  -> Open Cleanup Workspace
+  -> Update Preview
+  -> Soft Delete Cleanup Workspace Selection
+  -> Restore Last Delete
+  -> Apply Deleted Cleanup Permanently
 ```
 ```
 

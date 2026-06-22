@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from lichtfeld_mcp.schemas.common import (
     Box3D,
+    CleanupApplyDeletedResult,
     CleanupSoftDeleteResult,
     CleanupSelectionPreviewResult,
     ExportResult,
@@ -111,6 +112,9 @@ class LichtfeldAdapter(ABC):
 
     @abstractmethod
     def apply_cleanup_candidates(self) -> ToolResult: ...
+
+    @abstractmethod
+    def apply_cleanup_workspace_deleted(self) -> CleanupApplyDeletedResult: ...
 
     @abstractmethod
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult: ...

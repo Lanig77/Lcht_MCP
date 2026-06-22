@@ -172,26 +172,36 @@ def _workspace(selected_count: int) -> CleanupWorkspace:
 
 
 class FakeConfirmedCleanupAdapter:
-    def __init__(self, *, should_raise: bool = False):
-        self.apply_cleanup_candidates_calls = 0
+    def __init__(
+        self,
+        *,
+        should_raise: str | None = None,
+        workspace: CleanupWorkspace | None = None,
+    ):
+        self.apply_cleanup_workspace_deleted_calls = 0
         self.apply_deleted_calls = 0
         self.should_raise = should_raise
         self.current_splat_count = 100
+        self.current_workspace = workspace
 
-    def get_stats(self):
-        return SimpleNamespace(splat_count=self.current_splat_count)
+    def get_cleanup_workspace(self):
+        return self.current_workspace
 
-    def apply_cleanup_candidates(self):
-        self.apply_cleanup_candidates_calls += 1
-        if self.should_raise:
-            raise RuntimeError(
-                "No confirmed cleanup soft delete is available. "
-                "Run Soft Delete Cleanup Preview after Preview Cleanup Selection."
-            )
+    def apply_cleanup_workspace_deleted(self):
+        self.apply_cleanup_workspace_deleted_calls += 1
+        if self.should_raise is not None:
+            raise RuntimeError(self.should_raise)
         self.apply_deleted_calls += 1
         self.current_splat_count -= 12
+        self.current_workspace = None
         return SimpleNamespace(
             ok=True,
+            initial_splat_count=100,
+            soft_deleted_count=12,
+            permanently_deleted_count=12,
+            final_splat_count=88,
+            restore_available=False,
+            workspace_state="invalidated",
             message="Permanently applied cleanup of 12 soft-deleted splats.",
         )
 
@@ -285,8 +295,22 @@ def test_run_apply_confirmed_cleanup_returns_early_without_confirmation(monkeypa
 
     success, message = test_runner.run_apply_confirmed_cleanup()
 
-    assert success is True
+    assert success is False
     assert "CONFIRM_SAFE_DELETE=False" in message
+
+
+def test_run_apply_confirmed_cleanup_refuses_when_safe_delete_is_disabled(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    monkeypatch.setattr(
+        test_runner,
+        "_build_adapter",
+        lambda: (_ for _ in ()).throw(AssertionError("adapter should not be built")),
+    )
+
+    success, message = test_runner.run_apply_confirmed_cleanup()
+
+    assert success is False
+    assert "ENABLE_SAFE_DELETE=False" in message
 
 
 def test_run_soft_delete_cleanup_selection_refuses_without_workspace(monkeypatch):
@@ -381,18 +405,24 @@ def test_run_apply_confirmed_cleanup_refuses_without_pending_cleanup_soft_delete
     runtime_config, test_runner = _load_runner_modules(monkeypatch)
     runtime_config.arm_safe_delete()
     runtime_config.confirm_safe_delete()
-    fake_adapter = FakeConfirmedCleanupAdapter(should_raise=True)
+    fake_adapter = FakeConfirmedCleanupAdapter(
+        should_raise=(
+            "No cleanup workspace soft delete is available. "
+            "Run Soft Delete Cleanup Workspace Selection first."
+        ),
+        workspace=_workspace(0),
+    )
     monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
 
     success, message = test_runner.run_apply_confirmed_cleanup()
 
     assert success is False
-    assert "Run Soft Delete Cleanup Preview after Preview Cleanup Selection" in message
-    assert fake_adapter.apply_cleanup_candidates_calls == 1
+    assert "Soft Delete Cleanup Workspace Selection" in message
+    assert fake_adapter.apply_cleanup_workspace_deleted_calls == 1
     assert fake_adapter.apply_deleted_calls == 0
 
 
-def test_run_apply_confirmed_cleanup_succeeds_with_single_apply_deleted(monkeypatch):
+def test_run_apply_confirmed_cleanup_refuses_without_workspace(monkeypatch):
     runtime_config, test_runner = _load_runner_modules(monkeypatch)
     runtime_config.arm_safe_delete()
     runtime_config.confirm_safe_delete()
@@ -401,7 +431,34 @@ def test_run_apply_confirmed_cleanup_succeeds_with_single_apply_deleted(monkeypa
 
     success, message = test_runner.run_apply_confirmed_cleanup()
 
+    assert success is False
+    assert "No cleanup workspace is active" in message
+    assert fake_adapter.apply_cleanup_workspace_deleted_calls == 0
+    assert fake_adapter.apply_deleted_calls == 0
+
+
+def test_run_apply_confirmed_cleanup_succeeds_with_single_apply_deleted(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.arm_safe_delete()
+    runtime_config.confirm_safe_delete()
+    fake_adapter = FakeConfirmedCleanupAdapter(
+        workspace=replace(
+            _workspace(12),
+            preview_selection_active=False,
+            native_selection_handle=None,
+            selected_count=0,
+            selection_percentage=0.0,
+            selection_source="no active cleanup preview",
+            native_selection_mask=None,
+            native_selection_mask_size=None,
+            workspace_state="soft_deleted",
+        )
+    )
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_apply_confirmed_cleanup()
+
     assert success is True
     assert message == "Permanently applied cleanup of 12 soft-deleted splats."
-    assert fake_adapter.apply_cleanup_candidates_calls == 1
+    assert fake_adapter.apply_cleanup_workspace_deleted_calls == 1
     assert fake_adapter.apply_deleted_calls == 1

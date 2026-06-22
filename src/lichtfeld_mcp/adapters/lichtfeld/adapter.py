@@ -42,6 +42,7 @@ from lichtfeld_mcp.core.voxel_analysis import (
 from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 from lichtfeld_mcp.schemas.common import (
     Box3D,
+    CleanupApplyDeletedResult,
     CleanupSoftDeleteResult,
     CleanupSelectionPreviewResult,
     ExportResult,
@@ -198,6 +199,7 @@ class LichtfeldAdapter(AdapterContract):
         self._last_delete_mask: object | None = None
         self._last_delete_count = 0
         self._last_finalized_delete_count = 0
+        self._last_finalized_restore_message: str | None = None
         self._last_scene_analysis: _SceneAnalysisState | None = None
         self._last_cleanup_preview: _CleanupPreviewState | None = None
         self._cleanup_workspace_session: CleanupSession | None = None
@@ -710,6 +712,7 @@ class LichtfeldAdapter(AdapterContract):
             raise
 
         restore_available = self._last_delete_mask is not None and self._last_delete_count > 0
+        self._pending_cleanup_apply_project_path = None
         self._clear_workspace_preview_state(workspace_state="soft_deleted")
         workspace_state = (
             self._cleanup_workspace_session.workspace.workspace_state
@@ -737,6 +740,129 @@ class LichtfeldAdapter(AdapterContract):
 
     def soft_delete_current_cleanup_selection(self) -> CleanupSoftDeleteResult:
         return self.soft_delete_cleanup_workspace_selection()
+
+    def apply_cleanup_workspace_deleted(self) -> CleanupApplyDeletedResult:
+        session = self._require_cleanup_session()
+        workspace = session.workspace
+        if workspace.workspace_state != "soft_deleted":
+            raise AdapterUnavailableError(
+                "No cleanup workspace soft delete is available. "
+                "Run Soft Delete Cleanup Workspace Selection first."
+            )
+        if not self._has_reversible_soft_delete():
+            raise AdapterUnavailableError(
+                "No reversible cleanup workspace soft delete is available to apply."
+            )
+
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        self._ensure_workspace_scene_matches(workspace)
+
+        current_scene_generation = self._read_scene_generation(scene, model)
+        if self._scene_generation_changed(workspace.scene_generation, current_scene_generation):
+            self._invalidate_cleanup_workspace()
+            raise AdapterUnavailableError(
+                "Cleanup workspace no longer matches the current scene generation. "
+                "Open Cleanup Workspace again."
+            )
+
+        initial_splat_count = self._read_current_model_splat_count(model)
+        if initial_splat_count != workspace.scene_profile.total_splats:
+            self._invalidate_cleanup_workspace()
+            raise AdapterUnavailableError(
+                "Cleanup workspace no longer matches the current scene splat count. "
+                "Open Cleanup Workspace again."
+            )
+
+        soft_deleted_count = self._last_delete_count
+        if soft_deleted_count <= 0:
+            raise AdapterUnavailableError(
+                "Cleanup workspace soft delete metadata is empty. "
+                "Run Soft Delete Cleanup Workspace Selection first."
+            )
+
+        delete_mask_size = self._native_mask_size(self._last_delete_mask)
+        if delete_mask_size is None:
+            raise AdapterUnavailableError(
+                "Cleanup workspace soft delete mask size is unavailable for permanent apply."
+            )
+        if delete_mask_size != initial_splat_count:
+            self._invalidate_cleanup_workspace()
+            raise AdapterUnavailableError(
+                "Cleanup workspace soft delete mask size does not match the current scene "
+                "splat count."
+            )
+
+        apply_deleted = getattr(model, "apply_deleted", None)
+        if not callable(apply_deleted):
+            raise AdapterUnavailableError(
+                "Active LichtFeld combined model does not expose apply_deleted() for permanent cleanup."
+            )
+
+        logger.info(
+            "LichtFeld cleanup workspace apply: initial_splat_count=%s",
+            initial_splat_count,
+        )
+        logger.info(
+            "LichtFeld cleanup workspace apply: soft_deleted_count=%s",
+            soft_deleted_count,
+        )
+        logger.info("LichtFeld cleanup workspace apply: before model.apply_deleted()")
+        apply_deleted()
+        final_splat_count = self._read_current_model_splat_count(model)
+        permanently_deleted_count = initial_splat_count - final_splat_count
+        logger.info(
+            "LichtFeld cleanup workspace apply: final_splat_count=%s",
+            final_splat_count,
+        )
+        logger.info(
+            "LichtFeld cleanup workspace apply: permanently_deleted_count=%s",
+            permanently_deleted_count,
+        )
+
+        self._last_finalized_delete_count = soft_deleted_count
+        self._clear_last_delete()
+        self._last_finalized_restore_message = (
+            "No reversible soft delete is available. The last cleanup was permanently applied."
+        )
+        self._pending_cleanup_apply_project_path = None
+
+        self._log_delete_cleanup_step(
+            "scene.reset_selection_state()",
+            lambda: self._selection.reset_selection_state(scene),
+        )
+        self._log_delete_cleanup_step(
+            "scene.clear_selection() post-cleanup-apply",
+            lambda: self._selection.clear_selection_via_scene(scene),
+        )
+        self._log_delete_cleanup_step(
+            "lichtfeld.deselect_all() post-cleanup-apply",
+            lambda: self._selection.deselect_all(lichtfeld_module),
+        )
+        self._selection.clear_cache()
+        self._log_delete_cleanup_step(
+            "scene.notify_changed()",
+            lambda: self._notify_scene_changed(scene),
+        )
+        self._invalidate_cleanup_workspace()
+        logger.info(
+            "LichtFeld cleanup workspace apply: restore_available=%s workspace_state=%s",
+            False,
+            "invalidated",
+        )
+        return CleanupApplyDeletedResult(
+            ok=True,
+            initial_splat_count=initial_splat_count,
+            soft_deleted_count=soft_deleted_count,
+            permanently_deleted_count=permanently_deleted_count,
+            final_splat_count=final_splat_count,
+            restore_available=False,
+            workspace_state="invalidated",
+            message=(
+                f"Permanently applied cleanup of {permanently_deleted_count} soft-deleted splats."
+            ),
+        )
 
     def soft_delete_cleanup_candidates(self) -> ToolResult:
         preview_state = self._last_cleanup_preview
@@ -814,12 +940,12 @@ class LichtfeldAdapter(AdapterContract):
                 "Active LichtFeld combined model does not expose apply_deleted() for permanent cleanup."
             )
 
-        initial_splat_count = len(extract_position_rows(model))
+        initial_splat_count = self._read_current_model_splat_count(model)
         soft_deleted_count = self._last_delete_count
         logger.info("LichtFeld cleanup apply: initial_splat_count=%s", initial_splat_count)
         logger.info("LichtFeld cleanup apply: soft_deleted_count=%s", soft_deleted_count)
         result = self.apply_pending_delete()
-        final_splat_count = len(extract_position_rows(model))
+        final_splat_count = self._read_current_model_splat_count(model)
         permanent_deleted_count = initial_splat_count - final_splat_count
         logger.info("LichtFeld cleanup apply: final_splat_count=%s", final_splat_count)
         logger.info(
@@ -1381,9 +1507,13 @@ class LichtfeldAdapter(AdapterContract):
             apply_deleted()
             logger.info(
                 "LichtFeld apply_pending_delete: after model.apply_deleted() remaining_count=%s",
-                len(extract_position_rows(model)),
+                self._read_current_model_splat_count(model),
             )
             self._last_finalized_delete_count = pending_count
+            self._last_finalized_restore_message = (
+                "The last LichtFeld delete was already finalized with apply_deleted(); "
+                "undelete(mask) only works before apply_deleted()."
+            )
             self._clear_last_delete()
             self._invalidate_cleanup_workspace()
         else:
@@ -1430,6 +1560,8 @@ class LichtfeldAdapter(AdapterContract):
 
     def restore_last_delete(self) -> ToolResult:
         if self._last_delete_mask is None or self._last_delete_count <= 0:
+            if self._last_finalized_restore_message is not None:
+                raise AdapterUnavailableError(self._last_finalized_restore_message)
             if self._last_finalized_delete_count > 0:
                 raise AdapterUnavailableError(
                     "The last LichtFeld delete was already finalized with apply_deleted(); "
@@ -1488,17 +1620,22 @@ class LichtfeldAdapter(AdapterContract):
         restored_count = self._last_delete_count
         self._clear_last_delete()
         self._last_finalized_delete_count = 0
+        self._last_finalized_restore_message = None
         return ToolResult(message=f"Restored {restored_count} deleted splats.")
 
     def _store_last_delete(self, native_mask: object, deleted_count: int) -> None:
         self._last_delete_mask = native_mask
         self._last_delete_count = deleted_count
         self._last_finalized_delete_count = 0
+        self._last_finalized_restore_message = None
 
     def _clear_last_delete(self) -> None:
         self._last_delete_mask = None
         self._last_delete_count = 0
         self._pending_cleanup_apply_project_path = None
+
+    def _has_reversible_soft_delete(self) -> bool:
+        return self._last_delete_mask is not None and self._last_delete_count > 0
 
     def _invalidate_cleanup_workspace(self) -> None:
         self._cleanup_workspace_session = None

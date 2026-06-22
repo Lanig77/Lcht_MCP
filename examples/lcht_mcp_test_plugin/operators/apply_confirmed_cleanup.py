@@ -15,10 +15,12 @@ APPLY_CONFIRMED_CLEANUP_OPERATOR_ID = (
 
 
 class LCHTMCP_OT_apply_confirmed_cleanup(Operator):
-    """Finalize a previously confirmed cleanup soft delete."""
+    """Permanently apply a cleanup workspace soft delete."""
 
-    label = "Permanently Apply Cleanup"
-    description = "Permanent cleanup. Requires Enable Safe Delete and Confirm Safe Delete."
+    label = "Apply Deleted Cleanup Permanently"
+    description = (
+        "Permanent operation. Cannot be restored through Restore Last Delete after apply."
+    )
 
     def invoke(self, context, event: Event) -> set:
         """Execute the permanent cleanup apply."""

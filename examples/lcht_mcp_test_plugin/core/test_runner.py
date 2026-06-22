@@ -778,7 +778,7 @@ def run_soft_delete_cleanup_preview() -> tuple[bool, str]:
 
 
 def run_apply_confirmed_cleanup() -> tuple[bool, str]:
-    """Permanently apply a previously confirmed cleanup soft delete."""
+    """Permanently apply a previous cleanup workspace soft delete."""
     config = snapshot_runtime_config()
     _log_info(
         "Starting confirmed cleanup apply with "
@@ -791,8 +791,8 @@ def run_apply_confirmed_cleanup() -> tuple[bool, str]:
             "Confirmed cleanup apply is disabled because ENABLE_SAFE_DELETE=False. "
             "No permanent action was performed."
         )
-        _log_info(message)
-        return True, message
+        _log_error(message)
+        return False, message
 
     if not config.confirm_safe_delete:
         message = (
@@ -800,8 +800,8 @@ def run_apply_confirmed_cleanup() -> tuple[bool, str]:
             "ENABLE_SAFE_DELETE=True and CONFIRM_SAFE_DELETE=False. "
             "No permanent action was performed."
         )
-        _log_info(message)
-        return True, message
+        _log_error(message)
+        return False, message
 
     try:
         adapter, repository_root = _build_adapter()
@@ -811,38 +811,40 @@ def run_apply_confirmed_cleanup() -> tuple[bool, str]:
         _log_error(message)
         return False, message
 
-    apply_cleanup_candidates = getattr(adapter, "apply_cleanup_candidates", None)
-    if not callable(apply_cleanup_candidates):
-        message = "LichtfeldAdapter does not expose apply_cleanup_candidates()."
+    workspace = _get_cleanup_workspace(adapter)
+    if workspace is None:
+        message = "No cleanup workspace is active. Open Cleanup Workspace first."
         _log_error(message)
         return False, message
 
-    get_stats = getattr(adapter, "get_stats", None)
-    if not callable(get_stats):
-        message = "LichtfeldAdapter does not expose get_stats() for confirmed cleanup logging."
+    apply_cleanup_workspace_deleted = getattr(
+        adapter,
+        "apply_cleanup_workspace_deleted",
+        None,
+    )
+    if not callable(apply_cleanup_workspace_deleted):
+        message = "LichtfeldAdapter does not expose apply_cleanup_workspace_deleted()."
         _log_error(message)
         return False, message
 
     try:
-        initial_stats = get_stats()
-        initial_splat_count = initial_stats.splat_count
-        _log_info(f"initial_splat_count={initial_splat_count}")
-        result = apply_cleanup_candidates()
-        final_stats = get_stats()
+        result = apply_cleanup_workspace_deleted()
     except Exception as exc:
         message = f"Confirmed cleanup apply failed: {exc}"
         _log_error(message)
         return False, message
 
-    final_splat_count = final_stats.splat_count
-    permanent_deleted_count = initial_splat_count - final_splat_count
-    soft_deleted_count = permanent_deleted_count
-    _log_info(f"soft_deleted_count={soft_deleted_count}")
-    _log_info(f"final_splat_count={final_splat_count}")
-    _log_info(f"permanent_deleted_count={permanent_deleted_count}")
+    _log_info(f"initial_splat_count={result.initial_splat_count}")
+    _log_info(f"soft_deleted_count={result.soft_deleted_count}")
+    _log_info(f"final_splat_count={result.final_splat_count}")
+    _log_info(f"permanently_deleted_count={result.permanently_deleted_count}")
+    _log_info(f"restore_available={result.restore_available}")
+    _log_info(f"workspace_state={result.workspace_state}")
+    _log_info("workspace_invalidated=True")
+    _log_info("selection_cleared=True")
     _log_info(
-        "Confirmed cleanup apply complete. "
-        "Permanent cleanup is no longer restorable."
+        "Confirmed cleanup apply complete. Permanent operation. "
+        "Cannot be restored through Restore Last Delete after apply."
     )
     _log_info(f"confirmed_cleanup_apply ok={result.ok} message={result.message}")
     _sync_cleanup_workspace_display(adapter)

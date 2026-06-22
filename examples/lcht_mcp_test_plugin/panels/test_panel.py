@@ -6,6 +6,7 @@ import lichtfeld as lf
 
 from ..core.runtime_config import snapshot_runtime_config
 from ..operators.analyze_scene import ANALYZE_SCENE_OPERATOR_ID
+from ..operators.apply_confirmed_cleanup import APPLY_CONFIRMED_CLEANUP_OPERATOR_ID
 from ..operators.open_cleanup_workspace import OPEN_CLEANUP_WORKSPACE_OPERATOR_ID
 from ..operators.restore_last_delete import RESTORE_LAST_DELETE_OPERATOR_ID
 from ..operators.reset_cleanup_workspace import RESET_CLEANUP_WORKSPACE_OPERATOR_ID
@@ -409,6 +410,16 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 34 * scale),
         ):
             lf.ui.ops.invoke(RESTORE_LAST_DELETE_OPERATOR_ID)
+        if layout.button_styled(
+            "Apply Deleted Cleanup Permanently##apply_confirmed_cleanup",
+            "warning",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(APPLY_CONFIRMED_CLEANUP_OPERATOR_ID)
+        layout.text_colored(
+            "Permanent operation. Cannot be restored through Restore Last Delete after apply.",
+            theme.palette.text_dim,
+        )
         if layout.button_styled(
             "Analyze Clusters##analyze_clusters",
             "secondary",

@@ -84,6 +84,19 @@ class CleanupSoftDeleteResult(BaseModel):
     message: str
 
 
+class CleanupApplyDeletedResult(BaseModel):
+    """Permanent cleanup apply result."""
+
+    ok: bool = True
+    initial_splat_count: int
+    soft_deleted_count: int
+    permanently_deleted_count: int
+    final_splat_count: int
+    restore_available: bool
+    workspace_state: str
+    message: str
+
+
 class ExportResult(BaseModel):
     """Export operation result."""
 
