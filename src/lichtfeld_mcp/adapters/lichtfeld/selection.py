@@ -9,7 +9,7 @@ from lichtfeld_mcp.core.constraints import validate_color_tolerance, validate_rg
 from lichtfeld_mcp.core.requests import HeightRange
 from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 
-from .utils import coerce_boolean_mask, to_lf_selection_mask
+from .utils import build_empty_lf_selection_mask, coerce_boolean_mask, to_lf_selection_mask
 
 
 @dataclass(slots=True)
@@ -209,6 +209,16 @@ class SelectionState:
         lf_module: object,
         model: object | None = None,
     ) -> None:
+        try:
+            self.reset_scene_selection_mask_natively(
+                scene,
+                expected_length,
+                lf_module,
+                model=model,
+            )
+            return
+        except AdapterUnavailableError:
+            pass
         cleared_mask = [False] * expected_length
         setter = getattr(scene, "set_selection_mask", None)
         if callable(setter):
@@ -225,6 +235,31 @@ class SelectionState:
             if hasattr(scene, attribute_name):
                 setattr(scene, attribute_name, list(cleared_mask))
                 return
+
+    def reset_scene_selection_mask_natively(
+        self,
+        scene: object,
+        expected_length: int,
+        lf_module: object,
+        model: object | None = None,
+    ) -> None:
+        empty_mask = build_empty_lf_selection_mask(
+            expected_length,
+            lf_module,
+            scene=scene,
+            model=model,
+        )
+        setter = getattr(scene, "set_selection_mask", None)
+        if callable(setter):
+            setter(empty_mask)
+            return
+        for attribute_name in ("selection_mask", "_selection_mask"):
+            if hasattr(scene, attribute_name):
+                setattr(scene, attribute_name, empty_mask)
+                return
+        raise AdapterUnavailableError(
+            "Active LichtFeld scene does not expose a compatible native selection mask reset API."
+        )
 
     def clear_selection_via_scene(self, scene: object) -> bool:
         clear_selection = getattr(scene, "clear_selection", None)

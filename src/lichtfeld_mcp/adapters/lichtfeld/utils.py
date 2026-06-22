@@ -178,6 +178,51 @@ def _build_mask_from_template(
     return None
 
 
+def _tensor_candidate_length(candidate: object) -> int | None:
+    shape = getattr(candidate, "shape", None)
+    if shape is not None:
+        try:
+            if len(shape) > 0:
+                return int(shape[0])
+        except Exception:
+            pass
+    try:
+        return len(candidate)  # type: ignore[arg-type]
+    except Exception:
+        return None
+
+
+def build_empty_lf_selection_mask(
+    expected_length: int,
+    lf_module: object,
+    *,
+    scene: object | None = None,
+    model: object | None = None,
+) -> object:
+    for candidate in _tensor_template_candidates(scene, model):
+        cloned = _clone_tensor_candidate(candidate)
+        if cloned is None:
+            continue
+        fill = getattr(cloned, "fill", None)
+        if not callable(fill):
+            continue
+        try:
+            try:
+                fill(False)
+            except TypeError:
+                fill(0)
+        except Exception:
+            continue
+        if _tensor_candidate_length(cloned) != expected_length:
+            continue
+        return cloned
+
+    raise AdapterUnavailableError(
+        "LichtFeld Studio Python plugin API does not expose a current-size native selection "
+        "mask template for clearing renderer selection state."
+    )
+
+
 def to_lf_selection_mask(
     mask: object,
     lf_module: object,
