@@ -125,6 +125,7 @@ def _workspace(selected_count: int) -> CleanupWorkspace:
         current_cleanup_parameters=CleanupParameters(
             voxel_size=0.25,
             min_voxel_cluster_size=10,
+            cluster_distance_threshold=0.10,
             outlier_distance=2.5,
             cleanup_aggressiveness=0.5,
         ),
@@ -139,8 +140,11 @@ def _workspace(selected_count: int) -> CleanupWorkspace:
         selection_mode="replace",
         selection_source="floating voxel clusters",
         approximate=True,
+        analysis_reused=True,
+        candidate_update_time=0.01,
         workspace_update_time=0.01,
         selection_update_time=0.01,
+        total_workspace_update_time=0.01,
         estimated_sample_reuse=1.0,
     )
 

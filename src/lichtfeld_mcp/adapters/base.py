@@ -72,6 +72,7 @@ class LichtfeldAdapter(ABC):
         *,
         voxel_size: float = 0.25,
         min_voxel_cluster_size: int = 10,
+        cluster_distance_threshold: float = 0.10,
         outlier_distance: float = 2.5,
         cleanup_aggressiveness: float = 0.5,
     ) -> CleanupWorkspace: ...
@@ -82,6 +83,7 @@ class LichtfeldAdapter(ABC):
         *,
         voxel_size: float = 0.25,
         min_voxel_cluster_size: int = 10,
+        cluster_distance_threshold: float = 0.10,
         outlier_distance: float = 2.5,
         cleanup_aggressiveness: float = 0.5,
     ) -> CleanupWorkspace: ...

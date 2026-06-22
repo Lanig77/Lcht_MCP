@@ -99,7 +99,22 @@ full-scene selection.
 The cleanup workspace is the new interactive layer between scene analysis and any
 future delete flow.
 
-It stores:
+The adapter now persists a `CleanupSession` object as the editing-session owner.
+
+The session owns:
+
+- the latest `SceneProfile`
+- the latest `SceneAnalysisReport`
+- the latest `CleanupCandidateSummary`
+- the sampled `GaussianCloud` reused for parameter updates
+- the current cleanup parameters
+- the current native selection handle and preview mask state
+- the current selection statistics and update timings
+
+The workspace rendered to the plugin UI is the session snapshot for the current
+preview state.
+
+The workspace snapshot stores:
 
 - the latest `SceneAnalysisReport`
 - the latest `CleanupCandidateSummary`
@@ -110,18 +125,30 @@ The workspace is invalidated when:
 
 - another scene becomes active
 - `analyze_scene()` is run again
+- `apply_deleted()` finalizes a pending cleanup delete
 - the user explicitly resets the workspace
 
 Interactive parameters currently include:
 
 - `voxel_size`
 - `min_voxel_cluster_size`
+- `cluster_distance_threshold`
 - `outlier_distance`
 - `cleanup_aggressiveness`
 
 The adapter rebuilds the selection preview from cached sampled positions whenever
-possible. This avoids recomputing the full analysis on every parameter change and
-keeps the default update path bounded for large scenes.
+possible. The session also reuses the sampled `GaussianCloud` so parameter changes
+do not rebuild the full scene analysis or the sampled cloud on every update.
+
+Each update logs:
+
+- `analysis_reused`
+- `candidate_update_time`
+- `selection_update_time`
+- `total_workspace_update_time`
+
+This keeps parameter iteration interactive on large scenes while preserving a
+single source of truth for later soft delete, restore, and permanent apply flows.
 
 ## Availability behavior
 

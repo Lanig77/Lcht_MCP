@@ -171,12 +171,18 @@ Interactive cleanup tuning must prefer session reuse over full recomputation.
 Rules:
 
 - `Open Cleanup Workspace` should reuse the latest `SceneAnalysisReport`.
+- the persistent `CleanupSession` should own the sampled analysis artifacts used
+  for interactive preview updates.
 - parameter changes should rebuild the cleanup preview from the latest sampled
   analysis whenever possible.
+- parameter changes should reuse the sampled `GaussianCloud` instead of rebuilding
+  the full scene analysis pipeline.
 - selection generation should scale with the analyzed sample, not with full-scene
   Python materialization.
 - the UI must clearly report whether the workspace is operating in approximate or
   exact mode.
+- the native selection shown in LichtFeld must always be the current workspace
+  proposal, with previous preview selections cleared before each update.
 - resetting the workspace must clear preview selection state without modifying the
   scene.
 

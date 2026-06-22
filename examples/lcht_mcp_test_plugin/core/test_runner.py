@@ -121,6 +121,7 @@ def _cleanup_workspace_kwargs(config) -> dict[str, object]:
     return {
         "voxel_size": config.voxel_size,
         "min_voxel_cluster_size": config.voxel_min_cluster_size,
+        "cluster_distance_threshold": config.cluster_distance_threshold,
         "outlier_distance": config.cleanup_outlier_distance,
         "cleanup_aggressiveness": config.cleanup_aggressiveness,
     }
@@ -389,6 +390,7 @@ def run_open_cleanup_workspace() -> tuple[bool, str]:
         "Opening cleanup workspace with "
         f"voxel_size={config.voxel_size:.4f}, "
         f"min_voxel_cluster_size={config.voxel_min_cluster_size}, "
+        f"cluster_distance_threshold={config.cluster_distance_threshold:.4f}, "
         f"outlier_distance={config.cleanup_outlier_distance:.4f}, "
         f"cleanup_aggressiveness={config.cleanup_aggressiveness:.4f}."
     )
@@ -432,8 +434,11 @@ def run_open_cleanup_workspace() -> tuple[bool, str]:
     set_cleanup_preview_summary(workspace.cleanup_candidate_summary.to_dict())
     for line in workspace_lines:
         _log_info(line)
+    _log_info(f"analysis_reused={workspace.analysis_reused}")
+    _log_info(f"candidate_update_time={workspace.candidate_update_time:.6f}")
     _log_info(f"workspace_update_time={workspace.workspace_update_time:.6f}")
     _log_info(f"selection_update_time={workspace.selection_update_time:.6f}")
+    _log_info(f"total_workspace_update_time={workspace.total_workspace_update_time:.6f}")
     _log_info(f"estimated_sample_reuse={workspace.estimated_sample_reuse:.2f}")
     return True, "Cleanup workspace opened."
 
@@ -445,6 +450,7 @@ def run_update_cleanup_workspace() -> tuple[bool, str]:
         "Updating cleanup workspace with "
         f"voxel_size={config.voxel_size:.4f}, "
         f"min_voxel_cluster_size={config.voxel_min_cluster_size}, "
+        f"cluster_distance_threshold={config.cluster_distance_threshold:.4f}, "
         f"outlier_distance={config.cleanup_outlier_distance:.4f}, "
         f"cleanup_aggressiveness={config.cleanup_aggressiveness:.4f}."
     )
@@ -483,8 +489,11 @@ def run_update_cleanup_workspace() -> tuple[bool, str]:
     set_cleanup_preview_summary(workspace.cleanup_candidate_summary.to_dict())
     for line in workspace_lines:
         _log_info(line)
+    _log_info(f"analysis_reused={workspace.analysis_reused}")
+    _log_info(f"candidate_update_time={workspace.candidate_update_time:.6f}")
     _log_info(f"workspace_update_time={workspace.workspace_update_time:.6f}")
     _log_info(f"selection_update_time={workspace.selection_update_time:.6f}")
+    _log_info(f"total_workspace_update_time={workspace.total_workspace_update_time:.6f}")
     _log_info(f"estimated_sample_reuse={workspace.estimated_sample_reuse:.2f}")
     return True, "Cleanup workspace updated."
 

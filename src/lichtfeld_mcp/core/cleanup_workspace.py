@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from lichtfeld_mcp.core.scene_analysis import CleanupCandidateSummary, SceneAnalysisReport
+
+if TYPE_CHECKING:
+    from lichtfeld_mcp.core.gaussian_cloud import GaussianCloud
 
 
 @dataclass(frozen=True, slots=True)
 class CleanupParameters:
     voxel_size: float
     min_voxel_cluster_size: int
+    cluster_distance_threshold: float
     outlier_distance: float
     cleanup_aggressiveness: float
 
@@ -16,6 +21,7 @@ class CleanupParameters:
         return {
             "voxel_size": round(self.voxel_size, 6),
             "min_voxel_cluster_size": self.min_voxel_cluster_size,
+            "cluster_distance_threshold": round(self.cluster_distance_threshold, 6),
             "outlier_distance": round(self.outlier_distance, 6),
             "cleanup_aggressiveness": round(self.cleanup_aggressiveness, 6),
         }
@@ -60,8 +66,11 @@ class CleanupWorkspace:
     selection_mode: str
     selection_source: str
     approximate: bool
+    analysis_reused: bool
+    candidate_update_time: float
     workspace_update_time: float
     selection_update_time: float
+    total_workspace_update_time: float
     estimated_sample_reuse: float
 
     def to_dict(self) -> dict[str, object]:
@@ -86,8 +95,11 @@ class CleanupWorkspace:
             "selection_mode": self.selection_mode,
             "selection_source": self.selection_source,
             "approximate": self.approximate,
+            "analysis_reused": self.analysis_reused,
+            "candidate_update_time": round(self.candidate_update_time, 6),
             "workspace_update_time": round(self.workspace_update_time, 6),
             "selection_update_time": round(self.selection_update_time, 6),
+            "total_workspace_update_time": round(self.total_workspace_update_time, 6),
             "estimated_sample_reuse": round(self.estimated_sample_reuse, 6),
         }
 
@@ -95,6 +107,7 @@ class CleanupWorkspace:
 @dataclass(slots=True)
 class CleanupSession:
     workspace: CleanupWorkspace
+    sampled_gaussian_cloud: "GaussianCloud"
 
 
 def build_scene_profile(report: SceneAnalysisReport) -> SceneProfile:
@@ -121,6 +134,7 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
     summary = workspace.cleanup_candidate_summary
     params = workspace.current_cleanup_parameters
     mode_label = "Approximate sampled" if workspace.approximate else "Exact"
+    scene_type = workspace.scene_profile.profile_label.replace("_", " ").title()
     cleanup_percentage = (
         summary.estimated_percentage_of_total
         if workspace.approximate
@@ -128,19 +142,23 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
     )
     lines = [
         "Cleanup Workspace",
-        f"Scene profile: {workspace.scene_profile.profile_label}",
-        f"Mode: {mode_label}",
+        f"Current Scene Type: {scene_type}",
+        f"Analysis Mode: {mode_label}",
+        "Workspace Active: Yes",
         (
-            "Parameters: "
+            "Current Parameters: "
             f"voxel_size={params.voxel_size:.2f}, "
             f"min_cluster_size={params.min_voxel_cluster_size}, "
+            f"cluster_distance={params.cluster_distance_threshold:.2f}, "
             f"outlier_distance={params.outlier_distance:.2f}, "
             f"cleanup_aggressiveness={params.cleanup_aggressiveness:.2f}"
         ),
         f"Estimated affected splats: {summary.estimated_affected_splats_total:,}",
-        f"Estimated cleanup percentage: {cleanup_percentage * 100.0:.2f}%",
+        f"Estimated Cleanup %: {cleanup_percentage * 100.0:.2f}%",
         f"Selection count: {workspace.selected_count:,}",
         f"Selection source: {workspace.selection_source}",
+        f"Analysis reused: {'Yes' if workspace.analysis_reused else 'No'}",
+        f"Update time: {workspace.total_workspace_update_time:.6f}s",
     ]
     if not workspace.preview_selection_active:
         lines.append("Selection preview: inactive. Run Update Preview to rebuild it.")

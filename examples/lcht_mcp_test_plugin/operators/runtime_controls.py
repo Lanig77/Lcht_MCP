@@ -384,6 +384,7 @@ class LCHTMCP_OT_cluster_distance_down(_ConfigOperator):
     label = "Cluster Distance -"
     description = "Decrease the cluster distance threshold"
     action_label = f"Decreased cluster distance by {CLUSTER_DISTANCE_STEP:.2f}"
+    refresh_cleanup_workspace = True
 
     def _apply(self) -> None:
         adjust_cluster_distance_threshold(-CLUSTER_DISTANCE_STEP)
@@ -393,6 +394,7 @@ class LCHTMCP_OT_cluster_distance_up(_ConfigOperator):
     label = "Cluster Distance +"
     description = "Increase the cluster distance threshold"
     action_label = f"Increased cluster distance by {CLUSTER_DISTANCE_STEP:.2f}"
+    refresh_cleanup_workspace = True
 
     def _apply(self) -> None:
         adjust_cluster_distance_threshold(CLUSTER_DISTANCE_STEP)

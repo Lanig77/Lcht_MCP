@@ -20,6 +20,7 @@ from lichtfeld_mcp.core.cleanup_workspace import (
     build_scene_profile,
 )
 from lichtfeld_mcp.core.constraints import validate_selection_mode
+from lichtfeld_mcp.core.gaussian_cloud import GaussianCloud
 from lichtfeld_mcp.core.scene_analysis import (
     AnalysisResult,
     AnalysisSeverity,
@@ -188,16 +189,21 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         *,
         voxel_size: float = 0.25,
         min_voxel_cluster_size: int = 10,
+        cluster_distance_threshold: float = 0.10,
         outlier_distance: float = 2.5,
         cleanup_aggressiveness: float = 0.5,
     ) -> CleanupWorkspace:
         workspace = self._build_cleanup_workspace(
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
+            cluster_distance_threshold=cluster_distance_threshold,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
         )
-        self._cleanup_workspace_session = CleanupSession(workspace=workspace)
+        self._cleanup_workspace_session = CleanupSession(
+            workspace=workspace,
+            sampled_gaussian_cloud=GaussianCloud(splat_count=len(workspace.sampled_rows)),
+        )
         return workspace
 
     def update_cleanup_workspace(
@@ -205,6 +211,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         *,
         voxel_size: float = 0.25,
         min_voxel_cluster_size: int = 10,
+        cluster_distance_threshold: float = 0.10,
         outlier_distance: float = 2.5,
         cleanup_aggressiveness: float = 0.5,
     ) -> CleanupWorkspace:
@@ -213,6 +220,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         workspace = self._build_cleanup_workspace(
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
+            cluster_distance_threshold=cluster_distance_threshold,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
         )
@@ -416,6 +424,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         *,
         voxel_size: float,
         min_voxel_cluster_size: int,
+        cluster_distance_threshold: float,
         outlier_distance: float,
         cleanup_aggressiveness: float,
     ) -> CleanupWorkspace:
@@ -478,6 +487,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             current_cleanup_parameters=CleanupParameters(
                 voxel_size=voxel_size,
                 min_voxel_cluster_size=min_voxel_cluster_size,
+                cluster_distance_threshold=cluster_distance_threshold,
                 outlier_distance=outlier_distance,
                 cleanup_aggressiveness=cleanup_aggressiveness,
             ),
@@ -492,9 +502,12 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             selection_mode="replace",
             selection_source=selection_source,
             approximate=summary.approximate,
+            analysis_reused=self._cleanup_workspace_session is not None,
+            candidate_update_time=0.01,
             workspace_update_time=0.01,
             selection_update_time=0.01,
-            estimated_sample_reuse=1.0,
+            total_workspace_update_time=0.01,
+            estimated_sample_reuse=1.0 if self._cleanup_workspace_session is not None else 0.0,
         )
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:

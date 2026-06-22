@@ -372,7 +372,7 @@ class LchtMcpTestPanel(lf.ui.Panel):
         ):
             lf.ui.ops.invoke(ANALYZE_SCENE_OPERATOR_ID)
         if layout.button_styled(
-            "Open Cleanup Workspace##open_cleanup_workspace",
+            "Cleanup Workspace##open_cleanup_workspace",
             "secondary",
             (-1, 34 * scale),
         ):
@@ -384,7 +384,7 @@ class LchtMcpTestPanel(lf.ui.Panel):
         ):
             lf.ui.ops.invoke(UPDATE_CLEANUP_WORKSPACE_OPERATOR_ID)
         if layout.button_styled(
-            "Reset Preview##reset_cleanup_workspace",
+            "Reset Workspace##reset_cleanup_workspace",
             "secondary",
             (-1, 34 * scale),
         ):
@@ -394,7 +394,7 @@ class LchtMcpTestPanel(lf.ui.Panel):
             theme.palette.text_dim,
         )
         if layout.button_styled(
-            "Soft Delete Cleanup Selection##soft_delete_cleanup_selection",
+            "Soft Delete##soft_delete_cleanup_selection",
             "warning",
             (-1, 34 * scale),
         ):

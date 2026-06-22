@@ -237,6 +237,7 @@ class FakeClusterPreviewAdapter:
         *,
         voxel_size: float,
         min_voxel_cluster_size: int,
+        cluster_distance_threshold: float,
         outlier_distance: float,
         cleanup_aggressiveness: float,
     ):
@@ -244,12 +245,14 @@ class FakeClusterPreviewAdapter:
         self.last_open_cleanup_workspace_kwargs = {
             "voxel_size": voxel_size,
             "min_voxel_cluster_size": min_voxel_cluster_size,
+            "cluster_distance_threshold": cluster_distance_threshold,
             "outlier_distance": outlier_distance,
             "cleanup_aggressiveness": cleanup_aggressiveness,
         }
         self.current_workspace = self._workspace(
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
+            cluster_distance_threshold=cluster_distance_threshold,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
             selected_count=512,
@@ -261,6 +264,7 @@ class FakeClusterPreviewAdapter:
         *,
         voxel_size: float,
         min_voxel_cluster_size: int,
+        cluster_distance_threshold: float,
         outlier_distance: float,
         cleanup_aggressiveness: float,
     ):
@@ -268,12 +272,14 @@ class FakeClusterPreviewAdapter:
         self.last_update_cleanup_workspace_kwargs = {
             "voxel_size": voxel_size,
             "min_voxel_cluster_size": min_voxel_cluster_size,
+            "cluster_distance_threshold": cluster_distance_threshold,
             "outlier_distance": outlier_distance,
             "cleanup_aggressiveness": cleanup_aggressiveness,
         }
         self.current_workspace = self._workspace(
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
+            cluster_distance_threshold=cluster_distance_threshold,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
             selected_count=640,
@@ -293,6 +299,7 @@ class FakeClusterPreviewAdapter:
         *,
         voxel_size: float,
         min_voxel_cluster_size: int,
+        cluster_distance_threshold: float,
         outlier_distance: float,
         cleanup_aggressiveness: float,
         selected_count: int,
@@ -324,6 +331,7 @@ class FakeClusterPreviewAdapter:
             current_cleanup_parameters=CleanupParameters(
                 voxel_size=voxel_size,
                 min_voxel_cluster_size=min_voxel_cluster_size,
+                cluster_distance_threshold=cluster_distance_threshold,
                 outlier_distance=outlier_distance,
                 cleanup_aggressiveness=cleanup_aggressiveness,
             ),
@@ -338,9 +346,12 @@ class FakeClusterPreviewAdapter:
             selection_mode="replace",
             selection_source="floating voxel clusters, disconnected clusters",
             approximate=True,
+            analysis_reused=self.current_workspace is not None,
+            candidate_update_time=0.008,
             workspace_update_time=0.012,
             selection_update_time=0.004,
-            estimated_sample_reuse=1.0,
+            total_workspace_update_time=0.012,
+            estimated_sample_reuse=1.0 if self.current_workspace is not None else 0.0,
         )
 
 
@@ -504,6 +515,7 @@ def test_run_open_cleanup_workspace_returns_interactive_workspace_summary(monkey
     assert fake_adapter.last_open_cleanup_workspace_kwargs == {
         "voxel_size": 0.35,
         "min_voxel_cluster_size": 25,
+        "cluster_distance_threshold": 0.10,
         "outlier_distance": 3.0,
         "cleanup_aggressiveness": 0.7,
     }
@@ -517,6 +529,7 @@ def test_run_update_cleanup_workspace_reuses_latest_workspace_session(monkeypatc
     fake_adapter.current_workspace = fake_adapter._workspace(
         voxel_size=0.25,
         min_voxel_cluster_size=10,
+        cluster_distance_threshold=0.10,
         outlier_distance=2.5,
         cleanup_aggressiveness=0.5,
         selected_count=512,
@@ -536,6 +549,7 @@ def test_run_reset_cleanup_workspace_clears_workspace_summary(monkeypatch):
     fake_adapter.current_workspace = fake_adapter._workspace(
         voxel_size=0.25,
         min_voxel_cluster_size=10,
+        cluster_distance_threshold=0.10,
         outlier_distance=2.5,
         cleanup_aggressiveness=0.5,
         selected_count=512,
