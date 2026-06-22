@@ -126,6 +126,13 @@ The plugin also exposes a separate guarded destructive validation button:
 
 `Run Safe Delete Test`
 
+For native selection/runtime debugging, the panel also exposes:
+
+- `Diagnose LichtFeld API`
+- `Diagnose Tensor Mask Construction`
+- `Diagnose Native Selection API`
+- `Diagnose Apply Deleted Selection Lifetime`
+
 The panel button invokes the registered operator through:
 
 `lfs_plugins.lcht_mcp_test_plugin.operators.run_test.LCHTMCP_OT_run_test`
@@ -149,6 +156,13 @@ For the guarded delete flow:
 ```python
 from lcht_mcp_test_plugin.core.test_runner import run_safe_delete_test
 run_safe_delete_test()
+```
+
+For the permanent-apply selection lifetime trace:
+
+```python
+from lcht_mcp_test_plugin.core.diagnostics import run_apply_deleted_selection_lifetime_diagnostics
+run_apply_deleted_selection_lifetime_diagnostics()
 ```
 
 ## Change The Height Range
@@ -226,6 +240,28 @@ Recommended progression:
 1. Run with `ENABLE_SAFE_DELETE=False` and `CONFIRM_SAFE_DELETE=False`
 2. Then run with `ENABLE_SAFE_DELETE=True` and `CONFIRM_SAFE_DELETE=False`
 3. Only on a duplicated PLY, run with both `ENABLE_SAFE_DELETE=True` and `CONFIRM_SAFE_DELETE=True`
+
+## Diagnose Apply Deleted Selection Lifetime
+
+Use `Diagnose Apply Deleted Selection Lifetime` when Cleanup Workspace soft delete and
+permanent apply succeed at the plugin level, but the native runtime later reports
+selection-tensor lifetime errors such as stale mask sizes or invalid tensor clones.
+
+This diagnostic:
+
+1. requires `ENABLE_SAFE_DELETE=True` and `CONFIRM_SAFE_DELETE=True`
+2. requires an already pending reversible Cleanup Workspace soft delete
+3. logs object ids, refcounts, tensor sizes, and clone results for selection-related
+   owners visible from the LichtFeld Python API
+4. traces the state:
+   - before `apply_cleanup_workspace_deleted()`
+   - immediately after `apply_cleanup_workspace_deleted()`
+   - after reacquiring fresh scene/model handles
+5. reports the first stale-size owner and the first owner whose `clone()` fails
+
+This repository does not vendor the native LichtFeld runtime source itself, so this
+diagnostic is the intended way to identify the exact Python-visible owner before
+patching the native runtime.
 
 ## What The Plugin Does
 

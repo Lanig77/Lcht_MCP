@@ -17,6 +17,9 @@ from .operators.apply_confirmed_cleanup import LCHTMCP_OT_apply_confirmed_cleanu
 from .operators.soft_delete_cleanup_preview import LCHTMCP_OT_soft_delete_cleanup_preview
 from .panels.test_panel import LchtMcpTestPanel
 from .operators.diagnose_api import LCHTMCP_OT_diagnose_api
+from .operators.diagnose_apply_deleted_selection_lifetime import (
+    LCHTMCP_OT_diagnose_apply_deleted_selection_lifetime,
+)
 from .operators.diagnose_native_selection import LCHTMCP_OT_diagnose_native_selection
 from .operators.diagnose_tensor_mask import LCHTMCP_OT_diagnose_tensor_mask
 from .operators.runtime_controls import (
@@ -79,6 +82,7 @@ _classes = [
     LCHTMCP_OT_run_safe_delete_test,
     LCHTMCP_OT_run_undo_validation,
     LCHTMCP_OT_diagnose_api,
+    LCHTMCP_OT_diagnose_apply_deleted_selection_lifetime,
     LCHTMCP_OT_diagnose_native_selection,
     LCHTMCP_OT_diagnose_tensor_mask,
     LCHTMCP_OT_smoke_min_z_down,

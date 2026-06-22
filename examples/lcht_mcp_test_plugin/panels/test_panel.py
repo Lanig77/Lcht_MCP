@@ -13,6 +13,9 @@ from ..operators.reset_cleanup_workspace import RESET_CLEANUP_WORKSPACE_OPERATOR
 from ..operators.soft_delete_cleanup_selection import SOFT_DELETE_CLEANUP_SELECTION_OPERATOR_ID
 from ..operators.update_cleanup_workspace import UPDATE_CLEANUP_WORKSPACE_OPERATOR_ID
 from ..operators.diagnose_api import DIAGNOSE_API_OPERATOR_ID
+from ..operators.diagnose_apply_deleted_selection_lifetime import (
+    DIAGNOSE_APPLY_DELETED_SELECTION_LIFETIME_OPERATOR_ID,
+)
 from ..operators.diagnose_native_selection import DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID
 from ..operators.diagnose_tensor_mask import DIAGNOSE_TENSOR_MASK_OPERATOR_ID
 from ..operators.analyze_clusters import ANALYZE_CLUSTERS_OPERATOR_ID
@@ -450,6 +453,16 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 34 * scale),
         ):
             lf.ui.ops.invoke(DIAGNOSE_TENSOR_MASK_OPERATOR_ID)
+        if layout.button_styled(
+            "Diagnose Apply Deleted Selection Lifetime##apply_lifetime",
+            "warning",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(DIAGNOSE_APPLY_DELETED_SELECTION_LIFETIME_OPERATOR_ID)
+        layout.text_colored(
+            "Permanent diagnostic. Requires an active reversible cleanup delete and safety confirmation.",
+            theme.palette.text_dim,
+        )
         if layout.button_styled(
             "Diagnose Native Selection API##native",
             "secondary",

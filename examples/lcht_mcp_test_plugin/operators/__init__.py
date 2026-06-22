@@ -41,6 +41,10 @@ from .soft_delete_cleanup_preview import (
     SOFT_DELETE_CLEANUP_PREVIEW_OPERATOR_ID,
 )
 from .diagnose_api import DIAGNOSE_API_OPERATOR_ID, LCHTMCP_OT_diagnose_api
+from .diagnose_apply_deleted_selection_lifetime import (
+    DIAGNOSE_APPLY_DELETED_SELECTION_LIFETIME_OPERATOR_ID,
+    LCHTMCP_OT_diagnose_apply_deleted_selection_lifetime,
+)
 from .diagnose_native_selection import (
     DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID,
     LCHTMCP_OT_diagnose_native_selection,
@@ -152,6 +156,7 @@ __all__ = [
     "CLUSTER_MIN_SIZE_DOWN_OPERATOR_ID",
     "CLUSTER_MIN_SIZE_UP_OPERATOR_ID",
     "DIAGNOSE_API_OPERATOR_ID",
+    "DIAGNOSE_APPLY_DELETED_SELECTION_LIFETIME_OPERATOR_ID",
     "DIAGNOSE_NATIVE_SELECTION_OPERATOR_ID",
     "DIAGNOSE_TENSOR_MASK_OPERATOR_ID",
     "DISABLE_CLUSTER_ANALYSIS_ABORT_OPERATOR_ID",
@@ -201,6 +206,7 @@ __all__ = [
     "LCHTMCP_OT_confirm_safe_delete",
     "LCHTMCP_OT_disable_cluster_analysis_abort",
     "LCHTMCP_OT_diagnose_api",
+    "LCHTMCP_OT_diagnose_apply_deleted_selection_lifetime",
     "LCHTMCP_OT_diagnose_native_selection",
     "LCHTMCP_OT_diagnose_tensor_mask",
     "LCHTMCP_OT_disarm_safe_delete",

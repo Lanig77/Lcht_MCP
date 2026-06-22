@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import inspect
+import sys
 from types import ModuleType
 
 import lichtfeld as lf
@@ -61,6 +63,58 @@ NATIVE_SELECTION_NAMES = (
     "selection",
     "has_selection",
 )
+SELECTION_GRAPH_ATTRIBUTE_NAMES = (
+    "get_scene",
+    "scene",
+    "current_scene",
+    "active_scene",
+    "combined_model",
+    "model",
+    "current_model",
+    "gaussian_model",
+    "selection_mask",
+    "get_selection_mask",
+    "selection",
+    "selection_manager",
+    "get_selection_manager",
+    "scene_manager",
+    "get_scene_manager",
+    "renderer",
+    "get_renderer",
+    "rendering_pipeline",
+    "get_rendering_pipeline",
+    "pipeline",
+    "tensor_manager",
+    "get_tensor_manager",
+    "selection_tensor",
+    "selection_buffer",
+    "selection_visualizer",
+    "selection_visualization",
+    "gpu_selection",
+    "gpu_selection_mask",
+    "gpu_selection_buffer",
+    "cpu_selection",
+    "cpu_selection_mask",
+    "cpu_selection_buffer",
+    "deleted",
+    "get_deleted_mask",
+    "deleted_mask",
+)
+MAX_SELECTION_SNAPSHOT_DEPTH = 3
+
+
+@dataclass(slots=True)
+class SelectionSnapshotEntry:
+    path: str
+    type_name: str
+    object_id: int
+    refcount: int | None
+    size: int | None
+    alias_of: str | None
+    clone_method: str | None
+    clone_size: int | None
+    clone_error: str | None
+    stale_size: bool
 
 
 def _log_info(message: str) -> None:
@@ -135,6 +189,66 @@ def _safe_scalar_metadata(label: str, value: object) -> None:
         _log_info(f"{label} len={len(value)}")
     except Exception:
         pass
+
+
+def _safe_refcount(value: object) -> int | None:
+    try:
+        return max(0, sys.getrefcount(value) - 1)
+    except Exception:
+        return None
+
+
+def _safe_size(value: object) -> int | None:
+    shape = getattr(value, "shape", None)
+    if shape is not None:
+        try:
+            if len(shape) > 0:
+                return int(shape[0])
+        except Exception:
+            pass
+    try:
+        return len(value)  # type: ignore[arg-type]
+    except Exception:
+        return None
+
+
+def _is_selection_tensor_path(path: str) -> bool:
+    normalized = path.lower()
+    return any(
+        token in normalized
+        for token in (
+            "selection_mask",
+            "selection_tensor",
+            "selection_buffer",
+            "gpu_selection",
+            "cpu_selection",
+            "deleted_mask",
+            ".deleted",
+        )
+    )
+
+
+def _is_selection_tensor_like(path: str, value: object) -> bool:
+    if _is_selection_tensor_path(path):
+        return True
+    if hasattr(value, "shape") and any(
+        hasattr(value, attribute_name) for attribute_name in ("clone", "copy", "fill")
+    ):
+        return True
+    return False
+
+
+def _probe_clone_state(value: object) -> tuple[str | None, int | None, str | None]:
+    for method_name in ("clone", "copy"):
+        method = getattr(value, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            cloned = method()
+        except Exception as exc:  # pragma: no cover - defensive runtime probe
+            return method_name, None, str(exc)
+        return method_name, _safe_size(cloned), None
+    return None, None, None
 
 
 def _log_tensor_capabilities(label: str, value: object) -> None:
@@ -309,6 +423,204 @@ def _safe_get_model(scene: object | None) -> object | None:
         return None
     _log_info(f"scene.combined_model() -> type={_type_name(model)}")
     return model
+
+
+def _infer_model_splat_count(model: object | None) -> int | None:
+    if model is None:
+        return None
+    splat_count = getattr(model, "splat_count", None)
+    if isinstance(splat_count, int):
+        return splat_count
+
+    for attribute_name in ("get_means", "means", "means_raw", "get_deleted_mask", "deleted"):
+        exists, value = _safe_getattr(model, "model", attribute_name)
+        if not exists:
+            continue
+        if callable(value):
+            supported, _ = _supports_safe_no_arg_call(value)
+            if not supported:
+                continue
+            try:
+                value = value()
+            except Exception:
+                continue
+        size = _safe_size(value)
+        if size is not None:
+            return size
+    return None
+
+
+def _capture_selection_snapshot_entry(
+    path: str,
+    value: object,
+    model_splat_count: int | None,
+    aliases: dict[int, str],
+) -> SelectionSnapshotEntry:
+    size = _safe_size(value)
+    alias_of = aliases.get(id(value))
+    if alias_of is None:
+        aliases[id(value)] = path
+
+    clone_method = None
+    clone_size = None
+    clone_error = None
+    if _is_selection_tensor_like(path, value):
+        clone_method, clone_size, clone_error = _probe_clone_state(value)
+
+    stale_size = (
+        _is_selection_tensor_like(path, value)
+        and model_splat_count is not None
+        and size is not None
+        and size != model_splat_count
+    )
+    return SelectionSnapshotEntry(
+        path=path,
+        type_name=_type_name(value),
+        object_id=id(value),
+        refcount=_safe_refcount(value),
+        size=size,
+        alias_of=alias_of,
+        clone_method=clone_method,
+        clone_size=clone_size,
+        clone_error=clone_error,
+        stale_size=stale_size,
+    )
+
+
+def _log_selection_snapshot_entry(label: str, entry: SelectionSnapshotEntry) -> None:
+    alias_text = entry.alias_of or "-"
+    _log_info(
+        f"{label}: {entry.path} type={entry.type_name} "
+        f"id=0x{entry.object_id:x} refcount={entry.refcount} "
+        f"size={entry.size} alias_of={alias_text}"
+    )
+    if entry.clone_method is not None and entry.clone_error is None:
+        _log_info(
+            f"{label}: {entry.path} {entry.clone_method}() "
+            f"ok clone_size={entry.clone_size}"
+        )
+    if entry.clone_method is not None and entry.clone_error is not None:
+        _log_error(
+            f"{label}: {entry.path} {entry.clone_method}() failed: {entry.clone_error}"
+        )
+    if entry.stale_size:
+        _log_error(
+            f"{label}: stale_selection_owner path={entry.path} "
+            f"tensor_size={entry.size}"
+        )
+
+
+def _iter_selection_graph_children(owner: object, path: str) -> list[tuple[str, object]]:
+    children: list[tuple[str, object]] = []
+    for attribute_name in SELECTION_GRAPH_ATTRIBUTE_NAMES:
+        exists, value = _safe_getattr(owner, path, attribute_name)
+        if not exists:
+            continue
+        child_path = f"{path}.{attribute_name}"
+        if callable(value):
+            supported, reason = _supports_safe_no_arg_call(value)
+            if not supported:
+                _log_info(f"{child_path}() skipped: {reason}")
+                continue
+            try:
+                value = value()
+            except Exception as exc:  # pragma: no cover - defensive runtime probe
+                _log_error(f"{child_path}() failed: {exc}")
+                continue
+            children.append((f"{child_path}()", value))
+            continue
+        children.append((child_path, value))
+    return children
+
+
+def _collect_selection_lifetime_snapshot(
+    label: str,
+    scene: object | None,
+    model: object | None,
+) -> dict[str, SelectionSnapshotEntry]:
+    model_splat_count = _infer_model_splat_count(model)
+    _log_info(f"{label}: model_splat_count={model_splat_count}")
+    queue: list[tuple[int, str, object | None]] = [
+        (0, "lichtfeld", lf),
+        (0, "scene", scene),
+        (0, "model", model),
+    ]
+    aliases: dict[int, str] = {}
+    visited_paths: set[str] = set()
+    snapshot: dict[str, SelectionSnapshotEntry] = {}
+
+    while queue:
+        depth, path, value = queue.pop(0)
+        if value is None or path in visited_paths:
+            continue
+        visited_paths.add(path)
+
+        entry = _capture_selection_snapshot_entry(path, value, model_splat_count, aliases)
+        snapshot[path] = entry
+        _log_selection_snapshot_entry(label, entry)
+
+        if depth >= MAX_SELECTION_SNAPSHOT_DEPTH:
+            continue
+        if _is_selection_tensor_like(path, value):
+            continue
+
+        for child_path, child_value in _iter_selection_graph_children(value, path):
+            if child_path in visited_paths:
+                continue
+            queue.append((depth + 1, child_path, child_value))
+
+    stale_owner = _first_stale_owner(snapshot)
+    if stale_owner is not None:
+        _log_error(f"{label}: first_stale_owner={stale_owner}")
+    invalid_clone_owner = _first_invalid_clone_owner(snapshot)
+    if invalid_clone_owner is not None:
+        _log_error(f"{label}: first_invalid_clone_owner={invalid_clone_owner}")
+    return snapshot
+
+
+def _first_stale_owner(snapshot: dict[str, SelectionSnapshotEntry]) -> str | None:
+    for path, entry in snapshot.items():
+        if entry.stale_size:
+            return path
+    return None
+
+
+def _first_invalid_clone_owner(snapshot: dict[str, SelectionSnapshotEntry]) -> str | None:
+    for path, entry in snapshot.items():
+        if entry.clone_error is not None:
+            return path
+    return None
+
+
+def _log_selection_lifetime_diff(
+    label: str,
+    before: dict[str, SelectionSnapshotEntry],
+    after: dict[str, SelectionSnapshotEntry],
+) -> None:
+    before_paths = set(before)
+    after_paths = set(after)
+    for path in sorted(before_paths - after_paths):
+        _log_info(f"{label}: removed_owner={path}")
+    for path in sorted(after_paths - before_paths):
+        _log_info(f"{label}: added_owner={path}")
+    for path in sorted(before_paths & after_paths):
+        previous = before[path]
+        current = after[path]
+        if previous.object_id != current.object_id:
+            _log_info(
+                f"{label}: owner_identity_changed path={path} "
+                f"before=0x{previous.object_id:x} after=0x{current.object_id:x}"
+            )
+        if previous.size != current.size:
+            _log_info(
+                f"{label}: owner_size_changed path={path} "
+                f"before={previous.size} after={current.size}"
+            )
+        if previous.clone_error != current.clone_error:
+            _log_info(
+                f"{label}: owner_clone_state_changed path={path} "
+                f"before={previous.clone_error!r} after={current.clone_error!r}"
+            )
 
 
 def _log_tensor_runtime_diagnostics(scene: object | None, model: object | None) -> None:
@@ -586,6 +898,132 @@ def run_native_selection_api_diagnostics() -> tuple[bool, str]:
     if not success:
         return False, "no native selection API strategy succeeded"
     return True, "native selection diagnostic completed"
+
+
+def run_apply_deleted_selection_lifetime_diagnostics() -> tuple[bool, str]:
+    """Trace selection-owner state across a permanent cleanup apply."""
+    try:
+        _configure_repo_import_path()
+        from .runtime_config import snapshot_runtime_config
+        from .test_runner import _build_adapter
+    except Exception as exc:
+        message = f"diagnostic setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    config = snapshot_runtime_config()
+    _log_info(
+        "Starting apply_deleted selection lifetime diagnostic with "
+        f"ENABLE_SAFE_DELETE={config.enable_safe_delete}, "
+        f"CONFIRM_SAFE_DELETE={config.confirm_safe_delete}."
+    )
+    if not config.enable_safe_delete:
+        message = (
+            "Apply-deleted selection lifetime diagnostic is disabled because "
+            "ENABLE_SAFE_DELETE=False."
+        )
+        _log_error(message)
+        return False, message
+    if not config.confirm_safe_delete:
+        message = (
+            "Apply-deleted selection lifetime diagnostic is armed but not confirmed because "
+            "CONFIRM_SAFE_DELETE=False."
+        )
+        _log_error(message)
+        return False, message
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    apply_cleanup_workspace_deleted = getattr(
+        adapter,
+        "apply_cleanup_workspace_deleted",
+        None,
+    )
+    if not callable(apply_cleanup_workspace_deleted):
+        message = "LichtfeldAdapter does not expose apply_cleanup_workspace_deleted()."
+        _log_error(message)
+        return False, message
+
+    scene_before = _safe_get_scene()
+    model_before = _safe_get_model(scene_before)
+    before_snapshot = _collect_selection_lifetime_snapshot(
+        "before apply_cleanup_workspace_deleted()",
+        scene_before,
+        model_before,
+    )
+
+    try:
+        result = apply_cleanup_workspace_deleted()
+    except Exception as exc:
+        scene_after_failure = _safe_get_scene()
+        model_after_failure = _safe_get_model(scene_after_failure)
+        _collect_selection_lifetime_snapshot(
+            "after failed apply_cleanup_workspace_deleted()",
+            scene_after_failure,
+            model_after_failure,
+        )
+        message = f"apply_cleanup_workspace_deleted() failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    scene_after = _safe_get_scene()
+    model_after = _safe_get_model(scene_after)
+    after_snapshot = _collect_selection_lifetime_snapshot(
+        "after apply_cleanup_workspace_deleted()",
+        scene_after,
+        model_after,
+    )
+    _log_selection_lifetime_diff(
+        "apply_deleted lifetime diff",
+        before_snapshot,
+        after_snapshot,
+    )
+
+    reacquired_scene = _safe_get_scene()
+    reacquired_model = _safe_get_model(reacquired_scene)
+    reacquired_snapshot = _collect_selection_lifetime_snapshot(
+        "after reacquiring scene/model",
+        reacquired_scene,
+        reacquired_model,
+    )
+    _log_selection_lifetime_diff(
+        "reacquired lifetime diff",
+        after_snapshot,
+        reacquired_snapshot,
+    )
+
+    stale_owner = _first_stale_owner(after_snapshot) or _first_stale_owner(reacquired_snapshot)
+    invalid_clone_owner = _first_invalid_clone_owner(after_snapshot) or _first_invalid_clone_owner(
+        reacquired_snapshot
+    )
+    if stale_owner is not None or invalid_clone_owner is not None:
+        parts: list[str] = []
+        if invalid_clone_owner is not None:
+            parts.append(f"invalid clone owner={invalid_clone_owner}")
+        if stale_owner is not None:
+            parts.append(f"stale size owner={stale_owner}")
+        message = "Detected stale native selection ownership after apply_deleted(): " + "; ".join(
+            parts
+        )
+        _log_error(message)
+        return False, message
+
+    if not getattr(result, "ok", True):
+        message = getattr(result, "message", "Permanent cleanup apply did not succeed.")
+        _log_error(message)
+        return False, message
+
+    message = (
+        "apply_deleted selection lifetime diagnostic completed without stale selection owners"
+    )
+    _log_info(message)
+    return True, message
 
 
 def run_lcht_mcp_diagnostics() -> tuple[bool, str]:
