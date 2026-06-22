@@ -200,6 +200,7 @@ class LichtfeldAdapter(AdapterContract):
         self._last_delete_count = 0
         self._last_finalized_delete_count = 0
         self._last_finalized_restore_message: str | None = None
+        self._last_delete_workspace_session: CleanupSession | None = None
         self._last_scene_analysis: _SceneAnalysisState | None = None
         self._last_cleanup_preview: _CleanupPreviewState | None = None
         self._cleanup_workspace_session: CleanupSession | None = None
@@ -615,7 +616,8 @@ class LichtfeldAdapter(AdapterContract):
         max_deletable_splats: int | None = None,
         max_deletable_percentage: float | None = None,
     ) -> CleanupSoftDeleteResult:
-        workspace = self._require_cleanup_workspace()
+        session = self._require_cleanup_session()
+        workspace = session.workspace
         if not workspace.preview_selection_active or workspace.workspace_state == "soft_deleted":
             raise AdapterUnavailableError(
                 "No cleanup workspace preview selection is available. Update Preview first."
@@ -737,6 +739,7 @@ class LichtfeldAdapter(AdapterContract):
                 workspace.native_selection_mask,
                 selected_count,
                 initial_count=current_splat_count,
+                workspace_session_snapshot=self._snapshot_cleanup_workspace_session(session),
             )
         except Exception:
             logger.info("LichtFeld cleanup workspace soft delete: soft_delete failed")
@@ -1498,6 +1501,7 @@ class LichtfeldAdapter(AdapterContract):
         selected_count: int,
         *,
         initial_count: int,
+        workspace_session_snapshot: CleanupSession | None = None,
     ) -> ToolResult:
         soft_delete = getattr(model, "soft_delete", None)
         if not callable(soft_delete):
@@ -1512,7 +1516,11 @@ class LichtfeldAdapter(AdapterContract):
             _safe_length(native_selection_mask),
         )
         logger.info("LichtFeld soft_delete_selection: before model.soft_delete()")
-        self._store_last_delete(native_selection_mask, selected_count)
+        self._store_last_delete(
+            native_selection_mask,
+            selected_count,
+            workspace_session_snapshot=workspace_session_snapshot,
+        )
         try:
             soft_delete(native_selection_mask)
         except Exception:
@@ -1672,27 +1680,48 @@ class LichtfeldAdapter(AdapterContract):
             "lichtfeld.deselect_all() post-undelete",
             lambda: self._selection.deselect_all(lichtfeld_module),
         )
-        self._selection.clear_cache()
+        restored_workspace = self._restore_cleanup_workspace_preview_state(
+            scene,
+            model,
+            lichtfeld_module,
+        )
+        if restored_workspace is None:
+            self._selection.clear_cache()
         self._log_delete_cleanup_step(
             "scene.notify_changed()",
             lambda: self._notify_scene_changed(scene),
         )
-        self._clear_workspace_preview_state()
+        if restored_workspace is None:
+            self._clear_workspace_preview_state()
         restored_count = self._last_delete_count
         self._clear_last_delete()
         self._last_finalized_delete_count = 0
         self._last_finalized_restore_message = None
         return ToolResult(message=f"Restored {restored_count} deleted splats.")
 
-    def _store_last_delete(self, native_mask: object, deleted_count: int) -> None:
+    def _store_last_delete(
+        self,
+        native_mask: object,
+        deleted_count: int,
+        *,
+        workspace_session_snapshot: CleanupSession | None = None,
+    ) -> None:
         self._last_delete_mask = native_mask
         self._last_delete_count = deleted_count
+        self._last_delete_workspace_session = workspace_session_snapshot
         self._last_finalized_delete_count = 0
         self._last_finalized_restore_message = None
+        if workspace_session_snapshot is not None:
+            logger.info(
+                "LichtFeld cleanup workspace soft delete: Saved workspace preview state. "
+                "saved_selected_count=%s",
+                workspace_session_snapshot.workspace.selected_count,
+            )
 
     def _clear_last_delete(self) -> None:
         self._last_delete_mask = None
         self._last_delete_count = 0
+        self._last_delete_workspace_session = None
         self._pending_cleanup_apply_project_path = None
 
     def _has_reversible_soft_delete(self) -> bool:
@@ -1725,6 +1754,159 @@ class LichtfeldAdapter(AdapterContract):
             native_selection_mask_size=None,
             workspace_state=workspace_state,
         )
+
+    def _snapshot_cleanup_workspace_session(self, session: CleanupSession) -> CleanupSession:
+        workspace = session.workspace
+        return CleanupSession(
+            workspace=replace(
+                workspace,
+                native_selection_mask=self._copy_native_selection_mask(
+                    workspace.native_selection_mask
+                ),
+            ),
+            sampled_gaussian_cloud=session.sampled_gaussian_cloud,
+        )
+
+    def _restore_cleanup_workspace_preview_state(
+        self,
+        scene: object,
+        model: object,
+        lichtfeld_module: object,
+    ) -> CleanupWorkspace | None:
+        snapshot_session = self._last_delete_workspace_session
+        if snapshot_session is None:
+            return None
+
+        workspace = snapshot_session.workspace
+        current_scene_generation = self._read_scene_generation(scene, model)
+        current_splat_count = self._read_current_model_splat_count(model)
+        current_model_splat_count = current_splat_count
+
+        if get_scene_path(scene) != workspace.scene_profile.project_path:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="restore_scene_path_changed",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_model_splat_count,
+            )
+            self._invalidate_cleanup_workspace()
+            self._last_delete_workspace_session = None
+            return None
+        if current_splat_count != workspace.scene_profile.total_splats:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="restore_scene_splat_count_changed",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_model_splat_count,
+            )
+            self._invalidate_cleanup_workspace()
+            self._last_delete_workspace_session = None
+            return None
+
+        restored_native_mask = self._copy_native_selection_mask(workspace.native_selection_mask)
+        restored_mask_size = self._native_mask_size(restored_native_mask)
+        if restored_native_mask is None:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="restore_workspace_mask_missing",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_model_splat_count,
+            )
+            self._invalidate_cleanup_workspace()
+            self._last_delete_workspace_session = None
+            return None
+        if restored_mask_size is None:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="restore_workspace_mask_size_unavailable",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_model_splat_count,
+            )
+            self._invalidate_cleanup_workspace()
+            self._last_delete_workspace_session = None
+            return None
+        if restored_mask_size != current_splat_count:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="restore_workspace_mask_size_mismatch",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_model_splat_count,
+                workspace_mask_size=restored_mask_size,
+            )
+            self._invalidate_cleanup_workspace()
+            self._last_delete_workspace_session = None
+            return None
+
+        restored_report = self._with_scene_generation(
+            workspace.scene_analysis_report,
+            current_scene_generation,
+        )
+        restored_workspace = replace(
+            workspace,
+            scene_analysis_report=restored_report,
+            native_selection_mask=restored_native_mask,
+            native_selection_mask_size=restored_mask_size,
+            scene_generation=current_scene_generation,
+            workspace_state="active",
+        )
+        self._cleanup_workspace_session = CleanupSession(
+            workspace=restored_workspace,
+            sampled_gaussian_cloud=snapshot_session.sampled_gaussian_cloud,
+        )
+        self._restore_native_selection_mask(scene, restored_native_mask)
+        restored_selection_mask = self._selection.read_scene_selection_mask(
+            scene,
+            current_splat_count,
+            lf_module=lichtfeld_module,
+            allow_invalid_mask=True,
+        )
+        if restored_selection_mask is None:
+            self._selection.clear_cache()
+        else:
+            self._selection.cache_mask(restored_selection_mask)
+
+        analysis_state = self._last_scene_analysis
+        if (
+            analysis_state is not None
+            and analysis_state.project_path == restored_workspace.scene_profile.project_path
+            and analysis_state.total_splats == current_splat_count
+        ):
+            self._last_scene_analysis = self._retimestamp_analysis_state(
+                analysis_state,
+                current_scene_generation,
+            )
+
+        logger.info(
+            "LichtFeld cleanup workspace restore: Workspace preview restored. "
+            "restored_selected_count=%s",
+            restored_workspace.selected_count,
+        )
+        return restored_workspace
+
+    def _restore_native_selection_mask(
+        self,
+        scene: object,
+        native_selection_mask: object,
+    ) -> None:
+        setter = getattr(scene, "set_selection_mask", None)
+        if callable(setter):
+            setter(native_selection_mask)
+            return
+        for attribute_name in ("selection_mask", "_selection_mask"):
+            if hasattr(scene, attribute_name):
+                setattr(scene, attribute_name, native_selection_mask)
+                break
+        try:
+            restored_mask_values = [bool(value) for value in native_selection_mask]  # type: ignore[arg-type]
+        except Exception:
+            return
+        if hasattr(scene, "last_selection_mask"):
+            setattr(scene, "last_selection_mask", restored_mask_values)
 
     def _require_cleanup_analysis_state(self) -> _SceneAnalysisState:
         analysis_state = self._last_scene_analysis
@@ -1779,6 +1961,35 @@ class LichtfeldAdapter(AdapterContract):
             total_splats=workspace.scene_profile.total_splats,
             approximate=workspace.approximate,
             scene_generation=workspace.scene_generation,
+        )
+
+    @staticmethod
+    def _with_scene_generation(
+        report: SceneAnalysisReport,
+        scene_generation: object | None,
+    ) -> SceneAnalysisReport:
+        return replace(
+            report,
+            scene_stats={
+                **report.scene_stats,
+                "scene_generation": scene_generation,
+            },
+        )
+
+    @classmethod
+    def _retimestamp_analysis_state(
+        cls,
+        analysis_state: _SceneAnalysisState,
+        scene_generation: object | None,
+    ) -> _SceneAnalysisState:
+        return _SceneAnalysisState(
+            report=cls._with_scene_generation(analysis_state.report, scene_generation),
+            sampled_rows=list(analysis_state.sampled_rows),
+            sampled_indices=list(analysis_state.sampled_indices),
+            project_path=analysis_state.project_path,
+            total_splats=analysis_state.total_splats,
+            approximate=analysis_state.approximate,
+            scene_generation=scene_generation,
         )
 
     def _resolve_cleanup_analysis_state_for_workspace(
@@ -1882,21 +2093,16 @@ class LichtfeldAdapter(AdapterContract):
             aborted=bool(scene_stats.get("aborted", False)),
         )
         report = build_default_scene_analysis_engine().analyze(context)
-        report = replace(
-            report,
-            scene_stats={
-                **report.scene_stats,
-                "scene_generation": scene_generation,
-            },
-        )
-        return _SceneAnalysisState(
-            report=report,
-            sampled_rows=list(analysis_state.sampled_rows),
-            sampled_indices=list(analysis_state.sampled_indices),
-            project_path=analysis_state.project_path,
-            total_splats=analysis_state.total_splats,
-            approximate=analysis_state.approximate,
-            scene_generation=scene_generation,
+        return self._retimestamp_analysis_state(
+            _SceneAnalysisState(
+                report=report,
+                sampled_rows=list(analysis_state.sampled_rows),
+                sampled_indices=list(analysis_state.sampled_indices),
+                project_path=analysis_state.project_path,
+                total_splats=analysis_state.total_splats,
+                approximate=analysis_state.approximate,
+            ),
+            scene_generation,
         )
 
     @staticmethod

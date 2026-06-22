@@ -2344,6 +2344,7 @@ def test_soft_delete_current_cleanup_selection_soft_deletes_without_apply_delete
         outlier_distance=2.5,
         cleanup_aggressiveness=0.5,
     )
+    workspace_native_mask_values = list(workspace.native_selection_mask)
 
     result = adapter.soft_delete_current_cleanup_selection()
     assert fake_scene._model.apply_deleted_calls == 0
@@ -2353,6 +2354,7 @@ def test_soft_delete_current_cleanup_selection_soft_deletes_without_apply_delete
     assert adapter._cleanup_workspace_session.workspace.native_selection_mask is None
     assert adapter._cleanup_workspace_session.workspace.native_selection_mask_size is None
     restored = adapter.restore_last_delete()
+    restored_workspace = adapter.get_cleanup_workspace()
     stats = adapter.get_stats()
 
     assert result.ok is True
@@ -2361,8 +2363,18 @@ def test_soft_delete_current_cleanup_selection_soft_deletes_without_apply_delete
     assert result.restore_available is True
     assert fake_scene._model.soft_delete_masks == [[False, False, True, True]]
     assert restored.ok is True
+    assert restored_workspace is not None
+    assert restored_workspace.workspace_state == "active"
+    assert restored_workspace.preview_selection_active is True
+    assert restored_workspace.selected_count == workspace.selected_count
+    assert restored_workspace.preview_selected_indices == workspace.preview_selected_indices
+    assert restored_workspace.candidate_selection_mask == workspace.candidate_selection_mask
+    assert restored_workspace.selection_source == workspace.selection_source
+    assert restored_workspace.native_selection_mask is not None
+    assert list(restored_workspace.native_selection_mask) == workspace_native_mask_values
+    assert fake_scene.last_selection_mask == workspace_native_mask_values
     assert stats.splat_count == 4
-    assert stats.selected_count == 0
+    assert stats.selected_count == workspace.selected_count
 
 
 def test_soft_delete_current_cleanup_selection_is_safe_when_repeated(monkeypatch):
@@ -2474,6 +2486,173 @@ def test_cleanup_workspace_can_be_restored_and_updated_after_soft_delete(monkeyp
     assert updated.current_cleanup_parameters.voxel_size == pytest.approx(2.0)
     assert opened.scene_profile.project_path == updated.scene_profile.project_path
     assert reset_result.ok is True
+    assert adapter.get_cleanup_workspace() is None
+
+
+def test_cleanup_workspace_restore_does_not_recompute_analysis_or_candidates(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            ),
+            opacity=FakeTorchTensor([0.1, 0.2, 0.3, 0.4]),
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(voxel_size=1.0, min_voxel_cluster_size=2, max_splats=10)
+    adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+    adapter.soft_delete_current_cleanup_selection()
+    monkeypatch.setattr(
+        adapter,
+        "analyze_scene",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("analyze_scene should not run during restore")),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_build_cleanup_candidate_preview",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("cleanup workspace should not rebuild during restore")
+        ),
+    )
+
+    restored = adapter.restore_last_delete()
+    restored_workspace = adapter.get_cleanup_workspace()
+
+    assert restored.ok is True
+    assert restored_workspace is not None
+    assert restored_workspace.preview_selection_active is True
+
+
+def test_cleanup_workspace_restore_allows_soft_delete_again_without_reopening(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            ),
+            opacity=FakeTorchTensor([0.1, 0.2, 0.3, 0.4]),
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(voxel_size=1.0, min_voxel_cluster_size=2, max_splats=10)
+    workspace = adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+    first_deleted = adapter.soft_delete_current_cleanup_selection()
+    restored = adapter.restore_last_delete()
+    second_deleted = adapter.soft_delete_current_cleanup_selection()
+
+    assert first_deleted.ok is True
+    assert restored.ok is True
+    assert second_deleted.ok is True
+    assert second_deleted.soft_deleted_count == workspace.selected_count
+    assert fake_scene._model.soft_delete_masks == [
+        [False, False, True, True],
+        [False, False, True, True],
+    ]
+    assert adapter._cleanup_workspace_session is not None
+    assert adapter._cleanup_workspace_session.workspace.workspace_state == "soft_deleted"
+
+
+def test_cleanup_workspace_restore_allows_apply_after_second_soft_delete(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            ),
+            opacity=FakeTorchTensor([0.1, 0.2, 0.3, 0.4]),
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(voxel_size=1.0, min_voxel_cluster_size=2, max_splats=10)
+    adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+
+    adapter.soft_delete_current_cleanup_selection()
+    restored = adapter.restore_last_delete()
+    second_deleted = adapter.soft_delete_current_cleanup_selection()
+    applied = adapter.apply_cleanup_workspace_deleted()
+
+    assert restored.ok is True
+    assert second_deleted.ok is True
+    assert applied.ok is True
+    assert applied.restore_available is False
+    assert applied.workspace_state == "invalidated"
+    assert fake_scene._model.apply_deleted_calls == 2
     assert adapter.get_cleanup_workspace() is None
 
 
