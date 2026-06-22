@@ -76,6 +76,10 @@ class CleanupWorkspace:
     selection_update_time: float
     total_workspace_update_time: float
     estimated_sample_reuse: float
+    native_selection_mask: object | None = None
+    native_selection_mask_size: int | None = None
+    scene_generation: object | None = None
+    workspace_state: str = "active"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -93,9 +97,13 @@ class CleanupWorkspace:
             "full_scene_metadata": {
                 "total_splats": self.scene_profile.total_splats,
                 "project_path": self.scene_profile.project_path,
+                "scene_generation": self.scene_generation,
             },
+            "workspace_state": self.workspace_state,
             "preview_selection_active": self.preview_selection_active,
             "native_selection_handle": self.native_selection_handle,
+            "native_selection_mask_available": self.native_selection_mask is not None,
+            "native_selection_mask_size": self.native_selection_mask_size,
             "selected_count": self.selected_count,
             "preview_selected_splats": self.selected_count,
             "selection_percentage": round(self.selection_percentage, 6),
@@ -170,6 +178,7 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
     cleanup_percentage = summary.estimated_percentage_of_total
     lines = [
         "Cleanup Workspace",
+        f"Workspace State: {workspace.workspace_state.replace('_', ' ').title()}",
         "Scene Health:",
         scene_health,
         f"Quality score: {workspace.scene_profile.quality_score}",
@@ -190,6 +199,8 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
         f"Analysis reused: {'Yes' if workspace.analysis_reused else 'No'}",
         f"Update time: {workspace.total_workspace_update_time:.6f}s",
     ]
+    if workspace.preview_selection_active and workspace.native_selection_mask is None:
+        lines.append("Native workspace delete mask unavailable. Soft delete will refuse until it exists.")
     if not workspace.preview_selection_active:
         lines.append("Preview selection: inactive. Run Update Preview to rebuild it.")
     if workspace.approximate:

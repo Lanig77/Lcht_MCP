@@ -94,6 +94,15 @@ class LichtfeldAdapter(ABC):
     @abstractmethod
     def reset_cleanup_workspace(self) -> ToolResult: ...
 
+    def soft_delete_cleanup_workspace_selection(
+        self,
+        *,
+        max_deletable_splats: int | None = None,
+        max_deletable_percentage: float | None = None,
+    ) -> CleanupSoftDeleteResult:
+        del max_deletable_splats, max_deletable_percentage
+        return self.soft_delete_current_cleanup_selection()
+
     @abstractmethod
     def soft_delete_current_cleanup_selection(self) -> CleanupSoftDeleteResult: ...
 

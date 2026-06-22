@@ -17,7 +17,7 @@ SOFT_DELETE_CLEANUP_SELECTION_OPERATOR_ID = (
 class LCHTMCP_OT_soft_delete_cleanup_selection(Operator):
     """Soft-delete the current cleanup workspace selection without apply_deleted()."""
 
-    label = "Soft Delete Cleanup Selection"
+    label = "Soft Delete Cleanup Workspace Selection"
     description = "Soft-delete the current cleanup workspace selection without apply_deleted()"
 
     def invoke(self, context, event: Event) -> set:

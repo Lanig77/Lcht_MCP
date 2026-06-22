@@ -394,7 +394,7 @@ class LchtMcpTestPanel(lf.ui.Panel):
             theme.palette.text_dim,
         )
         if layout.button_styled(
-            "Soft Delete##soft_delete_cleanup_selection",
+            "Soft Delete Cleanup Workspace Selection##soft_delete_cleanup_selection",
             "warning",
             (-1, 34 * scale),
         ):

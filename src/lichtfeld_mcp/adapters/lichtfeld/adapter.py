@@ -607,9 +607,14 @@ class LichtfeldAdapter(AdapterContract):
         logger.info("LichtFeld cleanup workspace reset: selection cleared")
         return ToolResult(message="Cleanup workspace reset. Native preview selection cleared.")
 
-    def soft_delete_current_cleanup_selection(self) -> CleanupSoftDeleteResult:
+    def soft_delete_cleanup_workspace_selection(
+        self,
+        *,
+        max_deletable_splats: int | None = None,
+        max_deletable_percentage: float | None = None,
+    ) -> CleanupSoftDeleteResult:
         workspace = self._require_cleanup_workspace()
-        if not workspace.preview_selection_active:
+        if not workspace.preview_selection_active or workspace.workspace_state == "soft_deleted":
             raise AdapterUnavailableError(
                 "No cleanup workspace preview selection is available. Update Preview first."
             )
@@ -618,61 +623,110 @@ class LichtfeldAdapter(AdapterContract):
         scene = require_active_scene(lichtfeld_module)
         model = require_combined_model(scene)
         self._ensure_workspace_scene_matches(workspace)
-        total_splats = workspace.scene_profile.total_splats
+
+        current_scene_generation = self._read_scene_generation(scene, model)
+        if self._scene_generation_changed(workspace.scene_generation, current_scene_generation):
+            raise AdapterUnavailableError(
+                "Cleanup workspace no longer matches the current scene generation. "
+                "Open Cleanup Workspace again."
+            )
+
+        current_splat_count = self._read_current_model_splat_count(model)
+        if current_splat_count != workspace.scene_profile.total_splats:
+            raise AdapterUnavailableError(
+                "Cleanup workspace no longer matches the current scene splat count. "
+                "Open Cleanup Workspace again."
+            )
+
         selected_count = workspace.selected_count
         if selected_count <= 0:
             raise AdapterUnavailableError("Cleanup workspace preview selection is empty.")
 
-        if workspace.approximate:
-            self._apply_cleanup_candidate_selection_indices_only(
-                scene,
-                lichtfeld_module,
-                list(workspace.preview_selected_indices),
-            )
-        else:
-            self._apply_cleanup_candidate_selection(
-                scene,
-                model,
-                lichtfeld_module,
-                list(workspace.candidate_selection_mask),
-            )
-        native_selection_mask = self._selection.read_native_selection_mask(scene)
-        if native_selection_mask is None:
+        if workspace.native_selection_mask is None:
             raise AdapterUnavailableError(
-                "Cleanup workspace preview exists, but no native scene.selection_mask Tensor "
+                "Cleanup workspace preview exists, but no workspace-owned native selection mask "
                 "is available for soft delete."
             )
 
-        selected_percentage = 0.0 if total_splats <= 0 else selected_count / total_splats
-        logger.info("LichtFeld cleanup workspace soft delete: initial_splat_count=%s", total_splats)
-        logger.info("LichtFeld cleanup workspace soft delete: selected_count=%s", selected_count)
+        native_mask_size = workspace.native_selection_mask_size
+        if native_mask_size is None:
+            raise AdapterUnavailableError(
+                "Cleanup workspace native selection mask size is unavailable for soft delete."
+            )
+        if native_mask_size != current_splat_count:
+            raise AdapterUnavailableError(
+                "Cleanup workspace native selection mask size does not match the current scene "
+                "splat count."
+            )
+
+        selected_percentage = (
+            0.0 if current_splat_count <= 0 else selected_count / current_splat_count
+        )
+        logger.info(
+            "LichtFeld cleanup workspace soft delete: initial_splat_count=%s",
+            current_splat_count,
+        )
+        logger.info(
+            "LichtFeld cleanup workspace soft delete: workspace_selected_count=%s",
+            selected_count,
+        )
         logger.info(
             "LichtFeld cleanup workspace soft delete: selected_percentage=%.6f",
             selected_percentage,
         )
+        logger.info(
+            "LichtFeld cleanup workspace soft delete: max_deletable_splats=%s "
+            "max_deletable_percentage=%s",
+            max_deletable_splats,
+            max_deletable_percentage,
+        )
+        if max_deletable_splats is not None and selected_count > max_deletable_splats:
+            raise AdapterUnavailableError(
+                "Cleanup workspace soft delete refused: "
+                f"selected_count={selected_count} exceeds max_deletable_splats="
+                f"{max_deletable_splats}."
+            )
+        if (
+            max_deletable_percentage is not None
+            and selected_percentage > max_deletable_percentage
+        ):
+            raise AdapterUnavailableError(
+                "Cleanup workspace soft delete refused: "
+                f"selected_percentage={selected_percentage:.6f} exceeds "
+                f"max_deletable_percentage={max_deletable_percentage:.6f}."
+            )
+
         try:
             result = self._soft_delete_native_selection_mask(
                 scene,
                 model,
                 lichtfeld_module,
-                native_selection_mask,
+                workspace.native_selection_mask,
                 selected_count,
+                initial_count=current_splat_count,
             )
         except Exception:
             logger.info("LichtFeld cleanup workspace soft delete: soft_delete failed")
             raise
 
         restore_available = self._last_delete_mask is not None and self._last_delete_count > 0
+        self._clear_workspace_preview_state(workspace_state="soft_deleted")
+        workspace_state = (
+            self._cleanup_workspace_session.workspace.workspace_state
+            if self._cleanup_workspace_session is not None
+            else "inactive"
+        )
         logger.info(
-            "LichtFeld cleanup workspace soft delete: ok=%s restore_available=%s",
+            "LichtFeld cleanup workspace soft delete: ok=%s restore_available=%s "
+            "workspace_state=%s",
             result.ok,
             restore_available,
+            workspace_state,
         )
-        self._clear_workspace_preview_state()
         return CleanupSoftDeleteResult(
             ok=result.ok,
             soft_deleted_count=selected_count,
-            total_splats=total_splats,
+            total_splats=current_splat_count,
             percentage=selected_percentage,
             restore_available=restore_available,
             message=(
@@ -680,6 +734,9 @@ class LichtfeldAdapter(AdapterContract):
                 "Reversible until apply_deleted() is called."
             ),
         )
+
+    def soft_delete_current_cleanup_selection(self) -> CleanupSoftDeleteResult:
+        return self.soft_delete_cleanup_workspace_selection()
 
     def soft_delete_cleanup_candidates(self) -> ToolResult:
         preview_state = self._last_cleanup_preview
@@ -1242,6 +1299,7 @@ class LichtfeldAdapter(AdapterContract):
             lichtfeld_module,
             native_selection_mask,
             selected_count,
+            initial_count=initial_count,
         )
 
     def _soft_delete_native_selection_mask(
@@ -1251,13 +1309,14 @@ class LichtfeldAdapter(AdapterContract):
         lichtfeld_module: object,
         native_selection_mask: object,
         selected_count: int,
+        *,
+        initial_count: int,
     ) -> ToolResult:
         soft_delete = getattr(model, "soft_delete", None)
         if not callable(soft_delete):
             raise AdapterUnavailableError(
                 "Active LichtFeld combined model does not expose soft_delete for deletion."
             )
-        initial_count = len(extract_position_rows(model))
         logger.info(
             "LichtFeld soft_delete_selection: initial_count=%s selected_count=%s native_mask_type=%s native_mask_len=%s",
             initial_count,
@@ -1445,7 +1504,11 @@ class LichtfeldAdapter(AdapterContract):
         self._cleanup_workspace_session = None
         self._last_cleanup_preview = None
 
-    def _clear_workspace_preview_state(self) -> None:
+    def _clear_workspace_preview_state(
+        self,
+        *,
+        workspace_state: str = "active",
+    ) -> None:
         session = self._cleanup_workspace_session
         if session is None:
             return
@@ -1460,6 +1523,9 @@ class LichtfeldAdapter(AdapterContract):
             selection_percentage=0.0,
             selection_source="no active cleanup preview",
             selection_mode="replace",
+            native_selection_mask=None,
+            native_selection_mask_size=None,
+            workspace_state=workspace_state,
         )
 
     def _require_cleanup_analysis_state(self) -> _SceneAnalysisState:
@@ -1725,6 +1791,10 @@ class LichtfeldAdapter(AdapterContract):
             )
         selection_update_time = _elapsed_seconds(selection_start)
         total_workspace_update_time = _elapsed_seconds(total_workspace_start)
+        native_selection_mask = self._copy_native_selection_mask(
+            self._selection.read_native_selection_mask(scene)
+        )
+        native_selection_mask_size = self._native_mask_size(native_selection_mask)
 
         selection_source = ", ".join(build.selection_sources) or "no cleanup candidates"
         selection_percentage = (
@@ -1754,12 +1824,16 @@ class LichtfeldAdapter(AdapterContract):
             selection_update_time=selection_update_time,
             total_workspace_update_time=total_workspace_update_time,
             estimated_sample_reuse=1.0 if sample_reused else 0.0,
+            native_selection_mask=native_selection_mask,
+            native_selection_mask_size=native_selection_mask_size,
+            scene_generation=analysis_state.scene_generation,
+            workspace_state="active",
         )
         logger.info(
             "LichtFeld cleanup workspace: analysis_reused=%s candidate_update_time=%.6fs "
             "selection_update_time=%.6fs total_workspace_update_time=%.6fs "
             "estimated_sample_reuse=%.2f quality_score=%s scene_health=%s "
-            "estimated_affected_splats_total=%s selected_count=%s",
+            "estimated_affected_splats_total=%s selected_count=%s native_mask_available=%s",
             workspace.analysis_reused,
             workspace.candidate_update_time,
             workspace.selection_update_time,
@@ -1769,6 +1843,7 @@ class LichtfeldAdapter(AdapterContract):
             workspace.scene_profile.profile_label,
             workspace.cleanup_candidate_summary.estimated_affected_splats_total,
             workspace.selected_count,
+            workspace.native_selection_mask is not None,
         )
         return CleanupSession(
             workspace=workspace,
@@ -1854,6 +1929,46 @@ class LichtfeldAdapter(AdapterContract):
             except Exception:
                 pass
         return get_position_source_count(position_source)
+
+    def _read_current_model_splat_count(self, model: object) -> int:
+        position_source = resolve_position_source(model)
+        splat_count = self._read_splat_count_without_selection(model, position_source)
+        if splat_count is None:
+            raise AdapterUnavailableError(
+                "Active LichtFeld combined model does not expose a reliable splat count for "
+                "cleanup workspace soft delete."
+            )
+        return splat_count
+
+    @staticmethod
+    def _copy_native_selection_mask(native_selection_mask: object | None) -> object | None:
+        if native_selection_mask is None:
+            return None
+        for method_name in ("clone", "copy"):
+            method = getattr(native_selection_mask, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                return method()
+            except Exception:
+                continue
+        return native_selection_mask
+
+    @staticmethod
+    def _native_mask_size(native_selection_mask: object | None) -> int | None:
+        if native_selection_mask is None:
+            return None
+        shape = getattr(native_selection_mask, "shape", None)
+        if shape is not None:
+            try:
+                if len(shape) > 0:
+                    return int(shape[0])
+            except Exception:
+                pass
+        try:
+            return len(native_selection_mask)  # type: ignore[arg-type]
+        except Exception:
+            return None
 
     def _apply_cleanup_candidate_selection(
         self,

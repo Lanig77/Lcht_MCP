@@ -72,6 +72,16 @@ class MockSceneState:
     density_score: float = 0.82
 
 
+@dataclass(frozen=True)
+class MockNativeSelectionMask:
+    mask_size: int
+    selected_count: int
+
+    @property
+    def shape(self) -> tuple[int]:
+        return (self.mask_size,)
+
+
 class MockLichtfeldAdapter(LichtfeldAdapter):
     """In-memory adapter for development and demonstrations."""
 
@@ -297,21 +307,67 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         self._last_cleanup_preview = None
         return ToolResult(message="Cleanup workspace reset. Native preview selection cleared.")
 
-    def soft_delete_current_cleanup_selection(self) -> CleanupSoftDeleteResult:
+    def soft_delete_cleanup_workspace_selection(
+        self,
+        *,
+        max_deletable_splats: int | None = None,
+        max_deletable_percentage: float | None = None,
+    ) -> CleanupSoftDeleteResult:
         scene = self._require_scene()
         if self._cleanup_workspace_session is None:
             raise ProjectNotOpenError("No cleanup workspace is active. Open Cleanup Workspace first.")
-        selected_count = self._cleanup_workspace_session.workspace.selected_count
+        workspace = self._cleanup_workspace_session.workspace
+        if workspace.workspace_state == "soft_deleted" or not workspace.preview_selection_active:
+            raise ProjectNotOpenError(
+                "No cleanup workspace preview selection is available. Update Preview first."
+            )
+        if workspace.scene_generation != scene.generation:
+            raise ProjectNotOpenError(
+                "Cleanup workspace no longer matches the current scene generation. "
+                "Open Cleanup Workspace again."
+            )
+        if workspace.scene_profile.total_splats != scene.splat_count:
+            raise ProjectNotOpenError(
+                "Cleanup workspace no longer matches the current scene splat count. "
+                "Open Cleanup Workspace again."
+            )
+        if workspace.native_selection_mask is None:
+            raise ProjectNotOpenError(
+                "Cleanup workspace preview exists, but no workspace-owned native selection mask "
+                "is available for soft delete."
+            )
+        if workspace.native_selection_mask_size != scene.splat_count:
+            raise ProjectNotOpenError(
+                "Cleanup workspace native selection mask size does not match the current scene "
+                "splat count."
+            )
+        selected_count = workspace.selected_count
         if selected_count <= 0:
             raise ProjectNotOpenError("Cleanup workspace preview selection is empty.")
+        selected_ratio = 0.0 if scene.splat_count <= 0 else selected_count / scene.splat_count
+        if max_deletable_splats is not None and selected_count > max_deletable_splats:
+            raise ProjectNotOpenError(
+                "Cleanup workspace soft delete refused: "
+                f"selected_count={selected_count} exceeds max_deletable_splats="
+                f"{max_deletable_splats}."
+            )
+        if (
+            max_deletable_percentage is not None
+            and selected_ratio > max_deletable_percentage
+        ):
+            raise ProjectNotOpenError(
+                "Cleanup workspace soft delete refused: "
+                f"selected_percentage={selected_ratio:.6f} exceeds "
+                f"max_deletable_percentage={max_deletable_percentage:.6f}."
+            )
         deleted = min(scene.splat_count, selected_count)
-        self._push_history("soft_delete_current_cleanup_selection", {"deleted": deleted})
+        self._push_history("soft_delete_cleanup_workspace_selection", {"deleted": deleted})
         scene.splat_count -= deleted
         scene.selected_count = 0
         scene.file_size_mb = round(scene.splat_count / 5000.0, 2)
         self._bump_scene_generation()
         self._cleanup_workspace_session.workspace = replace(
-            self._cleanup_workspace_session.workspace,
+            workspace,
             candidate_selection_mask=(),
             preview_selected_indices=(),
             preview_selection_active=False,
@@ -319,6 +375,9 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             selected_count=0,
             selection_percentage=0.0,
             selection_source="no active cleanup preview",
+            native_selection_mask=None,
+            native_selection_mask_size=None,
+            workspace_state="soft_deleted",
         )
         self._pending_cleanup_apply_count = deleted
         return CleanupSoftDeleteResult(
@@ -331,6 +390,9 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
                 "Reversible until apply_deleted() is called."
             ),
         )
+
+    def soft_delete_current_cleanup_selection(self) -> CleanupSoftDeleteResult:
+        return self.soft_delete_cleanup_workspace_selection()
 
     def soft_delete_cleanup_candidates(self) -> ToolResult:
         scene = self._require_scene()
@@ -584,6 +646,13 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             selection_update_time=0.01,
             total_workspace_update_time=0.01,
             estimated_sample_reuse=1.0 if sample_reused else 0.0,
+            native_selection_mask=MockNativeSelectionMask(
+                mask_size=scene.splat_count,
+                selected_count=selected_count,
+            ),
+            native_selection_mask_size=scene.splat_count,
+            scene_generation=scene.generation,
+            workspace_state="active",
         )
 
     def select_by_box(self, box: Box3D, mode: str = "replace") -> SelectionResult:

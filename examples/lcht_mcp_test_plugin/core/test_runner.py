@@ -576,8 +576,10 @@ def run_soft_delete_cleanup_selection() -> tuple[bool, str]:
     total_splats = workspace.scene_profile.total_splats
     selected_ratio = _selected_percentage(selected_count, total_splats)
     _log_info(f"initial_splat_count={total_splats}")
-    _log_info(f"selected_count={selected_count}")
+    _log_info(f"workspace_selected_count={selected_count}")
     _log_info(f"selected_percentage={selected_ratio * 100.0:.6f}%")
+    _log_info(f"max_deletable_splats={config.max_deletable_splats}")
+    _log_info(f"max_deletable_percentage={config.max_deletable_percentage:.6f}")
 
     if selected_count <= 0:
         message = "Cleanup workspace soft delete refused: selected_count == 0."
@@ -600,31 +602,51 @@ def run_soft_delete_cleanup_selection() -> tuple[bool, str]:
         _log_error(message)
         return False, message
 
+    soft_delete_cleanup_workspace_selection = getattr(
+        adapter,
+        "soft_delete_cleanup_workspace_selection",
+        None,
+    )
     soft_delete_current_cleanup_selection = getattr(
         adapter,
         "soft_delete_current_cleanup_selection",
         None,
     )
-    if not callable(soft_delete_current_cleanup_selection):
-        message = "LichtfeldAdapter does not expose soft_delete_current_cleanup_selection()."
+    if not callable(soft_delete_cleanup_workspace_selection) and not callable(
+        soft_delete_current_cleanup_selection
+    ):
+        message = (
+            "LichtfeldAdapter does not expose "
+            "soft_delete_cleanup_workspace_selection()."
+        )
         _log_error(message)
         return False, message
 
     try:
-        result = soft_delete_current_cleanup_selection()
+        if callable(soft_delete_cleanup_workspace_selection):
+            result = soft_delete_cleanup_workspace_selection(
+                max_deletable_splats=config.max_deletable_splats,
+                max_deletable_percentage=config.max_deletable_percentage,
+            )
+        else:
+            result = soft_delete_current_cleanup_selection()
     except Exception as exc:
         message = f"Cleanup workspace soft delete failed: {exc}"
         _log_error(message)
         return False, message
 
     _log_info(f"soft_delete ok={result.ok}")
-    _log_info(f"restore available={result.restore_available}")
+    _log_info(f"restore_available={result.restore_available}")
     _log_info(
         "Cleanup workspace soft delete complete. "
         "Reversible only. Does not call apply_deleted(). "
         "Use Restore Last Delete to undo."
     )
     _sync_cleanup_workspace_display(adapter)
+    updated_workspace = _get_cleanup_workspace(adapter)
+    _log_info(
+        f"workspace_state={updated_workspace.workspace_state if updated_workspace is not None else 'inactive'}"
+    )
     return result.ok, result.message
 
 

@@ -61,6 +61,7 @@ class FakeCleanupWorkspaceSoftDeleteAdapter:
         should_raise: str | None = None,
         workspace: CleanupWorkspace | None = None,
     ):
+        self.soft_delete_cleanup_workspace_selection_calls = 0
         self.soft_delete_current_cleanup_selection_calls = 0
         self.restore_last_delete_calls = 0
         self.apply_deleted_calls = 0
@@ -70,8 +71,16 @@ class FakeCleanupWorkspaceSoftDeleteAdapter:
     def get_cleanup_workspace(self):
         return self.current_workspace
 
-    def soft_delete_current_cleanup_selection(self):
+    def soft_delete_cleanup_workspace_selection(
+        self,
+        *,
+        max_deletable_splats: int | None = None,
+        max_deletable_percentage: float | None = None,
+    ):
+        self.soft_delete_cleanup_workspace_selection_calls += 1
         self.soft_delete_current_cleanup_selection_calls += 1
+        assert max_deletable_splats is not None
+        assert max_deletable_percentage is not None
         if self.should_raise is not None:
             raise RuntimeError(self.should_raise)
         if self.current_workspace is not None:
@@ -84,6 +93,9 @@ class FakeCleanupWorkspaceSoftDeleteAdapter:
                 selected_count=0,
                 selection_percentage=0.0,
                 selection_source="no active cleanup preview",
+                native_selection_mask=None,
+                native_selection_mask_size=None,
+                workspace_state="soft_deleted",
             )
         return SimpleNamespace(
             ok=True,
@@ -95,6 +107,12 @@ class FakeCleanupWorkspaceSoftDeleteAdapter:
                 "Soft-deleted 12 cleanup workspace splats. "
                 "Reversible until apply_deleted() is called."
             ),
+        )
+
+    def soft_delete_current_cleanup_selection(self):
+        return self.soft_delete_cleanup_workspace_selection(
+            max_deletable_splats=50_000,
+            max_deletable_percentage=0.25,
         )
 
     def restore_last_delete(self):
@@ -146,6 +164,10 @@ def _workspace(selected_count: int) -> CleanupWorkspace:
         selection_update_time=0.01,
         total_workspace_update_time=0.01,
         estimated_sample_reuse=1.0,
+        native_selection_mask=SimpleNamespace(shape=(1_000,)),
+        native_selection_mask_size=1_000,
+        scene_generation=7,
+        workspace_state="active",
     )
 
 
@@ -278,6 +300,7 @@ def test_run_soft_delete_cleanup_selection_refuses_without_workspace(monkeypatch
 
     assert success is False
     assert "No cleanup workspace is active" in message
+    assert fake_adapter.soft_delete_cleanup_workspace_selection_calls == 0
     assert fake_adapter.soft_delete_current_cleanup_selection_calls == 0
     assert fake_adapter.apply_deleted_calls == 0
 
@@ -293,6 +316,7 @@ def test_run_soft_delete_cleanup_selection_refuses_when_selected_count_is_zero(m
 
     assert success is False
     assert "selected_count == 0" in message
+    assert fake_adapter.soft_delete_cleanup_workspace_selection_calls == 0
     assert fake_adapter.soft_delete_current_cleanup_selection_calls == 0
 
 
@@ -320,6 +344,7 @@ def test_run_soft_delete_cleanup_selection_refuses_when_threshold_is_exceeded(mo
 
     assert success is False
     assert "SAFE_DELETE_MAX_COUNT" in message or "SAFE_DELETE_MAX_RATIO" in message
+    assert fake_adapter.soft_delete_cleanup_workspace_selection_calls == 0
     assert fake_adapter.soft_delete_current_cleanup_selection_calls == 0
 
 
@@ -334,6 +359,7 @@ def test_run_soft_delete_cleanup_selection_succeeds_without_apply_deleted(monkey
 
     assert success is True
     assert "Soft-deleted 12 cleanup workspace splats." in message
+    assert fake_adapter.soft_delete_cleanup_workspace_selection_calls == 1
     assert fake_adapter.soft_delete_current_cleanup_selection_calls == 1
     assert fake_adapter.apply_deleted_calls == 0
     assert runtime_config.snapshot_runtime_config().last_cleanup_workspace_lines
