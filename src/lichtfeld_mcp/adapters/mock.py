@@ -249,6 +249,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         cluster_distance_threshold: float = 0.10,
         outlier_distance: float = 2.5,
         cleanup_aggressiveness: float = 0.5,
+        preset_name: str = "Balanced",
     ) -> CleanupWorkspace:
         _, analysis_reused, sample_reused = self._resolve_workspace_analysis(
             voxel_size=voxel_size,
@@ -260,6 +261,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             cluster_distance_threshold=cluster_distance_threshold,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
+            preset_name=preset_name,
             analysis_reused=analysis_reused,
             sample_reused=sample_reused,
         )
@@ -277,6 +279,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         cluster_distance_threshold: float = 0.10,
         outlier_distance: float = 2.5,
         cleanup_aggressiveness: float = 0.5,
+        preset_name: str = "Balanced",
     ) -> CleanupWorkspace:
         if self._cleanup_workspace_session is None:
             raise ProjectNotOpenError("No cleanup workspace is active. Open Cleanup Workspace first.")
@@ -290,6 +293,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             cluster_distance_threshold=cluster_distance_threshold,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
+            preset_name=preset_name,
             analysis_reused=analysis_reused,
             sample_reused=sample_reused,
         )
@@ -300,6 +304,31 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         if self._cleanup_workspace_session is None:
             return None
         return self._cleanup_workspace_session.workspace
+
+    def invalidate_cleanup_workspace_preview(self) -> ToolResult:
+        scene = self._require_scene()
+        if self._cleanup_workspace_session is None:
+            return ToolResult(message="Cleanup workspace preview was already inactive.")
+        workspace = self._cleanup_workspace_session.workspace
+        if not workspace.preview_selection_active:
+            return ToolResult(message="Cleanup workspace preview was already inactive.")
+        scene.selected_count = 0
+        self._cleanup_workspace_session.workspace = replace(
+            workspace,
+            candidate_selection_mask=(),
+            preview_selected_indices=(),
+            preview_selection_active=False,
+            native_selection_handle=None,
+            selected_count=0,
+            selection_percentage=0.0,
+            selection_source="no active cleanup preview",
+            native_selection_mask=None,
+            native_selection_mask_size=None,
+            workspace_state="active",
+        )
+        return ToolResult(
+            message="Cleanup workspace preview invalidated. Run Update Preview to rebuild it."
+        )
 
     def reset_cleanup_workspace(self) -> ToolResult:
         scene = self._require_scene()
@@ -598,6 +627,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         cluster_distance_threshold: float,
         outlier_distance: float,
         cleanup_aggressiveness: float,
+        preset_name: str,
         analysis_reused: bool,
         sample_reused: bool,
     ) -> CleanupWorkspace:
@@ -672,6 +702,7 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
                 cluster_distance_threshold=cluster_distance_threshold,
                 outlier_distance=outlier_distance,
                 cleanup_aggressiveness=cleanup_aggressiveness,
+                preset_name=preset_name,
             ),
             sampled_rows=tuple((0.0, 0.0, 0.0) for _ in range(min(summary.analyzed_splats, 32))),
             sampled_indices=tuple(range(min(summary.analyzed_splats, 32))),

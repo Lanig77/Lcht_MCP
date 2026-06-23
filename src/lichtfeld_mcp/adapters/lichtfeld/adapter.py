@@ -516,6 +516,7 @@ class LichtfeldAdapter(AdapterContract):
         cluster_distance_threshold: float = 0.10,
         outlier_distance: float = 2.5,
         cleanup_aggressiveness: float = 0.5,
+        preset_name: str = "Balanced",
     ) -> CleanupWorkspace:
         params = self._normalize_cleanup_parameters(
             voxel_size=voxel_size,
@@ -523,6 +524,7 @@ class LichtfeldAdapter(AdapterContract):
             cluster_distance_threshold=cluster_distance_threshold,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
+            preset_name=preset_name,
         )
         analysis_decision = self._resolve_cleanup_analysis_state_for_workspace(params)
         logger.info(
@@ -556,6 +558,7 @@ class LichtfeldAdapter(AdapterContract):
         cluster_distance_threshold: float = 0.10,
         outlier_distance: float = 2.5,
         cleanup_aggressiveness: float = 0.5,
+        preset_name: str = "Balanced",
     ) -> CleanupWorkspace:
         session = self._require_cleanup_session()
         self._ensure_workspace_scene_matches(session.workspace)
@@ -565,6 +568,7 @@ class LichtfeldAdapter(AdapterContract):
             cluster_distance_threshold=cluster_distance_threshold,
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
+            preset_name=preset_name,
         )
         analysis_decision = self._resolve_cleanup_analysis_state_for_workspace(params)
         logger.info(
@@ -593,6 +597,23 @@ class LichtfeldAdapter(AdapterContract):
         except AdapterUnavailableError:
             return None
         return session.workspace
+
+    def invalidate_cleanup_workspace_preview(self) -> ToolResult:
+        session = self._cleanup_workspace_session
+        if session is None:
+            return ToolResult(message="Cleanup workspace preview was already inactive.")
+        workspace = self._ensure_workspace_scene_matches(session.workspace)
+        if not workspace.preview_selection_active:
+            return ToolResult(message="Cleanup workspace preview was already inactive.")
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        self._clear_native_selection_preview(scene, model, lichtfeld_module)
+        self._clear_workspace_preview_state(workspace_state="active")
+        logger.info("LichtFeld cleanup workspace preview invalidated")
+        return ToolResult(
+            message="Cleanup workspace preview invalidated. Run Update Preview to rebuild it."
+        )
 
     def reset_cleanup_workspace(self) -> ToolResult:
         session = self._cleanup_workspace_session
@@ -2410,6 +2431,7 @@ class LichtfeldAdapter(AdapterContract):
         cluster_distance_threshold: float,
         outlier_distance: float,
         cleanup_aggressiveness: float,
+        preset_name: str,
     ) -> CleanupParameters:
         if voxel_size <= 0.0:
             raise InvalidParameterError("voxel_size must be strictly positive.")
@@ -2421,12 +2443,14 @@ class LichtfeldAdapter(AdapterContract):
             raise InvalidParameterError("outlier_distance must be strictly positive.")
         if cleanup_aggressiveness < 0.0 or cleanup_aggressiveness > 1.0:
             raise InvalidParameterError("cleanup_aggressiveness must be between 0.0 and 1.0.")
+        normalized_preset_name = str(preset_name).strip() or "Custom"
         return CleanupParameters(
             voxel_size=float(voxel_size),
             min_voxel_cluster_size=int(min_voxel_cluster_size),
             cluster_distance_threshold=float(cluster_distance_threshold),
             outlier_distance=float(outlier_distance),
             cleanup_aggressiveness=float(cleanup_aggressiveness),
+            preset_name=normalized_preset_name,
         )
 
     def _build_cleanup_workspace_session(

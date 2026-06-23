@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,6 +28,7 @@ class FakeClusterPreviewAdapter:
         self.cleanup_selection_preview_calls = 0
         self.open_cleanup_workspace_calls = 0
         self.update_cleanup_workspace_calls = 0
+        self.invalidate_cleanup_workspace_preview_calls = 0
         self.reset_cleanup_workspace_calls = 0
         self.current_workspace = None
 
@@ -235,6 +237,7 @@ class FakeClusterPreviewAdapter:
     def open_cleanup_workspace(
         self,
         *,
+        preset_name: str,
         voxel_size: float,
         min_voxel_cluster_size: int,
         cluster_distance_threshold: float,
@@ -243,6 +246,7 @@ class FakeClusterPreviewAdapter:
     ):
         self.open_cleanup_workspace_calls += 1
         self.last_open_cleanup_workspace_kwargs = {
+            "preset_name": preset_name,
             "voxel_size": voxel_size,
             "min_voxel_cluster_size": min_voxel_cluster_size,
             "cluster_distance_threshold": cluster_distance_threshold,
@@ -250,6 +254,7 @@ class FakeClusterPreviewAdapter:
             "cleanup_aggressiveness": cleanup_aggressiveness,
         }
         self.current_workspace = self._workspace(
+            preset_name=preset_name,
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
             cluster_distance_threshold=cluster_distance_threshold,
@@ -262,6 +267,7 @@ class FakeClusterPreviewAdapter:
     def update_cleanup_workspace(
         self,
         *,
+        preset_name: str,
         voxel_size: float,
         min_voxel_cluster_size: int,
         cluster_distance_threshold: float,
@@ -270,6 +276,7 @@ class FakeClusterPreviewAdapter:
     ):
         self.update_cleanup_workspace_calls += 1
         self.last_update_cleanup_workspace_kwargs = {
+            "preset_name": preset_name,
             "voxel_size": voxel_size,
             "min_voxel_cluster_size": min_voxel_cluster_size,
             "cluster_distance_threshold": cluster_distance_threshold,
@@ -277,6 +284,7 @@ class FakeClusterPreviewAdapter:
             "cleanup_aggressiveness": cleanup_aggressiveness,
         }
         self.current_workspace = self._workspace(
+            preset_name=preset_name,
             voxel_size=voxel_size,
             min_voxel_cluster_size=min_voxel_cluster_size,
             cluster_distance_threshold=cluster_distance_threshold,
@@ -289,6 +297,27 @@ class FakeClusterPreviewAdapter:
     def get_cleanup_workspace(self):
         return self.current_workspace
 
+    def invalidate_cleanup_workspace_preview(self):
+        self.invalidate_cleanup_workspace_preview_calls += 1
+        if self.current_workspace is not None and self.current_workspace.workspace_state == "active":
+            self.current_workspace = replace(
+                self.current_workspace,
+                candidate_selection_mask=(),
+                preview_selected_indices=(),
+                preview_selection_active=False,
+                native_selection_handle=None,
+                selected_count=0,
+                selection_percentage=0.0,
+                selection_source="no active cleanup preview",
+                native_selection_mask=None,
+                native_selection_mask_size=None,
+                workspace_state="active",
+            )
+        return SimpleNamespace(
+            ok=True,
+            message="Cleanup workspace preview invalidated. Run Update Preview to rebuild it.",
+        )
+
     def reset_cleanup_workspace(self):
         self.reset_cleanup_workspace_calls += 1
         self.current_workspace = None
@@ -297,6 +326,7 @@ class FakeClusterPreviewAdapter:
     def _workspace(
         self,
         *,
+        preset_name: str = "Balanced",
         voxel_size: float,
         min_voxel_cluster_size: int,
         cluster_distance_threshold: float,
@@ -334,6 +364,7 @@ class FakeClusterPreviewAdapter:
                 cluster_distance_threshold=cluster_distance_threshold,
                 outlier_distance=outlier_distance,
                 cleanup_aggressiveness=cleanup_aggressiveness,
+                preset_name=preset_name,
             ),
             sampled_rows=((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
             sampled_indices=(0, 100),
@@ -391,6 +422,105 @@ def test_cluster_analysis_preset_operators_update_runtime_limit(monkeypatch):
 
     runtime_controls.LCHTMCP_OT_set_cluster_analysis_detailed().invoke(None, None)
     assert runtime_config.snapshot_runtime_config().max_cluster_analysis_splats == 100_000
+
+
+def test_cleanup_preset_operators_apply_expected_parameters(monkeypatch):
+    runtime_config, _ = _load_runner_modules(monkeypatch)
+    runtime_controls = __import__(
+        "examples.lcht_mcp_test_plugin.operators.runtime_controls",
+        fromlist=["runtime_controls"],
+    )
+
+    runtime_controls.LCHTMCP_OT_set_cleanup_preset_conservative().invoke(None, None)
+    config = runtime_config.snapshot_runtime_config()
+    assert config.cleanup_preset == "Conservative"
+    assert config.voxel_size == 0.15
+    assert config.voxel_min_cluster_size == 5
+    assert config.cleanup_outlier_distance == 3.5
+    assert config.cleanup_aggressiveness == 0.25
+
+    runtime_controls.LCHTMCP_OT_set_cleanup_preset_balanced().invoke(None, None)
+    config = runtime_config.snapshot_runtime_config()
+    assert config.cleanup_preset == "Balanced"
+    assert config.voxel_size == 0.25
+    assert config.voxel_min_cluster_size == 10
+    assert config.cleanup_outlier_distance == 2.5
+    assert config.cleanup_aggressiveness == 0.5
+
+    runtime_controls.LCHTMCP_OT_set_cleanup_preset_aggressive().invoke(None, None)
+    config = runtime_config.snapshot_runtime_config()
+    assert config.cleanup_preset == "Aggressive"
+    assert config.voxel_size == 0.4
+    assert config.voxel_min_cluster_size == 20
+    assert config.cleanup_outlier_distance == 1.5
+    assert config.cleanup_aggressiveness == 0.75
+
+
+def test_cleanup_preset_change_invalidates_preview_only_and_preserves_analysis(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.set_scene_analysis_report_lines(["Scene analysis retained."])
+    runtime_config.set_cleanup_preview_report_lines(["Stale preview"])
+    runtime_config.set_cleanup_preview_summary({"estimated_affected_splats_total": 40_919})
+    runtime_config.set_cleanup_workspace_report_lines(["Cleanup Workspace", "Preset: Balanced"])
+    fake_adapter = FakeClusterPreviewAdapter()
+    fake_adapter.current_workspace = fake_adapter._workspace(
+        preset_name="Balanced",
+        voxel_size=0.25,
+        min_voxel_cluster_size=10,
+        cluster_distance_threshold=0.10,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+        selected_count=512,
+    )
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+    runtime_controls = __import__(
+        "examples.lcht_mcp_test_plugin.operators.runtime_controls",
+        fromlist=["runtime_controls"],
+    )
+
+    runtime_controls.LCHTMCP_OT_set_cleanup_preset_aggressive().invoke(None, None)
+
+    config = runtime_config.snapshot_runtime_config()
+    assert config.cleanup_preset == "Aggressive"
+    assert config.voxel_size == 0.4
+    assert config.voxel_min_cluster_size == 20
+    assert config.cleanup_outlier_distance == 1.5
+    assert config.cleanup_aggressiveness == 0.75
+    assert config.last_scene_analysis_lines == ("Scene analysis retained.",)
+    assert config.last_cleanup_preview_lines == ()
+    assert config.last_cleanup_preview_summary is None
+    assert config.last_cleanup_workspace_lines == ()
+    assert fake_adapter.update_cleanup_workspace_calls == 0
+    assert fake_adapter.invalidate_cleanup_workspace_preview_calls == 1
+    assert fake_adapter.current_workspace is not None
+    assert fake_adapter.current_workspace.preview_selection_active is False
+    assert fake_adapter.current_workspace.selected_count == 0
+    assert fake_adapter.current_workspace.workspace_state == "active"
+    assert fake_adapter.current_workspace.scene_profile.total_splats == 1_998_000
+
+
+def test_cleanup_preset_change_logs_old_and_new_preset(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    fake_adapter = FakeClusterPreviewAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+    runtime_controls = __import__(
+        "examples.lcht_mcp_test_plugin.operators.runtime_controls",
+        fromlist=["runtime_controls"],
+    )
+    messages: list[str] = []
+    runtime_controls.lf.log.info = messages.append
+    runtime_controls.lf.log.error = messages.append
+
+    runtime_controls.LCHTMCP_OT_set_cleanup_preset_conservative().invoke(None, None)
+
+    assert any(
+        "preset_changed old_preset=Balanced new_preset=Conservative" in message
+        and "voxel_size=0.1500" in message
+        and "voxel_min_cluster_size=5" in message
+        and "cleanup_outlier_distance=3.5000" in message
+        and "cleanup_aggressiveness=0.2500" in message
+        for message in messages
+    )
 
 
 def test_run_voxel_cluster_analysis_preview_uses_runtime_config_and_returns_success(monkeypatch):
@@ -513,6 +643,7 @@ def test_run_open_cleanup_workspace_returns_interactive_workspace_summary(monkey
     assert message == "Cleanup workspace opened."
     assert fake_adapter.open_cleanup_workspace_calls == 1
     assert fake_adapter.last_open_cleanup_workspace_kwargs == {
+        "preset_name": "Custom",
         "voxel_size": 0.35,
         "min_voxel_cluster_size": 25,
         "cluster_distance_threshold": 0.10,
@@ -520,6 +651,27 @@ def test_run_open_cleanup_workspace_returns_interactive_workspace_summary(monkey
         "cleanup_aggressiveness": 0.7,
     }
     assert runtime_config.snapshot_runtime_config().last_cleanup_workspace_lines
+
+
+def test_run_open_cleanup_workspace_uses_selected_cleanup_preset_values(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    runtime_config.set_cleanup_preset("Conservative")
+    fake_adapter = FakeClusterPreviewAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_open_cleanup_workspace()
+
+    assert success is True
+    assert message == "Cleanup workspace opened."
+    assert fake_adapter.last_open_cleanup_workspace_kwargs == {
+        "preset_name": "Conservative",
+        "voxel_size": 0.15,
+        "min_voxel_cluster_size": 5,
+        "cluster_distance_threshold": 0.10,
+        "outlier_distance": 3.5,
+        "cleanup_aggressiveness": 0.25,
+    }
+    assert "Preset: Conservative" in runtime_config.snapshot_runtime_config().last_cleanup_workspace_lines
 
 
 def test_run_update_cleanup_workspace_reuses_latest_workspace_session(monkeypatch):
@@ -541,6 +693,14 @@ def test_run_update_cleanup_workspace_reuses_latest_workspace_session(monkeypatc
     assert success is True
     assert message == "Cleanup workspace updated."
     assert fake_adapter.update_cleanup_workspace_calls == 1
+    assert fake_adapter.last_update_cleanup_workspace_kwargs == {
+        "preset_name": "Custom",
+        "voxel_size": 0.25,
+        "min_voxel_cluster_size": 10,
+        "cluster_distance_threshold": 0.10,
+        "outlier_distance": 2.25,
+        "cleanup_aggressiveness": 0.5,
+    }
 
 
 def test_run_reset_cleanup_workspace_clears_workspace_summary(monkeypatch):

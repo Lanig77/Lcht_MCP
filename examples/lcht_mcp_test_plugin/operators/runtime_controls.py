@@ -8,6 +8,8 @@ import lichtfeld as lf
 from lfs_plugins.types import Event, Operator
 
 from ..core.runtime_config import (
+    AGGRESSIVE_CLEANUP_PRESET,
+    BALANCED_CLEANUP_PRESET,
     CLEANUP_AGGRESSIVENESS_STEP,
     CLUSTER_ANALYSIS_BALANCED_SPLATS,
     CLUSTER_ANALYSIS_DETAILED_SPLATS,
@@ -20,6 +22,7 @@ from ..core.runtime_config import (
     OUTLIER_DISTANCE_STEP,
     SAFE_DELETE_Z_STEP,
     SMOKE_Z_STEP,
+    CONSERVATIVE_CLEANUP_PRESET,
     VOXEL_MIN_CLUSTER_SIZE_STEP,
     VOXEL_SIZE_STEP,
     adjust_cleanup_aggressiveness,
@@ -40,6 +43,10 @@ from ..core.runtime_config import (
     enable_cluster_analysis_abort,
     confirm_safe_delete,
     disarm_safe_delete,
+    set_cleanup_preset,
+    set_cleanup_preview_report_lines,
+    set_cleanup_preview_summary,
+    set_cleanup_workspace_report_lines,
     set_max_cluster_analysis_splats,
     snapshot_runtime_config,
 )
@@ -181,6 +188,18 @@ CLEANUP_AGGRESSIVENESS_UP_OPERATOR_ID = (
     "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
     "LCHTMCP_OT_cleanup_aggressiveness_up"
 )
+SET_CLEANUP_PRESET_CONSERVATIVE_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_set_cleanup_preset_conservative"
+)
+SET_CLEANUP_PRESET_BALANCED_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_set_cleanup_preset_balanced"
+)
+SET_CLEANUP_PRESET_AGGRESSIVE_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_set_cleanup_preset_aggressive"
+)
 
 
 def _log_runtime_state(action: str) -> None:
@@ -197,6 +216,7 @@ def _log_runtime_state(action: str) -> None:
         f"cluster_distance_threshold={config.cluster_distance_threshold:.4f}, "
         f"cluster_min_cluster_size={config.cluster_min_cluster_size}, "
         f"max_cluster_analysis_splats={config.max_cluster_analysis_splats}, "
+        f"cleanup_preset={config.cleanup_preset}, "
         f"voxel_size={config.voxel_size:.4f}, "
         f"voxel_min_cluster_size={config.voxel_min_cluster_size}, "
         f"cleanup_outlier_distance={config.cleanup_outlier_distance:.4f}, "
@@ -220,6 +240,58 @@ def _refresh_cleanup_workspace_if_open() -> None:
         log_fn(f"lcht_mcp_test_plugin: cleanup workspace auto-refresh: {message}")
     except Exception as exc:
         lf.log.error(f"lcht_mcp_test_plugin: cleanup workspace auto-refresh failed: {exc}")
+
+
+def _log_cleanup_preset_change(old_preset: str, new_preset: str) -> None:
+    config = snapshot_runtime_config()
+    lf.log.info(
+        "lcht_mcp_test_plugin: "
+        f"preset_changed old_preset={old_preset} new_preset={new_preset} "
+        f"voxel_size={config.voxel_size:.4f} "
+        f"voxel_min_cluster_size={config.voxel_min_cluster_size} "
+        f"cleanup_outlier_distance={config.cleanup_outlier_distance:.4f} "
+        f"cleanup_aggressiveness={config.cleanup_aggressiveness:.4f}"
+    )
+
+
+def _invalidate_cleanup_outputs_for_preset_change() -> None:
+    set_cleanup_preview_report_lines([])
+    set_cleanup_preview_summary(None)
+    try:
+        from ..core.test_runner import _build_adapter
+
+        adapter, _ = _build_adapter()
+        get_cleanup_workspace = getattr(adapter, "get_cleanup_workspace", None)
+        workspace = get_cleanup_workspace() if callable(get_cleanup_workspace) else None
+        if workspace is None or workspace.workspace_state == "active":
+            set_cleanup_workspace_report_lines([])
+        if (
+            workspace is None
+            or workspace.workspace_state != "active"
+            or not workspace.preview_selection_active
+        ):
+            return
+
+        invalidate_cleanup_workspace_preview = getattr(
+            adapter,
+            "invalidate_cleanup_workspace_preview",
+            None,
+        )
+        if not callable(invalidate_cleanup_workspace_preview):
+            raise RuntimeError(
+                "LichtfeldAdapter does not expose invalidate_cleanup_workspace_preview()."
+            )
+        result = invalidate_cleanup_workspace_preview()
+        log_fn = lf.log.info if getattr(result, "ok", True) else lf.log.error
+        log_fn(
+            "lcht_mcp_test_plugin: cleanup workspace preview invalidated: "
+            f"{result.message}"
+        )
+    except Exception as exc:
+        lf.log.error(
+            "lcht_mcp_test_plugin: cleanup workspace preview invalidation failed: "
+            f"{exc}"
+        )
 
 
 class _ConfigOperator(Operator):
@@ -536,6 +608,49 @@ class LCHTMCP_OT_cleanup_aggressiveness_up(_ConfigOperator):
 
     def _apply(self) -> None:
         adjust_cleanup_aggressiveness(CLEANUP_AGGRESSIVENESS_STEP)
+
+
+class _CleanupPresetOperator(Operator):
+    preset_name = BALANCED_CLEANUP_PRESET
+    action_label = "Updated cleanup preset"
+
+    def invoke(self, context, event: Event) -> set:
+        previous = snapshot_runtime_config()
+        set_cleanup_preset(self.preset_name)
+        current = snapshot_runtime_config()
+        cleanup_changed = (
+            previous.cleanup_preset != current.cleanup_preset
+            or previous.voxel_size != current.voxel_size
+            or previous.voxel_min_cluster_size != current.voxel_min_cluster_size
+            or previous.cleanup_outlier_distance != current.cleanup_outlier_distance
+            or previous.cleanup_aggressiveness != current.cleanup_aggressiveness
+        )
+        if cleanup_changed:
+            _invalidate_cleanup_outputs_for_preset_change()
+        _log_cleanup_preset_change(previous.cleanup_preset, current.cleanup_preset)
+        _log_runtime_state(self.action_label)
+        return {"FINISHED"}
+
+
+class LCHTMCP_OT_set_cleanup_preset_conservative(_CleanupPresetOperator):
+    label = "Conservative"
+    description = "Set cleanup workspace parameters to the conservative preset"
+    preset_name = CONSERVATIVE_CLEANUP_PRESET
+    action_label = "Set cleanup preset to Conservative"
+
+
+class LCHTMCP_OT_set_cleanup_preset_balanced(_CleanupPresetOperator):
+    label = "Balanced"
+    description = "Set cleanup workspace parameters to the balanced preset"
+    preset_name = BALANCED_CLEANUP_PRESET
+    action_label = "Set cleanup preset to Balanced"
+
+
+class LCHTMCP_OT_set_cleanup_preset_aggressive(_CleanupPresetOperator):
+    label = "Aggressive"
+    description = "Set cleanup workspace parameters to the aggressive preset"
+    preset_name = AGGRESSIVE_CLEANUP_PRESET
+    action_label = "Set cleanup preset to Aggressive"
 
 
 class LCHTMCP_OT_set_cluster_analysis_fast(_ConfigOperator):

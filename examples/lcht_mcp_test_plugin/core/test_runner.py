@@ -119,6 +119,7 @@ def _selected_percentage(selected_count: int, total_splats: int) -> float:
 
 def _cleanup_workspace_kwargs(config) -> dict[str, object]:
     return {
+        "preset_name": config.cleanup_preset,
         "voxel_size": config.voxel_size,
         "min_voxel_cluster_size": config.voxel_min_cluster_size,
         "cluster_distance_threshold": config.cluster_distance_threshold,
@@ -388,6 +389,7 @@ def run_open_cleanup_workspace() -> tuple[bool, str]:
     config = snapshot_runtime_config()
     _log_info(
         "Opening cleanup workspace with "
+        f"preset={config.cleanup_preset}, "
         f"voxel_size={config.voxel_size:.4f}, "
         f"min_voxel_cluster_size={config.voxel_min_cluster_size}, "
         f"cluster_distance_threshold={config.cluster_distance_threshold:.4f}, "
@@ -448,6 +450,7 @@ def run_update_cleanup_workspace() -> tuple[bool, str]:
     config = snapshot_runtime_config()
     _log_info(
         "Updating cleanup workspace with "
+        f"preset={config.cleanup_preset}, "
         f"voxel_size={config.voxel_size:.4f}, "
         f"min_voxel_cluster_size={config.voxel_min_cluster_size}, "
         f"cluster_distance_threshold={config.cluster_distance_threshold:.4f}, "

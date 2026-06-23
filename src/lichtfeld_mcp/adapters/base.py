@@ -93,6 +93,9 @@ class LichtfeldAdapter(ABC):
     def get_cleanup_workspace(self) -> CleanupWorkspace | None: ...
 
     @abstractmethod
+    def invalidate_cleanup_workspace_preview(self) -> ToolResult: ...
+
+    @abstractmethod
     def reset_cleanup_workspace(self) -> ToolResult: ...
 
     def soft_delete_cleanup_workspace_selection(

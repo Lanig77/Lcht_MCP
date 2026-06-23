@@ -1,3 +1,5 @@
+import pytest
+
 from lichtfeld_mcp.core.cleanup_workspace import (
     CleanupParameters,
     CleanupWorkspace,
@@ -180,12 +182,56 @@ def test_cleanup_workspace_format_distinguishes_preview_selection_from_estimate(
 
     assert "Scene Health:\nNeeds Review" in formatted
     assert "Quality score: 84" in formatted
+    assert "Preset: Balanced" in formatted
     assert "Preview selected splats: 4" in formatted
     assert "Estimated affected splats total: 48" in formatted
     assert "Estimated cleanup percentage: 4.80%" in formatted
     assert "Selection count:" not in formatted
     assert "Estimated affected splats:" not in formatted
     assert "Current Scene Type:" not in formatted
+
+
+@pytest.mark.parametrize(
+    ("preset_name", "voxel_size", "min_voxel_cluster_size", "outlier_distance", "aggressiveness"),
+    [
+        ("Conservative", 0.15, 5, 3.5, 0.25),
+        ("Balanced", 0.25, 10, 2.5, 0.50),
+        ("Aggressive", 0.40, 20, 1.5, 0.75),
+    ],
+)
+def test_cleanup_presets_serialize_correctly(
+    preset_name: str,
+    voxel_size: float,
+    min_voxel_cluster_size: int,
+    outlier_distance: float,
+    aggressiveness: float,
+):
+    params = CleanupParameters(
+        voxel_size=voxel_size,
+        min_voxel_cluster_size=min_voxel_cluster_size,
+        cluster_distance_threshold=0.10,
+        outlier_distance=outlier_distance,
+        cleanup_aggressiveness=aggressiveness,
+        preset_name=preset_name,
+    )
+
+    assert params.to_dict() == {
+        "preset": preset_name,
+        "voxel_size": voxel_size,
+        "min_voxel_cluster_size": min_voxel_cluster_size,
+        "cluster_distance_threshold": 0.1,
+        "outlier_distance": outlier_distance,
+        "cleanup_aggressiveness": aggressiveness,
+    }
+
+
+def test_cleanup_workspace_dict_includes_preset():
+    workspace = _workspace(_report())
+
+    serialized = workspace.to_dict()
+
+    assert serialized["cleanup_preset"] == "Balanced"
+    assert serialized["current_cleanup_parameters"]["preset"] == "Balanced"
 
 
 def test_quality_score_decreases_when_warnings_exist():

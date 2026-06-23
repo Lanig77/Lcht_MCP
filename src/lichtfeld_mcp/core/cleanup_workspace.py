@@ -20,9 +20,11 @@ class CleanupParameters:
     cluster_distance_threshold: float
     outlier_distance: float
     cleanup_aggressiveness: float
+    preset_name: str = "Balanced"
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "preset": self.preset_name,
             "voxel_size": round(self.voxel_size, 6),
             "min_voxel_cluster_size": self.min_voxel_cluster_size,
             "cluster_distance_threshold": round(self.cluster_distance_threshold, 6),
@@ -87,6 +89,7 @@ class CleanupWorkspace:
             "cleanup_candidate_summary": self.cleanup_candidate_summary.to_dict(),
             "scene_profile": self.scene_profile.to_dict(),
             "current_cleanup_parameters": self.current_cleanup_parameters.to_dict(),
+            "cleanup_preset": self.current_cleanup_parameters.preset_name,
             "scene_health": self.scene_profile.profile_label,
             "quality_score": self.scene_profile.quality_score,
             "sample_metadata": {
@@ -184,6 +187,7 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
         f"Quality score: {workspace.scene_profile.quality_score}",
         f"Analysis Mode: {mode_label}",
         "Workspace Active: Yes",
+        f"Preset: {params.preset_name}",
         (
             "Current Parameters: "
             f"voxel_size={params.voxel_size:.2f}, "

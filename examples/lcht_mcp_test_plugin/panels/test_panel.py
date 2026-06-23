@@ -44,6 +44,9 @@ from ..operators.runtime_controls import (
     SAFE_DELETE_MAX_Z_UP_OPERATOR_ID,
     SAFE_DELETE_MIN_Z_DOWN_OPERATOR_ID,
     SAFE_DELETE_MIN_Z_UP_OPERATOR_ID,
+    SET_CLEANUP_PRESET_AGGRESSIVE_OPERATOR_ID,
+    SET_CLEANUP_PRESET_BALANCED_OPERATOR_ID,
+    SET_CLEANUP_PRESET_CONSERVATIVE_OPERATOR_ID,
     SET_CLUSTER_ANALYSIS_BALANCED_OPERATOR_ID,
     SET_CLUSTER_ANALYSIS_DETAILED_OPERATOR_ID,
     SET_CLUSTER_ANALYSIS_FAST_OPERATOR_ID,
@@ -137,6 +140,7 @@ class LchtMcpTestPanel(lf.ui.Panel):
             "Cleanup Aggressiveness: "
             f"{config.cleanup_aggressiveness:.2f}"
         )
+        layout.label(f"Cleanup Preset: {config.cleanup_preset}")
         cluster_abort_color = (
             (0.4, 1.0, 0.4, 1.0)
             if config.abort_if_splat_count_above_limit
@@ -359,6 +363,43 @@ class LchtMcpTestPanel(lf.ui.Panel):
             (-1, 28 * scale),
         ):
             lf.ui.ops.invoke(CLEANUP_AGGRESSIVENESS_UP_OPERATOR_ID)
+        layout.label("Cleanup Preset")
+        layout.label(f"Active Cleanup Preset: {config.cleanup_preset}")
+        if layout.button_styled(
+            "Conservative##cleanup_preset_conservative",
+            (
+                "primary"
+                if config.cleanup_preset == "Conservative"
+                else "secondary"
+            ),
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(SET_CLEANUP_PRESET_CONSERVATIVE_OPERATOR_ID)
+        if layout.button_styled(
+            "Balanced##cleanup_preset_balanced",
+            (
+                "primary"
+                if config.cleanup_preset == "Balanced"
+                else "secondary"
+            ),
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(SET_CLEANUP_PRESET_BALANCED_OPERATOR_ID)
+        if layout.button_styled(
+            "Aggressive##cleanup_preset_aggressive",
+            (
+                "primary"
+                if config.cleanup_preset == "Aggressive"
+                else "secondary"
+            ),
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(SET_CLEANUP_PRESET_AGGRESSIVE_OPERATOR_ID)
+        layout.text_colored(
+            "Changing preset updates cleanup parameters and invalidates the current preview. "
+            "Run Update Preview to rebuild it.",
+            theme.palette.text_dim,
+        )
 
         layout.spacing()
         if layout.button_styled("Run Lcht MCP Test##run", "primary", (-1, 34 * scale)):
