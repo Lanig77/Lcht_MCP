@@ -858,11 +858,12 @@ class LichtfeldAdapter(AdapterContract):
                 "splat count."
             )
 
-        apply_deleted = getattr(model, "apply_deleted", None)
-        if not callable(apply_deleted):
+        apply_deleted_entry = self._resolve_apply_deleted_callable(scene, model)
+        if apply_deleted_entry is None:
             raise AdapterUnavailableError(
-                "Active LichtFeld combined model does not expose apply_deleted() for permanent cleanup."
+                "Active LichtFeld scene/model does not expose apply_deleted() for permanent cleanup."
             )
+        apply_deleted_label, apply_deleted = apply_deleted_entry
 
         logger.info(
             "LichtFeld cleanup workspace apply: initial_splat_count=%s",
@@ -873,14 +874,38 @@ class LichtfeldAdapter(AdapterContract):
             soft_deleted_count,
         )
         self._log_native_selection_state(
-            "cleanup workspace apply: before model.apply_deleted()",
+            "cleanup workspace apply: before pre-apply selection clear",
             scene,
             model,
         )
-        logger.info("LichtFeld cleanup workspace apply: before model.apply_deleted()")
-        apply_deleted()
+        self._prepare_native_selection_for_apply_deleted(
+            scene,
+            model,
+            lichtfeld_module,
+            context_label="cleanup workspace apply",
+        )
         self._log_native_selection_state(
-            "cleanup workspace apply: after model.apply_deleted()",
+            "cleanup workspace apply: after pre-apply selection clear",
+            scene,
+            model,
+        )
+        self._log_native_selection_state(
+            "cleanup workspace apply: before apply_deleted()",
+            scene,
+            model,
+        )
+        logger.info(
+            "LichtFeld cleanup workspace apply: before %s",
+            apply_deleted_label,
+        )
+        apply_deleted()
+        model = self._refresh_model_after_apply_deleted(
+            scene,
+            model,
+            context_label="cleanup workspace apply",
+        )
+        self._log_native_selection_state(
+            "cleanup workspace apply: after apply_deleted()",
             scene,
             model,
         )
@@ -1583,22 +1608,48 @@ class LichtfeldAdapter(AdapterContract):
         model = require_combined_model(scene)
         pending_count = self._last_delete_count
 
-        apply_deleted = getattr(model, "apply_deleted", None)
-        if callable(apply_deleted):
+        apply_deleted_entry = self._resolve_apply_deleted_callable(scene, model)
+        if apply_deleted_entry is not None:
+            apply_deleted_label, apply_deleted = apply_deleted_entry
             self._log_native_selection_state(
-                "apply_pending_delete: before model.apply_deleted()",
+                "apply_pending_delete: before pre-apply selection clear",
                 scene,
                 model,
             )
-            logger.info("LichtFeld apply_pending_delete: before model.apply_deleted()")
-            apply_deleted()
+            self._prepare_native_selection_for_apply_deleted(
+                scene,
+                model,
+                lichtfeld_module,
+                context_label="apply_pending_delete",
+            )
             self._log_native_selection_state(
-                "apply_pending_delete: after model.apply_deleted()",
+                "apply_pending_delete: after pre-apply selection clear",
+                scene,
+                model,
+            )
+            self._log_native_selection_state(
+                "apply_pending_delete: before apply_deleted()",
                 scene,
                 model,
             )
             logger.info(
-                "LichtFeld apply_pending_delete: after model.apply_deleted() remaining_count=%s",
+                "LichtFeld apply_pending_delete: before %s",
+                apply_deleted_label,
+            )
+            apply_deleted()
+            model = self._refresh_model_after_apply_deleted(
+                scene,
+                model,
+                context_label="apply_pending_delete",
+            )
+            self._log_native_selection_state(
+                "apply_pending_delete: after apply_deleted()",
+                scene,
+                model,
+            )
+            logger.info(
+                "LichtFeld apply_pending_delete: after %s remaining_count=%s",
+                apply_deleted_label,
                 self._read_current_model_splat_count(model),
             )
             self._last_finalized_delete_count = pending_count
@@ -1635,7 +1686,7 @@ class LichtfeldAdapter(AdapterContract):
             lambda: self._notify_scene_changed(scene),
         )
 
-        if callable(apply_deleted):
+        if apply_deleted_entry is not None:
             return ToolResult(message=f"Finalized deletion of {pending_count} soft-deleted splats.")
         return ToolResult(
             message=(
@@ -1934,6 +1985,90 @@ class LichtfeldAdapter(AdapterContract):
         if hasattr(scene, "last_selection_mask"):
             setattr(scene, "last_selection_mask", restored_mask_values)
 
+    def _prepare_native_selection_for_apply_deleted(
+        self,
+        scene: object,
+        model: object,
+        lichtfeld_module: object,
+        *,
+        context_label: str,
+    ) -> None:
+        current_splat_count = self._read_current_model_splat_count(model)
+        self._log_delete_cleanup_step(
+            f"{context_label}: scene.clear_selection() pre-apply_deleted",
+            lambda: self._selection.clear_selection_via_scene(scene),
+        )
+        self._log_delete_cleanup_step(
+            f"{context_label}: lichtfeld.deselect_all() pre-apply_deleted",
+            lambda: self._selection.deselect_all(lichtfeld_module),
+        )
+        try:
+            self._selection.reset_scene_selection_mask_natively(
+                scene,
+                current_splat_count,
+                lichtfeld_module,
+                model=model,
+            )
+            logger.info(
+                "LichtFeld %s: pre-apply native selection reset applied current_splat_count=%s",
+                context_label,
+                current_splat_count,
+            )
+        except AdapterUnavailableError as exc:
+            logger.info(
+                "LichtFeld %s: pre-apply native selection reset unavailable: %s",
+                context_label,
+                exc,
+            )
+        self._selection.clear_cache()
+        self._log_delete_cleanup_step(
+            f"{context_label}: scene.notify_changed() pre-apply_deleted",
+            lambda: self._notify_scene_changed(scene),
+        )
+
+    @staticmethod
+    def _resolve_apply_deleted_callable(
+        scene: object,
+        model: object,
+    ) -> tuple[str, object] | None:
+        for label, owner in (
+            ("scene.apply_deleted()", scene),
+            ("model.apply_deleted()", model),
+        ):
+            apply_deleted = getattr(owner, "apply_deleted", None)
+            if callable(apply_deleted):
+                return label, apply_deleted
+        return None
+
+    @staticmethod
+    def _invalidate_scene_cache(scene: object) -> bool:
+        invalidate_cache = getattr(scene, "invalidate_cache", None)
+        if not callable(invalidate_cache):
+            return False
+        invalidate_cache()
+        return True
+
+    def _refresh_model_after_apply_deleted(
+        self,
+        scene: object,
+        fallback_model: object,
+        *,
+        context_label: str,
+    ) -> object:
+        self._log_delete_cleanup_step(
+            f"{context_label}: scene.invalidate_cache()",
+            lambda: self._invalidate_scene_cache(scene),
+        )
+        try:
+            return require_combined_model(scene)
+        except AdapterUnavailableError as exc:
+            logger.info(
+                "LichtFeld %s: combined model refresh unavailable after apply_deleted: %s",
+                context_label,
+                exc,
+            )
+            return fallback_model
+
     def _reset_native_selection_after_apply_deleted(
         self,
         scene: object,
@@ -1982,13 +2117,65 @@ class LichtfeldAdapter(AdapterContract):
         model: object,
     ) -> None:
         native_selection_mask = self._selection.read_native_selection_mask(scene)
+        renderer_selection_mask = self._read_selection_owner_mask(
+            scene,
+            owner_attributes=("renderer", "get_renderer"),
+        )
+        pipeline_selection_mask = self._read_selection_owner_mask(
+            scene,
+            owner_attributes=("rendering_pipeline", "get_rendering_pipeline"),
+        )
         logger.info(
-            "LichtFeld %s: model_size=%s selection_tensor_size=%s renderer_mask_size=%s",
+            "LichtFeld %s: model_size=%s selection_tensor_size=%s selection_tensor_id=%s "
+            "renderer_selection_tensor_size=%s renderer_selection_tensor_id=%s "
+            "pipeline_selection_tensor_size=%s pipeline_selection_tensor_id=%s",
             label,
             self._read_current_model_splat_count(model),
             self._native_mask_size(native_selection_mask),
-            self._native_mask_size(native_selection_mask),
+            self._native_mask_id(native_selection_mask),
+            self._native_mask_size(renderer_selection_mask),
+            self._native_mask_id(renderer_selection_mask),
+            self._native_mask_size(pipeline_selection_mask),
+            self._native_mask_id(pipeline_selection_mask),
         )
+
+    @staticmethod
+    def _read_selection_owner_mask(
+        scene: object,
+        *,
+        owner_attributes: tuple[str, ...],
+    ) -> object | None:
+        owner = LichtfeldAdapter._read_owner_attribute(scene, owner_attributes)
+        return LichtfeldAdapter._read_owner_attribute(
+            owner,
+            (
+                "selection_mask",
+                "selection_tensor",
+                "preview_selection_tensor",
+                "gpu_selection_mask",
+                "gpu_selection_tensor",
+                "cpu_selection_mask",
+                "cpu_selection_tensor",
+            ),
+        )
+
+    @staticmethod
+    def _read_owner_attribute(
+        owner: object | None,
+        attribute_names: tuple[str, ...],
+    ) -> object | None:
+        if owner is None:
+            return None
+        for attribute_name in attribute_names:
+            value = getattr(owner, attribute_name, None)
+            if callable(value):
+                try:
+                    value = value()
+                except Exception:
+                    continue
+            if value is not None:
+                return value
+        return None
 
     def _require_cleanup_analysis_state(self) -> _SceneAnalysisState:
         analysis_state = self._last_scene_analysis
@@ -2497,6 +2684,12 @@ class LichtfeldAdapter(AdapterContract):
             return len(native_selection_mask)  # type: ignore[arg-type]
         except Exception:
             return None
+
+    @staticmethod
+    def _native_mask_id(native_selection_mask: object | None) -> str:
+        if native_selection_mask is None:
+            return "none"
+        return hex(id(native_selection_mask))
 
     def _apply_cleanup_candidate_selection(
         self,

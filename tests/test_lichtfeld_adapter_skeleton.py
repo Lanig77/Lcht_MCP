@@ -393,6 +393,61 @@ class StickyNativeSelectionApi(FakeNativeSelectionApi):
         self.deselect_all_calls += 1
 
 
+class SceneApplyDeletedModel(FakeModel):
+    def __init__(self, means, opacity=None, colors=None):
+        super().__init__(means, opacity=opacity, colors=colors)
+        self.scene = None
+
+    def apply_deleted(self):
+        if self.scene is not None:
+            last_selection_mask = getattr(self.scene, "last_selection_mask", None)
+            if last_selection_mask and any(last_selection_mask):
+                self.scene.runtime_warnings.append("selection_not_cleared_before_apply_deleted")
+            if getattr(self.scene.renderer, "selection_tensor", None) is not None:
+                self.scene.runtime_warnings.append("Cannot clone invalid tensor")
+        super().apply_deleted()
+        if self.scene is not None:
+            selection_tensor = getattr(self.scene.rendering_pipeline, "selection_tensor", None)
+            if selection_tensor is not None and len(selection_tensor) != len(self._means_values):
+                self.scene.runtime_warnings.append(
+                    "Ignoring selection_mask with stale size: "
+                    f"model has {len(self._means_values)} tensor has {len(selection_tensor)}"
+                )
+
+
+class SceneApplyDeletedScene(FakeScene):
+    def __init__(self, model, *, name="castle_demo", path="C:/data/castle_demo.lf"):
+        super().__init__(model, name=name, path=path)
+        self.apply_deleted_calls = 0
+        self.invalidate_cache_calls = 0
+        self.runtime_warnings: list[str] = []
+        self.renderer = SimpleNamespace(selection_tensor=self._selection_mask)
+        self.rendering_pipeline = SimpleNamespace(selection_tensor=self._selection_mask)
+        if hasattr(model, "scene"):
+            model.scene = self
+
+    @property
+    def selection_mask(self):
+        return self._selection_mask
+
+    @selection_mask.setter
+    def selection_mask(self, value):
+        self._selection_mask = value
+        if hasattr(self, "renderer"):
+            self.renderer.selection_tensor = value
+        if hasattr(self, "rendering_pipeline"):
+            self.rendering_pipeline.selection_tensor = value
+
+    def apply_deleted(self):
+        self.apply_deleted_calls += 1
+        self.renderer.selection_tensor = None
+        self.rendering_pipeline.selection_tensor = None
+        return self._model.apply_deleted()
+
+    def invalidate_cache(self):
+        self.invalidate_cache_calls += 1
+
+
 def _bump_preview_generation_on_notify_changed(scene: FakeScene) -> None:
     original_notify_changed = scene.notify_changed
 
@@ -3184,6 +3239,75 @@ def test_open_cleanup_workspace_after_apply_deleted_uses_current_size_native_mas
     assert reopened.selected_count >= 1
     assert deleted_again.ok is True
     assert deleted_again.soft_deleted_count == reopened.selected_count
+
+
+def test_apply_cleanup_workspace_deleted_uses_scene_apply_deleted_to_clear_renderer_selection_lifecycle(
+    monkeypatch,
+):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = SceneApplyDeletedScene(
+        SceneApplyDeletedModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            ),
+            opacity=FakeTorchTensor([0.1, 0.2, 0.3, 0.4]),
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+    adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+    adapter.soft_delete_cleanup_workspace_selection()
+
+    applied = adapter.apply_cleanup_workspace_deleted()
+    reopened = adapter.open_cleanup_workspace(
+        voxel_size=0.01,
+        min_voxel_cluster_size=1,
+        outlier_distance=0.05,
+        cleanup_aggressiveness=0.5,
+    )
+    deleted_again = adapter.soft_delete_cleanup_workspace_selection()
+
+    assert applied.ok is True
+    assert fake_scene.apply_deleted_calls == 1
+    assert fake_scene._model.apply_deleted_calls == 1
+    assert fake_scene.invalidate_cache_calls >= 1
+    assert fake_scene.runtime_warnings == []
+    assert isinstance(fake_scene.renderer.selection_tensor, FakeLfTensor)
+    assert len(fake_scene.renderer.selection_tensor) == 2
+    assert isinstance(fake_scene.rendering_pipeline.selection_tensor, FakeLfTensor)
+    assert len(fake_scene.rendering_pipeline.selection_tensor) == 2
+    assert reopened.native_selection_mask_size == 2
+    assert deleted_again.ok is True
 
 
 def test_apply_cleanup_workspace_deleted_refuses_when_workspace_is_stale(monkeypatch):
