@@ -14,15 +14,26 @@ from pathlib import Path
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter
 from lichtfeld_mcp.core.cleanup_metrics import (
+    CLEANUP_CATEGORY_DISCONNECTED,
+    CLEANUP_CATEGORY_FLOATING,
+    CLEANUP_CATEGORY_OUTLIER,
+    CLEANUP_CATEGORY_SPARSE,
     CLEANUP_SOURCE_DISCONNECTED,
     CLEANUP_SOURCE_FLOATING,
     CLEANUP_SOURCE_OUTLIER,
     CLEANUP_SOURCE_SPARSE,
     build_cleanup_source_breakdown,
+    cleanup_category_label,
+    cleanup_category_order,
+    cleanup_category_source,
+    cleanup_category_from_source,
     compute_cleanup_intensity_metrics,
+    normalize_cleanup_categories,
+    normalize_cleanup_category,
 )
 from lichtfeld_mcp.core.cleanup_presets import iter_cleanup_presets
 from lichtfeld_mcp.core.cleanup_workspace import (
+    CleanupCategoryPreview,
     CleanupParameters,
     CleanupPresetComparisonEntry,
     CleanupPresetComparisonReport,
@@ -373,6 +384,62 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             entries=tuple(entries),
         )
 
+    def preview_cleanup_category(self, category: str) -> CleanupWorkspace:
+        scene = self._require_scene()
+        workspace = self._require_active_cleanup_workspace()
+        category_preview = self._require_workspace_category_preview(
+            workspace,
+            normalize_cleanup_category(category),
+        )
+        updated_workspace = self._workspace_with_category_selection(
+            workspace,
+            scene=scene,
+            category_previews=(category_preview,),
+            selected_cleanup_category=category_preview.category,
+            category_preview_mode="single",
+        )
+        self._cleanup_workspace_session.workspace = updated_workspace
+        return updated_workspace
+
+    def preview_active_cleanup_categories(self) -> CleanupWorkspace:
+        scene = self._require_scene()
+        workspace = self._require_active_cleanup_workspace()
+        category_previews = self._active_workspace_category_previews(workspace)
+        updated_workspace = self._workspace_with_category_selection(
+            workspace,
+            scene=scene,
+            category_previews=category_previews,
+            selected_cleanup_category=None,
+            category_preview_mode="active",
+        )
+        self._cleanup_workspace_session.workspace = updated_workspace
+        return updated_workspace
+
+    def clear_cleanup_category_preview(self) -> ToolResult:
+        scene = self._require_scene()
+        if self._cleanup_workspace_session is None:
+            return ToolResult(message="Cleanup category preview was already inactive.")
+        workspace = self._cleanup_workspace_session.workspace
+        scene.selected_count = 0
+        self._cleanup_workspace_session.workspace = replace(
+            workspace,
+            candidate_selection_mask=tuple(False for _ in workspace.candidate_selection_mask),
+            preview_selected_indices=(),
+            preview_selection_active=False,
+            native_selection_handle=None,
+            selected_count=0,
+            selection_percentage=0.0,
+            selection_source="no active cleanup category preview",
+            selection_mode="replace",
+            category_preview_mode="cleared",
+            selected_cleanup_category=None,
+            native_selection_mask=None,
+            native_selection_mask_size=None,
+        )
+        return ToolResult(
+            message="Cleanup category preview cleared. Run Preview Selected Category or Preview All Cleanup Categories to rebuild it."
+        )
+
     def reset_cleanup_workspace(self) -> ToolResult:
         scene = self._require_scene()
         scene.selected_count = 0
@@ -686,7 +753,24 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
         )
         scene.selected_count = selected_count
         selection_percentage = 0.0 if scene.splat_count <= 0 else selected_count / scene.splat_count
-        selection_source = ", ".join(selection_source_parts)
+        category_previews = self._build_cleanup_category_previews(
+            summary=summary,
+            selected_count=selected_count,
+            estimated_total=summary.estimated_affected_splats_total,
+        )
+        active_categories = tuple(
+            entry.category for entry in category_previews if entry.selected_sample_count > 0
+        )
+        preview_selected_indices = tuple(
+            index
+            for entry in category_previews
+            for index in entry.preview_selected_indices
+        )
+        sample_size = max(1, len(preview_selected_indices))
+        selection_mask = tuple(index < len(preview_selected_indices) for index in range(sample_size))
+        selection_source = ", ".join(
+            cleanup_category_label(category) for category in active_categories
+        )
         self._last_cleanup_preview = summary
         workspace_report = replace(
             self._last_scene_analysis,
@@ -709,10 +793,10 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
                 cleanup_aggressiveness=cleanup_aggressiveness,
                 preset_name=preset_name,
             ),
-            sampled_rows=tuple((0.0, 0.0, 0.0) for _ in range(min(summary.analyzed_splats, 32))),
-            sampled_indices=tuple(range(min(summary.analyzed_splats, 32))),
-            candidate_selection_mask=tuple(True for _ in range(selected_count)),
-            preview_selected_indices=tuple(range(selected_count)),
+            sampled_rows=tuple((0.0, 0.0, 0.0) for _ in range(sample_size)),
+            sampled_indices=tuple(range(sample_size)),
+            candidate_selection_mask=selection_mask,
+            preview_selected_indices=preview_selected_indices,
             preview_selection_active=True,
             native_selection_handle=f"{scene.path}#cleanup-preview",
             selected_count=selected_count,
@@ -726,6 +810,10 @@ class MockLichtfeldAdapter(LichtfeldAdapter):
             selection_update_time=0.01,
             total_workspace_update_time=0.01,
             estimated_sample_reuse=1.0 if sample_reused else 0.0,
+            cleanup_category_previews=category_previews,
+            active_cleanup_categories=active_categories,
+            selected_cleanup_category=None,
+            category_preview_mode="workspace",
             native_selection_mask=MockNativeSelectionMask(
                 mask_size=scene.splat_count,
                 selected_count=selected_count,

@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from lichtfeld_mcp.core.cleanup_metrics import CleanupSourceBreakdownEntry
+from lichtfeld_mcp.core.cleanup_metrics import (
+    CleanupSourceBreakdownEntry,
+    cleanup_category_label,
+    cleanup_category_order,
+    extrapolate_cleanup_count,
+    normalize_cleanup_categories,
+)
 from lichtfeld_mcp.core.scene_analysis import (
     AnalysisSeverity,
     CleanupCandidateSummary,
@@ -12,6 +18,37 @@ from lichtfeld_mcp.core.scene_analysis import (
 
 if TYPE_CHECKING:
     from lichtfeld_mcp.core.gaussian_cloud import GaussianCloud
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupCategoryPreview:
+    category: str
+    label: str
+    sample_indices: tuple[int, ...]
+    preview_selected_indices: tuple[int, ...]
+    estimated_full_scene_count: int
+    estimated_full_scene_count_contribution: int | None = None
+    score: float | None = None
+    reason: str | None = None
+
+    @property
+    def selected_sample_count(self) -> int:
+        return len(self.sample_indices)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "category": self.category,
+            "label": self.label,
+            "selected_sample_count": self.selected_sample_count,
+            "estimated_full_scene_count": self.estimated_full_scene_count,
+            "estimated_full_scene_count_contribution": (
+                self.estimated_full_scene_count_contribution
+            ),
+            "sample_indices": list(self.sample_indices),
+            "preview_selected_indices": list(self.preview_selected_indices),
+            "score": None if self.score is None else round(self.score, 6),
+            "reason": self.reason,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +116,10 @@ class CleanupWorkspace:
     selection_update_time: float
     total_workspace_update_time: float
     estimated_sample_reuse: float
+    cleanup_category_previews: tuple[CleanupCategoryPreview, ...] = ()
+    active_cleanup_categories: tuple[str, ...] = ()
+    selected_cleanup_category: str | None = None
+    category_preview_mode: str = "workspace"
     native_selection_mask: object | None = None
     native_selection_mask_size: int | None = None
     scene_generation: object | None = None
@@ -113,6 +154,21 @@ class CleanupWorkspace:
             "selection_percentage": round(self.selection_percentage, 6),
             "selection_mode": self.selection_mode,
             "selection_source": self.selection_source,
+            "cleanup_categories": [entry.to_dict() for entry in self.cleanup_category_previews],
+            "all_categories": list(cleanup_category_order()),
+            "active_visible_categories": list(self.active_cleanup_categories),
+            "selected_category": self.selected_cleanup_category,
+            "category_preview_mode": self.category_preview_mode,
+            "category_preview_counts": {
+                entry.category: {
+                    "preview_selected_splats": entry.selected_sample_count,
+                    "estimated_full_scene_splats": entry.estimated_full_scene_count,
+                }
+                for entry in self.cleanup_category_previews
+            },
+            "category_source_breakdown": [
+                entry.to_dict() for entry in self.cleanup_category_previews
+            ],
             "estimated_affected_splats_total": (
                 self.cleanup_candidate_summary.estimated_affected_splats_total
             ),
@@ -299,6 +355,15 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
         f"Analysis reused: {'Yes' if workspace.analysis_reused else 'No'}",
         f"Update time: {workspace.total_workspace_update_time:.6f}s",
     ]
+    preview_label = describe_cleanup_category_preview(workspace)
+    if preview_label is not None:
+        lines.append(f"Category Preview: {preview_label}")
+        lines.append(
+            "Active categories: "
+            f"{', '.join(cleanup_category_label(category) for category in workspace.active_cleanup_categories)}"
+        )
+        lines.append("Non-destructive preview: native selection only")
+    _append_category_preview_lines(lines, workspace.cleanup_category_previews)
     _append_source_breakdown_lines(lines, summary.source_breakdown)
     if workspace.preview_selection_active and workspace.native_selection_mask is None:
         lines.append("Native workspace delete mask unavailable. Soft delete will refuse until it exists.")
@@ -345,6 +410,28 @@ def format_cleanup_preset_comparison(report: CleanupPresetComparisonReport) -> s
     return "\n".join(lines)
 
 
+def format_cleanup_category_preview(workspace: CleanupWorkspace) -> str:
+    mode_label = "Approximate sampled" if workspace.approximate else "Exact"
+    category_label = describe_cleanup_category_preview(workspace) or "No active preview"
+    estimated_total = estimate_cleanup_preview_total(workspace)
+    lines = [
+        "Cleanup Category Preview",
+        f"Category: {category_label}",
+        f"Preview selected splats: {workspace.selected_count:,}",
+        f"Estimated full-scene splats: {estimated_total:,}",
+        f"Current preset: {workspace.current_cleanup_parameters.preset_name}",
+        f"Analysis mode: {mode_label}",
+        "Non-destructive preview: scene splats are unchanged",
+    ]
+    if workspace.active_cleanup_categories:
+        lines.append(
+            "Active categories: "
+            f"{', '.join(cleanup_category_label(category) for category in workspace.active_cleanup_categories)}"
+        )
+    _append_category_preview_lines(lines, active_cleanup_category_previews(workspace))
+    return "\n".join(lines)
+
+
 def _append_source_breakdown_lines(
     lines: list[str],
     source_breakdown: tuple[CleanupSourceBreakdownEntry, ...],
@@ -356,5 +443,54 @@ def _append_source_breakdown_lines(
         lines.append(
             "- "
             f"{entry.source}: sample={entry.selected_sample_count:,}, "
+            f"estimated={entry.estimated_full_scene_count:,}"
+        )
+
+
+def active_cleanup_category_previews(
+    workspace: CleanupWorkspace,
+) -> tuple[CleanupCategoryPreview, ...]:
+    if not workspace.cleanup_category_previews:
+        return ()
+    if not workspace.active_cleanup_categories:
+        return workspace.cleanup_category_previews
+    active = set(normalize_cleanup_categories(workspace.active_cleanup_categories))
+    return tuple(
+        entry for entry in workspace.cleanup_category_previews if entry.category in active
+    )
+
+
+def describe_cleanup_category_preview(workspace: CleanupWorkspace) -> str | None:
+    if workspace.selected_cleanup_category is not None:
+        return cleanup_category_label(workspace.selected_cleanup_category)
+    if workspace.category_preview_mode == "active":
+        return "All Active Cleanup Categories"
+    if workspace.category_preview_mode == "workspace":
+        return "Workspace Cleanup Preview"
+    if workspace.category_preview_mode == "cleared":
+        return "Cleared"
+    return None
+
+
+def estimate_cleanup_preview_total(workspace: CleanupWorkspace) -> int:
+    return extrapolate_cleanup_count(
+        workspace.selected_count,
+        analyzed_splats=workspace.scene_profile.analyzed_splats,
+        total_splats=workspace.scene_profile.total_splats,
+        approximate=workspace.approximate,
+    )
+
+
+def _append_category_preview_lines(
+    lines: list[str],
+    category_previews: tuple[CleanupCategoryPreview, ...],
+) -> None:
+    if not category_previews:
+        return
+    lines.append("Cleanup category breakdown:")
+    for entry in category_previews:
+        lines.append(
+            "- "
+            f"{entry.label}: sample={entry.selected_sample_count:,}, "
             f"estimated={entry.estimated_full_scene_count:,}"
         )

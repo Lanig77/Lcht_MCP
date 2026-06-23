@@ -8,12 +8,35 @@ CLEANUP_SOURCE_DISCONNECTED = "disconnected clusters"
 CLEANUP_SOURCE_OUTLIER = "distant outliers"
 CLEANUP_SOURCE_SPARSE = "sparse singleton regions"
 
+CLEANUP_CATEGORY_FLOATING = "FLOATING_VOXEL_CLUSTERS"
+CLEANUP_CATEGORY_DISCONNECTED = "DISCONNECTED_CLUSTERS"
+CLEANUP_CATEGORY_OUTLIER = "DISTANT_OUTLIERS"
+CLEANUP_CATEGORY_SPARSE = "SPARSE_SINGLETON_REGIONS"
+
 _SOURCE_ORDER = (
     CLEANUP_SOURCE_FLOATING,
     CLEANUP_SOURCE_DISCONNECTED,
     CLEANUP_SOURCE_OUTLIER,
     CLEANUP_SOURCE_SPARSE,
 )
+
+_CATEGORY_ORDER = (
+    CLEANUP_CATEGORY_FLOATING,
+    CLEANUP_CATEGORY_DISCONNECTED,
+    CLEANUP_CATEGORY_OUTLIER,
+    CLEANUP_CATEGORY_SPARSE,
+)
+
+_CATEGORY_TO_SOURCE = {
+    CLEANUP_CATEGORY_FLOATING: CLEANUP_SOURCE_FLOATING,
+    CLEANUP_CATEGORY_DISCONNECTED: CLEANUP_SOURCE_DISCONNECTED,
+    CLEANUP_CATEGORY_OUTLIER: CLEANUP_SOURCE_OUTLIER,
+    CLEANUP_CATEGORY_SPARSE: CLEANUP_SOURCE_SPARSE,
+}
+
+_SOURCE_TO_CATEGORY = {
+    source: category for category, source in _CATEGORY_TO_SOURCE.items()
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +89,47 @@ class CleanupIntensityMetrics:
 
 def cleanup_source_order() -> tuple[str, ...]:
     return _SOURCE_ORDER
+
+
+def cleanup_category_order() -> tuple[str, ...]:
+    return _CATEGORY_ORDER
+
+
+def cleanup_category_label(category: str) -> str:
+    return _CATEGORY_TO_SOURCE[normalize_cleanup_category(category)]
+
+
+def cleanup_category_source(category: str) -> str:
+    return cleanup_category_label(category)
+
+
+def cleanup_category_from_source(source: str) -> str:
+    try:
+        return _SOURCE_TO_CATEGORY[source]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported cleanup category source: {source!r}") from exc
+
+
+def normalize_cleanup_category(category: str) -> str:
+    normalized = str(category).strip()
+    if normalized in _CATEGORY_TO_SOURCE:
+        return normalized
+    for candidate, source in _CATEGORY_TO_SOURCE.items():
+        if normalized.casefold() == candidate.casefold() or normalized.casefold() == source.casefold():
+            return candidate
+    raise ValueError(f"Unsupported cleanup category: {category!r}")
+
+
+def normalize_cleanup_categories(categories: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for category in categories:
+        normalized = normalize_cleanup_category(category)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return tuple(ordered)
 
 
 def extrapolate_cleanup_count(
