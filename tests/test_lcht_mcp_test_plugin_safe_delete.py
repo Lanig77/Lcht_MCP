@@ -128,7 +128,11 @@ def _workspace(selected_count: int) -> CleanupWorkspace:
         cleanup_candidate_summary=SimpleNamespace(
             estimated_affected_splats_total=12,
             estimated_percentage_of_total=0.012,
+            affected_splats_in_sample=12,
+            affected_percentage_of_sample=0.048,
             approximate=True,
+            cleanup_intensity_score=54.0,
+            source_breakdown=(),
             to_dict=lambda: {"estimated_affected_splats_total": 12},
         ),
         scene_profile=SceneProfile(

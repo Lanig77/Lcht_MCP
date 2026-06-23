@@ -12,9 +12,12 @@ from lichtfeld_mcp.core.scene_analysis import (
 )
 from lichtfeld_mcp.core.cleanup_workspace import (
     CleanupParameters,
+    CleanupPresetComparisonEntry,
+    CleanupPresetComparisonReport,
     CleanupWorkspace,
     SceneProfile,
 )
+from lichtfeld_mcp.core.cleanup_metrics import CleanupSourceBreakdownEntry
 from lichtfeld_mcp.schemas.common import CleanupSelectionPreviewResult
 from test_lcht_mcp_test_plugin_undo import _load_runner_modules
 
@@ -30,6 +33,9 @@ class FakeClusterPreviewAdapter:
         self.update_cleanup_workspace_calls = 0
         self.invalidate_cleanup_workspace_preview_calls = 0
         self.reset_cleanup_workspace_calls = 0
+        self.compare_cleanup_presets_calls = 0
+        self.soft_delete_cleanup_workspace_selection_calls = 0
+        self.apply_cleanup_workspace_deleted_calls = 0
         self.current_workspace = None
 
     def analyze_clusters_preview(
@@ -217,6 +223,36 @@ class FakeClusterPreviewAdapter:
                 "Estimated cleanup extrapolated to full scene: 2.0%",
             ],
             notes=["Preview report only.", "Approximate sampled preview."],
+            selection_sources=("floating voxel clusters", "disconnected clusters"),
+            source_breakdown=(
+                CleanupSourceBreakdownEntry(
+                    source="floating voxel clusters",
+                    selected_sample_count=320,
+                    estimated_full_scene_count=25_574,
+                ),
+                CleanupSourceBreakdownEntry(
+                    source="disconnected clusters",
+                    selected_sample_count=128,
+                    estimated_full_scene_count=10_230,
+                ),
+                CleanupSourceBreakdownEntry(
+                    source="distant outliers",
+                    selected_sample_count=0,
+                    estimated_full_scene_count=0,
+                ),
+                CleanupSourceBreakdownEntry(
+                    source="sparse singleton regions",
+                    selected_sample_count=64,
+                    estimated_full_scene_count=5_115,
+                ),
+            ),
+            cleanup_intensity_score=54.35,
+            aggressiveness_contribution=50.0,
+            estimated_cleanup_contribution=3.68,
+            floating_cluster_contribution=0.52,
+            disconnected_cluster_contribution=0.15,
+            outlier_contribution=0.0,
+            sparse_region_contribution=0.0,
         )
 
     def preview_cleanup_selection(self):
@@ -297,6 +333,71 @@ class FakeClusterPreviewAdapter:
     def get_cleanup_workspace(self):
         return self.current_workspace
 
+    def compare_cleanup_presets(self):
+        self.compare_cleanup_presets_calls += 1
+        return CleanupPresetComparisonReport(
+            scene_name="demo_scene",
+            project_path="C:/repo/demo_scene.lf",
+            approximate=True,
+            analysis_reused=True,
+            entries=(
+                CleanupPresetComparisonEntry(
+                    preset_name="Conservative",
+                    cleanup_candidate_summary=self._comparison_summary(
+                        preset_name="Conservative",
+                        preview_selected_splats=166,
+                        estimated_affected_splats_total=13_267,
+                        estimated_percentage_of_total=13_267 / 1_998_000,
+                        cleanup_intensity_score=29.10,
+                        selection_sources=("floating voxel clusters", "disconnected clusters"),
+                    ),
+                    selection_sources=("floating voxel clusters", "disconnected clusters"),
+                ),
+                CleanupPresetComparisonEntry(
+                    preset_name="Balanced",
+                    cleanup_candidate_summary=self._comparison_summary(
+                        preset_name="Balanced",
+                        preview_selected_splats=200,
+                        estimated_affected_splats_total=15_984,
+                        estimated_percentage_of_total=15_984 / 1_998_000,
+                        cleanup_intensity_score=54.35,
+                        selection_sources=(
+                            "floating voxel clusters",
+                            "disconnected clusters",
+                            "sparse singleton regions",
+                        ),
+                    ),
+                    selection_sources=(
+                        "floating voxel clusters",
+                        "disconnected clusters",
+                        "sparse singleton regions",
+                    ),
+                ),
+                CleanupPresetComparisonEntry(
+                    preset_name="Aggressive",
+                    cleanup_candidate_summary=self._comparison_summary(
+                        preset_name="Aggressive",
+                        preview_selected_splats=195,
+                        estimated_affected_splats_total=15_584,
+                        estimated_percentage_of_total=15_584 / 1_998_000,
+                        cleanup_intensity_score=79.80,
+                        selection_sources=(
+                            "floating voxel clusters",
+                            "disconnected clusters",
+                            "distant outliers",
+                            "sparse singleton regions",
+                        ),
+                    ),
+                    selection_sources=(
+                        "floating voxel clusters",
+                        "disconnected clusters",
+                        "distant outliers",
+                        "sparse singleton regions",
+                    ),
+                ),
+            ),
+        )
+
     def invalidate_cleanup_workspace_preview(self):
         self.invalidate_cleanup_workspace_preview_calls += 1
         if self.current_workspace is not None and self.current_workspace.workspace_state == "active":
@@ -322,6 +423,14 @@ class FakeClusterPreviewAdapter:
         self.reset_cleanup_workspace_calls += 1
         self.current_workspace = None
         return SimpleNamespace(ok=True, message="Cleanup workspace reset. Native preview selection cleared.")
+
+    def soft_delete_cleanup_workspace_selection(self, *args, **kwargs):
+        self.soft_delete_cleanup_workspace_selection_calls += 1
+        return SimpleNamespace(ok=True, message="Soft delete should not run during compare.")
+
+    def apply_cleanup_workspace_deleted(self):
+        self.apply_cleanup_workspace_deleted_calls += 1
+        return SimpleNamespace(ok=True, message="Apply deleted should not run during compare.")
 
     def _workspace(
         self,
@@ -383,6 +492,100 @@ class FakeClusterPreviewAdapter:
             selection_update_time=0.004,
             total_workspace_update_time=0.012,
             estimated_sample_reuse=1.0 if self.current_workspace is not None else 0.0,
+        )
+
+    @staticmethod
+    def _comparison_summary(
+        *,
+        preset_name: str,
+        preview_selected_splats: int,
+        estimated_affected_splats_total: int,
+        estimated_percentage_of_total: float,
+        cleanup_intensity_score: float,
+        selection_sources: tuple[str, ...],
+    ) -> CleanupCandidateSummary:
+        del preset_name
+        source_breakdown = (
+            CleanupSourceBreakdownEntry(
+                source="floating voxel clusters",
+                selected_sample_count=max(1, preview_selected_splats // 2),
+                estimated_full_scene_count=max(1, estimated_affected_splats_total // 2),
+            ),
+            CleanupSourceBreakdownEntry(
+                source="disconnected clusters",
+                selected_sample_count=max(1, preview_selected_splats // 4),
+                estimated_full_scene_count=max(1, estimated_affected_splats_total // 4),
+            ),
+            CleanupSourceBreakdownEntry(
+                source="distant outliers",
+                selected_sample_count=(
+                    max(1, preview_selected_splats // 6)
+                    if "distant outliers" in selection_sources
+                    else 0
+                ),
+                estimated_full_scene_count=(
+                    max(1, estimated_affected_splats_total // 6)
+                    if "distant outliers" in selection_sources
+                    else 0
+                ),
+            ),
+            CleanupSourceBreakdownEntry(
+                source="sparse singleton regions",
+                selected_sample_count=(
+                    max(1, preview_selected_splats // 5)
+                    if "sparse singleton regions" in selection_sources
+                    else 0
+                ),
+                estimated_full_scene_count=(
+                    max(1, estimated_affected_splats_total // 5)
+                    if "sparse singleton regions" in selection_sources
+                    else 0
+                ),
+            ),
+        )
+        return CleanupCandidateSummary(
+            scene_name="demo_scene",
+            project_path="C:/repo/demo_scene.lf",
+            total_splats=1_998_000,
+            analyzed_splats=25_000,
+            quality_score=93,
+            analysis_time=0.42,
+            approximate=True,
+            report_only=True,
+            candidate_group_count=3,
+            affected_splats_in_sample=preview_selected_splats,
+            estimated_affected_splats_total=estimated_affected_splats_total,
+            affected_percentage_of_sample=preview_selected_splats / 25_000,
+            estimated_percentage_of_total=estimated_percentage_of_total,
+            estimated_affected_splats=estimated_affected_splats_total,
+            floating_voxel_groups=2,
+            estimated_floating_splats=412,
+            small_voxel_clusters=1,
+            estimated_small_cluster_splats=100,
+            sparse_regions=1 if "sparse singleton regions" in selection_sources else 0,
+            estimated_sparse_splats=100 if "sparse singleton regions" in selection_sources else 0,
+            warnings=["2 floating voxel groups detected."],
+            recommendations=["Preview floating islands."],
+            notes=["Workspace selection preview.", "Scene remains unchanged."],
+            selection_sources=selection_sources,
+            source_breakdown=source_breakdown,
+            cleanup_intensity_score=cleanup_intensity_score,
+            aggressiveness_contribution=(
+                25.0
+                if cleanup_intensity_score < 40.0
+                else 50.0
+                if cleanup_intensity_score < 70.0
+                else 75.0
+            ),
+            estimated_cleanup_contribution=3.8,
+            floating_cluster_contribution=0.6,
+            disconnected_cluster_contribution=0.4,
+            outlier_contribution=(
+                0.5 if "distant outliers" in selection_sources else 0.0
+            ),
+            sparse_region_contribution=(
+                0.5 if "sparse singleton regions" in selection_sources else 0.0
+            ),
         )
 
 
@@ -610,6 +813,36 @@ def test_run_preview_cleanup_candidates_returns_actionable_summary(monkeypatch):
             "Estimated cleanup extrapolated to full scene: 2.0%",
         ],
         "notes": ["Preview report only.", "Approximate sampled preview."],
+        "selection_sources": ["floating voxel clusters", "disconnected clusters"],
+        "source_breakdown": [
+            {
+                "source": "floating voxel clusters",
+                "selected_sample_count": 320,
+                "estimated_full_scene_count": 25_574,
+            },
+            {
+                "source": "disconnected clusters",
+                "selected_sample_count": 128,
+                "estimated_full_scene_count": 10_230,
+            },
+            {
+                "source": "distant outliers",
+                "selected_sample_count": 0,
+                "estimated_full_scene_count": 0,
+            },
+            {
+                "source": "sparse singleton regions",
+                "selected_sample_count": 64,
+                "estimated_full_scene_count": 5_115,
+            },
+        ],
+        "cleanup_intensity_score": 54.35,
+        "aggressiveness_contribution": 50.0,
+        "estimated_cleanup_contribution": 3.68,
+        "floating_cluster_contribution": 0.52,
+        "disconnected_cluster_contribution": 0.15,
+        "outlier_contribution": 0.0,
+        "sparse_region_contribution": 0.0,
     }
 
 
@@ -722,3 +955,55 @@ def test_run_reset_cleanup_workspace_clears_workspace_summary(monkeypatch):
     assert "Cleanup workspace reset" in message
     assert fake_adapter.reset_cleanup_workspace_calls == 1
     assert runtime_config.snapshot_runtime_config().last_cleanup_workspace_lines == ()
+
+
+def test_run_compare_cleanup_presets_reports_non_destructive_metrics(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    fake_adapter = FakeClusterPreviewAdapter()
+    fake_adapter.current_workspace = fake_adapter._workspace(
+        preset_name="Balanced",
+        voxel_size=0.25,
+        min_voxel_cluster_size=10,
+        cluster_distance_threshold=0.10,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+        selected_count=512,
+    )
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_compare_cleanup_presets()
+
+    config = runtime_config.snapshot_runtime_config()
+    assert success is True
+    assert message == "Cleanup preset comparison complete."
+    assert fake_adapter.compare_cleanup_presets_calls == 1
+    assert fake_adapter.soft_delete_cleanup_workspace_selection_calls == 0
+    assert fake_adapter.apply_cleanup_workspace_deleted_calls == 0
+    assert config.last_cleanup_preset_comparison_lines
+    assert any("Preset Comparison" in line for line in config.last_cleanup_preset_comparison_lines)
+    assert any(
+        "Non-destructive comparison" in line
+        for line in config.last_cleanup_preset_comparison_lines
+    )
+    assert any(
+        "Cleanup intensity score: 79.80" in line
+        for line in config.last_cleanup_preset_comparison_lines
+    )
+
+
+def test_run_compare_cleanup_presets_orders_presets_by_intensity_not_preview_count(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    fake_adapter = FakeClusterPreviewAdapter()
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, _ = test_runner.run_compare_cleanup_presets()
+
+    assert success is True
+    report = fake_adapter.compare_cleanup_presets()
+    scores = [entry.cleanup_candidate_summary.cleanup_intensity_score for entry in report.entries]
+    preview_counts = [
+        entry.cleanup_candidate_summary.affected_splats_in_sample
+        for entry in report.entries
+    ]
+    assert scores == sorted(scores)
+    assert preview_counts == [166, 200, 195]

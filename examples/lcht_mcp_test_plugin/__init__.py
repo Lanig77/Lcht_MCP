@@ -7,6 +7,7 @@ import lichtfeld as lf
 from .operators.analyze_scene import LCHTMCP_OT_analyze_scene
 from .operators.analyze_clusters import LCHTMCP_OT_analyze_clusters
 from .operators.analyze_voxel_clusters import LCHTMCP_OT_analyze_voxel_clusters
+from .operators.compare_cleanup_presets import LCHTMCP_OT_compare_cleanup_presets
 from .operators.open_cleanup_workspace import LCHTMCP_OT_open_cleanup_workspace
 from .operators.preview_cleanup_candidates import LCHTMCP_OT_preview_cleanup_candidates
 from .operators.reset_cleanup_workspace import LCHTMCP_OT_reset_cleanup_workspace
@@ -71,6 +72,7 @@ _classes = [
     LCHTMCP_OT_analyze_clusters,
     LCHTMCP_OT_analyze_voxel_clusters,
     LCHTMCP_OT_preview_cleanup_candidates,
+    LCHTMCP_OT_compare_cleanup_presets,
     LCHTMCP_OT_open_cleanup_workspace,
     LCHTMCP_OT_update_cleanup_workspace,
     LCHTMCP_OT_reset_cleanup_workspace,

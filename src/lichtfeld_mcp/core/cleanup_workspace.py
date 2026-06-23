@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from lichtfeld_mcp.core.cleanup_metrics import CleanupSourceBreakdownEntry
 from lichtfeld_mcp.core.scene_analysis import (
     AnalysisSeverity,
     CleanupCandidateSummary,
@@ -115,10 +116,23 @@ class CleanupWorkspace:
             "estimated_affected_splats_total": (
                 self.cleanup_candidate_summary.estimated_affected_splats_total
             ),
+            "affected_splats_in_sample": self.cleanup_candidate_summary.affected_splats_in_sample,
+            "affected_percentage_of_sample": round(
+                self.cleanup_candidate_summary.affected_percentage_of_sample,
+                6,
+            ),
             "estimated_cleanup_percentage": round(
                 self.cleanup_candidate_summary.estimated_percentage_of_total,
                 6,
             ),
+            "cleanup_intensity_score": round(
+                self.cleanup_candidate_summary.cleanup_intensity_score,
+                6,
+            ),
+            "selection_sources": list(self.cleanup_candidate_summary.selection_sources),
+            "source_breakdown": [
+                entry.to_dict() for entry in self.cleanup_candidate_summary.source_breakdown
+            ],
             "approximate": self.approximate,
             "analysis_reused": self.analysis_reused,
             "candidate_update_time": round(self.candidate_update_time, 6),
@@ -133,6 +147,84 @@ class CleanupWorkspace:
 class CleanupSession:
     workspace: CleanupWorkspace
     sampled_gaussian_cloud: "GaussianCloud"
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupPresetComparisonEntry:
+    preset_name: str
+    cleanup_candidate_summary: CleanupCandidateSummary
+    selection_sources: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "preset_name": self.preset_name,
+            "cleanup_intensity_score": round(
+                self.cleanup_candidate_summary.cleanup_intensity_score,
+                6,
+            ),
+            "estimated_affected_splats_total": (
+                self.cleanup_candidate_summary.estimated_affected_splats_total
+            ),
+            "estimated_cleanup_percentage": round(
+                self.cleanup_candidate_summary.estimated_percentage_of_total,
+                6,
+            ),
+            "preview_selected_splats": self.cleanup_candidate_summary.affected_splats_in_sample,
+            "affected_splats_in_sample": self.cleanup_candidate_summary.affected_splats_in_sample,
+            "affected_percentage_of_sample": round(
+                self.cleanup_candidate_summary.affected_percentage_of_sample,
+                6,
+            ),
+            "selection_sources": list(self.selection_sources),
+            "source_breakdown": [
+                entry.to_dict()
+                for entry in self.cleanup_candidate_summary.source_breakdown
+            ],
+            "intensity_factors": {
+                "aggressiveness": round(
+                    self.cleanup_candidate_summary.aggressiveness_contribution,
+                    6,
+                ),
+                "estimated_cleanup": round(
+                    self.cleanup_candidate_summary.estimated_cleanup_contribution,
+                    6,
+                ),
+                "floating_clusters": round(
+                    self.cleanup_candidate_summary.floating_cluster_contribution,
+                    6,
+                ),
+                "disconnected_clusters": round(
+                    self.cleanup_candidate_summary.disconnected_cluster_contribution,
+                    6,
+                ),
+                "distant_outliers": round(
+                    self.cleanup_candidate_summary.outlier_contribution,
+                    6,
+                ),
+                "sparse_regions": round(
+                    self.cleanup_candidate_summary.sparse_region_contribution,
+                    6,
+                ),
+            },
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupPresetComparisonReport:
+    scene_name: str
+    project_path: str
+    approximate: bool
+    analysis_reused: bool
+    entries: tuple[CleanupPresetComparisonEntry, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "scene_name": self.scene_name,
+            "project_path": self.project_path,
+            "approximate": self.approximate,
+            "analysis_reused": self.analysis_reused,
+            "entries": [entry.to_dict() for entry in self.entries],
+        }
 
 
 _CLEANUP_NEEDS_REVIEW_THRESHOLD = 0.05
@@ -196,13 +288,18 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
             f"outlier_distance={params.outlier_distance:.2f}, "
             f"cleanup_aggressiveness={params.cleanup_aggressiveness:.2f}"
         ),
+        f"Cleanup intensity score: {summary.cleanup_intensity_score:.2f}",
         f"Estimated affected splats total: {summary.estimated_affected_splats_total:,}",
         f"Estimated cleanup percentage: {cleanup_percentage * 100.0:.2f}%",
         f"Preview selected splats: {workspace.selected_count:,}",
+        f"Affected splats in sample: {summary.affected_splats_in_sample:,}",
+        "Affected percentage of sample: "
+        f"{summary.affected_percentage_of_sample * 100.0:.2f}%",
         f"Selection source: {workspace.selection_source}",
         f"Analysis reused: {'Yes' if workspace.analysis_reused else 'No'}",
         f"Update time: {workspace.total_workspace_update_time:.6f}s",
     ]
+    _append_source_breakdown_lines(lines, summary.source_breakdown)
     if workspace.preview_selection_active and workspace.native_selection_mask is None:
         lines.append("Native workspace delete mask unavailable. Soft delete will refuse until it exists.")
     if not workspace.preview_selection_active:
@@ -210,3 +307,54 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
     if workspace.approximate:
         lines.append("Approximate sampled selection preview.")
     return "\n".join(lines)
+
+
+def format_cleanup_preset_comparison(report: CleanupPresetComparisonReport) -> str:
+    mode_label = "Approximate sampled" if report.approximate else "Exact"
+    lines = [
+        "Preset Comparison",
+        "Non-destructive comparison. Scene, soft delete state, and native selection stay unchanged.",
+        f"Analysis reused: {'Yes' if report.analysis_reused else 'No'}",
+        f"Analysis mode: {mode_label}",
+    ]
+    for entry in report.entries:
+        summary = entry.cleanup_candidate_summary
+        lines.append("")
+        lines.append(f"{entry.preset_name}:")
+        lines.append(f"Cleanup intensity score: {summary.cleanup_intensity_score:.2f}")
+        lines.append(
+            f"Preview selected splats: {summary.affected_splats_in_sample:,}"
+        )
+        lines.append(
+            "Estimated cleanup percentage: "
+            f"{summary.estimated_percentage_of_total * 100.0:.2f}%"
+        )
+        lines.append(
+            "Intensity factors: "
+            f"aggressiveness={summary.aggressiveness_contribution:.2f}, "
+            f"cleanup={summary.estimated_cleanup_contribution:.2f}, "
+            f"floating={summary.floating_cluster_contribution:.2f}, "
+            f"disconnected={summary.disconnected_cluster_contribution:.2f}, "
+            f"outliers={summary.outlier_contribution:.2f}, "
+            f"sparse={summary.sparse_region_contribution:.2f}"
+        )
+        lines.append(
+            f"Selection sources: {', '.join(entry.selection_sources) or 'no cleanup candidates'}"
+        )
+        _append_source_breakdown_lines(lines, summary.source_breakdown)
+    return "\n".join(lines)
+
+
+def _append_source_breakdown_lines(
+    lines: list[str],
+    source_breakdown: tuple[CleanupSourceBreakdownEntry, ...],
+) -> None:
+    if not source_breakdown:
+        return
+    lines.append("Selection source breakdown:")
+    for entry in source_breakdown:
+        lines.append(
+            "- "
+            f"{entry.source}: sample={entry.selected_sample_count:,}, "
+            f"estimated={entry.estimated_full_scene_count:,}"
+        )

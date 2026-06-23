@@ -82,6 +82,7 @@ class RuntimeConfig:
     last_cleanup_preview_lines: tuple[str, ...] = ()
     last_cleanup_preview_summary: dict[str, object] | None = None
     last_cleanup_workspace_lines: tuple[str, ...] = ()
+    last_cleanup_preset_comparison_lines: tuple[str, ...] = ()
 
 
 _runtime_config = RuntimeConfig()
@@ -150,6 +151,11 @@ def set_cleanup_preview_summary(summary: dict[str, object] | None) -> None:
 def set_cleanup_workspace_report_lines(lines: list[str]) -> None:
     """Store the most recent cleanup workspace report for panel display."""
     _runtime_config.last_cleanup_workspace_lines = tuple(lines)
+
+
+def set_cleanup_preset_comparison_lines(lines: list[str]) -> None:
+    """Store the most recent cleanup preset comparison report for panel display."""
+    _runtime_config.last_cleanup_preset_comparison_lines = tuple(lines)
 
 
 def set_cleanup_preset(preset_name: str) -> None:

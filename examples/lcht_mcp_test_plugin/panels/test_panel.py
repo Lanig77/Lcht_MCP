@@ -7,6 +7,7 @@ import lichtfeld as lf
 from ..core.runtime_config import snapshot_runtime_config
 from ..operators.analyze_scene import ANALYZE_SCENE_OPERATOR_ID
 from ..operators.apply_confirmed_cleanup import APPLY_CONFIRMED_CLEANUP_OPERATOR_ID
+from ..operators.compare_cleanup_presets import COMPARE_CLEANUP_PRESETS_OPERATOR_ID
 from ..operators.open_cleanup_workspace import OPEN_CLEANUP_WORKSPACE_OPERATOR_ID
 from ..operators.restore_last_delete import RESTORE_LAST_DELETE_OPERATOR_ID
 from ..operators.reset_cleanup_workspace import RESET_CLEANUP_WORKSPACE_OPERATOR_ID
@@ -188,6 +189,12 @@ class LchtMcpTestPanel(lf.ui.Panel):
         if config.last_cleanup_workspace_lines:
             layout.label("Cleanup Workspace")
             for line in config.last_cleanup_workspace_lines:
+                layout.text_colored(line, theme.palette.text_dim)
+            layout.spacing()
+
+        if config.last_cleanup_preset_comparison_lines:
+            layout.label("Cleanup Preset Comparison")
+            for line in config.last_cleanup_preset_comparison_lines:
                 layout.text_colored(line, theme.palette.text_dim)
             layout.spacing()
 
@@ -429,6 +436,12 @@ class LchtMcpTestPanel(lf.ui.Panel):
         ):
             lf.ui.ops.invoke(UPDATE_CLEANUP_WORKSPACE_OPERATOR_ID)
         if layout.button_styled(
+            "Compare Cleanup Presets##compare_cleanup_presets",
+            "secondary",
+            (-1, 34 * scale),
+        ):
+            lf.ui.ops.invoke(COMPARE_CLEANUP_PRESETS_OPERATOR_ID)
+        if layout.button_styled(
             "Reset Workspace##reset_cleanup_workspace",
             "secondary",
             (-1, 34 * scale),
@@ -436,6 +449,10 @@ class LchtMcpTestPanel(lf.ui.Panel):
             lf.ui.ops.invoke(RESET_CLEANUP_WORKSPACE_OPERATOR_ID)
         layout.text_colored(
             "Selection preview only. Does not delete, hide, or modify splats.",
+            theme.palette.text_dim,
+        )
+        layout.text_colored(
+            "Compare Cleanup Presets is non-destructive and does not change native selection until Update Preview runs.",
             theme.palette.text_dim,
         )
         if layout.button_styled(

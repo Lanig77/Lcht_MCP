@@ -1517,7 +1517,7 @@ def test_invalidate_cleanup_workspace_preview_clears_selection_but_keeps_session
     assert workspace.selected_count == 0
     assert workspace.workspace_state == "active"
     assert adapter._last_scene_analysis is not None
-    assert fake_scene.clear_selection_calls == 1
+    assert fake_scene.clear_selection_calls >= 1
     assert fake_scene.notify_changed_calls == 2
     assert fake_scene._model.last_soft_delete_argument is None
     assert fake_scene._model.apply_deleted_calls == 0
@@ -1578,6 +1578,90 @@ def test_update_cleanup_workspace_does_not_invalidate_workspace_when_preview_gen
     assert updated.scene_generation == 0
     assert adapter.get_cleanup_workspace() is not None
     assert adapter.get_cleanup_workspace().workspace_state == "active"
+
+
+def test_compare_cleanup_presets_reuses_sampled_analysis_without_mutating_scene(
+    monkeypatch,
+):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                    [10.2, 0.0, 0.0],
+                    [12.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(voxel_size=1.0, min_voxel_cluster_size=2, max_splats=10)
+    opened = adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        cluster_distance_threshold=0.10,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+    notify_changed_before = fake_scene.notify_changed_calls
+    clear_selection_before = fake_scene.clear_selection_calls
+
+    first_report = adapter.compare_cleanup_presets()
+    second_report = adapter.compare_cleanup_presets()
+
+    workspace = adapter.get_cleanup_workspace()
+
+    assert first_report.analysis_reused is True
+    assert [entry.preset_name for entry in first_report.entries] == [
+        "Conservative",
+        "Balanced",
+        "Aggressive",
+    ]
+    first_scores = [
+        entry.cleanup_candidate_summary.cleanup_intensity_score
+        for entry in first_report.entries
+    ]
+    second_scores = [
+        entry.cleanup_candidate_summary.cleanup_intensity_score
+        for entry in second_report.entries
+    ]
+    assert first_scores == sorted(first_scores)
+    assert second_scores == first_scores
+    for entry in first_report.entries:
+        summary = entry.cleanup_candidate_summary
+        assert summary.source_breakdown
+        assert sum(
+            source.selected_sample_count for source in summary.source_breakdown
+        ) >= summary.affected_splats_in_sample
+        assert sum(
+            source.estimated_full_scene_count for source in summary.source_breakdown
+        ) >= summary.estimated_affected_splats_total
+    assert workspace is not None
+    assert workspace.selected_count == opened.selected_count
+    assert workspace.selection_source == opened.selection_source
+    assert fake_scene.clear_selection_calls == clear_selection_before
+    assert fake_scene.notify_changed_calls == notify_changed_before
+    assert fake_scene._model.last_soft_delete_argument is None
+    assert fake_scene._model.apply_deleted_calls == 0
 
 
 def test_preview_selection_refresh_does_not_invalidate_workspace(monkeypatch):

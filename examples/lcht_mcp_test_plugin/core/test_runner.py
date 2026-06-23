@@ -11,6 +11,7 @@ from pathlib import Path
 import lichtfeld as lf
 
 from .runtime_config import (
+    set_cleanup_preset_comparison_lines,
     set_cleanup_preview_report_lines,
     set_cleanup_preview_summary,
     set_cleanup_workspace_report_lines,
@@ -273,6 +274,7 @@ def run_scene_analysis() -> tuple[bool, str]:
     set_cleanup_preview_report_lines([])
     set_cleanup_preview_summary(None)
     set_cleanup_workspace_report_lines([])
+    set_cleanup_preset_comparison_lines([])
     for line in report_lines:
         _log_info(line)
     _log_info(f"analysis_time_seconds={report.analysis_time:.3f}")
@@ -499,6 +501,51 @@ def run_update_cleanup_workspace() -> tuple[bool, str]:
     _log_info(f"total_workspace_update_time={workspace.total_workspace_update_time:.6f}")
     _log_info(f"estimated_sample_reuse={workspace.estimated_sample_reuse:.2f}")
     return True, "Cleanup workspace updated."
+
+
+def run_compare_cleanup_presets() -> tuple[bool, str]:
+    """Compare cleanup presets without changing the scene or native selection preview."""
+    _log_info(
+        "Comparing cleanup presets. This is non-destructive and does not update native selection."
+    )
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup preset comparison adapter setup failed: {exc}"
+        _log_error(message)
+        set_cleanup_preset_comparison_lines([message])
+        return False, message
+
+    compare_cleanup_presets = getattr(adapter, "compare_cleanup_presets", None)
+    if not callable(compare_cleanup_presets):
+        message = "LichtfeldAdapter does not expose compare_cleanup_presets()."
+        _log_error(message)
+        set_cleanup_preset_comparison_lines([message])
+        return False, message
+
+    try:
+        from lichtfeld_mcp.core.cleanup_workspace import format_cleanup_preset_comparison
+    except Exception as exc:
+        message = f"Cleanup preset comparison formatter import failed: {exc}"
+        _log_error(message)
+        set_cleanup_preset_comparison_lines([message])
+        return False, message
+
+    try:
+        report = compare_cleanup_presets()
+    except Exception as exc:
+        message = f"Cleanup preset comparison failed: {exc}"
+        _log_error(message)
+        set_cleanup_preset_comparison_lines([message])
+        return False, message
+
+    formatted_report = format_cleanup_preset_comparison(report)
+    report_lines = formatted_report.splitlines()
+    set_cleanup_preset_comparison_lines(report_lines)
+    for line in report_lines:
+        _log_info(line)
+    return True, "Cleanup preset comparison complete."
 
 
 def run_reset_cleanup_workspace() -> tuple[bool, str]:

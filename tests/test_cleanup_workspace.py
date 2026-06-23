@@ -2,10 +2,14 @@ import pytest
 
 from lichtfeld_mcp.core.cleanup_workspace import (
     CleanupParameters,
+    CleanupPresetComparisonEntry,
+    CleanupPresetComparisonReport,
     CleanupWorkspace,
     build_scene_profile,
+    format_cleanup_preset_comparison,
     format_cleanup_workspace,
 )
+from lichtfeld_mcp.core.cleanup_metrics import CleanupSourceBreakdownEntry
 from lichtfeld_mcp.core.scene_analysis import (
     AnalysisResult,
     AnalysisSeverity,
@@ -101,6 +105,36 @@ def _workspace(report: SceneAnalysisReport) -> CleanupWorkspace:
         warnings=list(report.warnings),
         recommendations=list(report.recommendations),
         notes=["Workspace selection preview."],
+        selection_sources=("floating voxel clusters", "sparse singleton regions"),
+        source_breakdown=(
+            CleanupSourceBreakdownEntry(
+                source="floating voxel clusters",
+                selected_sample_count=8,
+                estimated_full_scene_count=32,
+            ),
+            CleanupSourceBreakdownEntry(
+                source="disconnected clusters",
+                selected_sample_count=2,
+                estimated_full_scene_count=8,
+            ),
+            CleanupSourceBreakdownEntry(
+                source="distant outliers",
+                selected_sample_count=0,
+                estimated_full_scene_count=0,
+            ),
+            CleanupSourceBreakdownEntry(
+                source="sparse singleton regions",
+                selected_sample_count=4,
+                estimated_full_scene_count=16,
+            ),
+        ),
+        cleanup_intensity_score=54.25,
+        aggressiveness_contribution=50.0,
+        estimated_cleanup_contribution=3.0,
+        floating_cluster_contribution=0.5,
+        disconnected_cluster_contribution=0.25,
+        outlier_contribution=0.0,
+        sparse_region_contribution=0.5,
     )
     return CleanupWorkspace(
         scene_analysis_report=report,
@@ -183,9 +217,12 @@ def test_cleanup_workspace_format_distinguishes_preview_selection_from_estimate(
     assert "Scene Health:\nNeeds Review" in formatted
     assert "Quality score: 84" in formatted
     assert "Preset: Balanced" in formatted
+    assert "Cleanup intensity score: 54.25" in formatted
     assert "Preview selected splats: 4" in formatted
     assert "Estimated affected splats total: 48" in formatted
     assert "Estimated cleanup percentage: 4.80%" in formatted
+    assert "Affected splats in sample: 12" in formatted
+    assert "Selection source breakdown:" in formatted
     assert "Selection count:" not in formatted
     assert "Estimated affected splats:" not in formatted
     assert "Current Scene Type:" not in formatted
@@ -232,6 +269,34 @@ def test_cleanup_workspace_dict_includes_preset():
 
     assert serialized["cleanup_preset"] == "Balanced"
     assert serialized["current_cleanup_parameters"]["preset"] == "Balanced"
+    assert serialized["cleanup_intensity_score"] == 54.25
+    assert serialized["selection_sources"] == [
+        "floating voxel clusters",
+        "sparse singleton regions",
+    ]
+    assert serialized["source_breakdown"][0]["source"] == "floating voxel clusters"
+
+
+def test_cleanup_preset_comparison_format_highlights_non_destructive_intensity():
+    report = CleanupPresetComparisonReport(
+        scene_name="demo_scene",
+        project_path="C:/data/demo_scene.lf",
+        approximate=True,
+        analysis_reused=True,
+        entries=(
+            CleanupPresetComparisonEntry(
+                preset_name="Conservative",
+                cleanup_candidate_summary=_workspace(_report()).cleanup_candidate_summary,
+                selection_sources=("floating voxel clusters",),
+            ),
+        ),
+    )
+
+    formatted = format_cleanup_preset_comparison(report)
+
+    assert "Preset Comparison" in formatted
+    assert "Non-destructive comparison" in formatted
+    assert "Cleanup intensity score: 54.25" in formatted
 
 
 def test_quality_score_decreases_when_warnings_exist():

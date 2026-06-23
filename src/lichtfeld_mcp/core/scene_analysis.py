@@ -7,6 +7,7 @@ import logging
 import math
 from time import perf_counter
 
+from lichtfeld_mcp.core.cleanup_metrics import CleanupSourceBreakdownEntry
 from lichtfeld_mcp.core.gaussian import BoundingBox, Position3D
 from lichtfeld_mcp.core.voxel_analysis import (
     analyze_voxel_clusters,
@@ -90,6 +91,15 @@ class CleanupCandidateSummary:
     warnings: list[str]
     recommendations: list[str]
     notes: list[str]
+    selection_sources: tuple[str, ...] = ()
+    source_breakdown: tuple[CleanupSourceBreakdownEntry, ...] = ()
+    cleanup_intensity_score: float = 0.0
+    aggressiveness_contribution: float = 0.0
+    estimated_cleanup_contribution: float = 0.0
+    floating_cluster_contribution: float = 0.0
+    disconnected_cluster_contribution: float = 0.0
+    outlier_contribution: float = 0.0
+    sparse_region_contribution: float = 0.0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -116,6 +126,30 @@ class CleanupCandidateSummary:
             "warnings": list(self.warnings),
             "recommendations": list(self.recommendations),
             "notes": list(self.notes),
+            "selection_sources": list(self.selection_sources),
+            "source_breakdown": [entry.to_dict() for entry in self.source_breakdown],
+            "cleanup_intensity_score": round(self.cleanup_intensity_score, 6),
+            "aggressiveness_contribution": round(
+                self.aggressiveness_contribution,
+                6,
+            ),
+            "estimated_cleanup_contribution": round(
+                self.estimated_cleanup_contribution,
+                6,
+            ),
+            "floating_cluster_contribution": round(
+                self.floating_cluster_contribution,
+                6,
+            ),
+            "disconnected_cluster_contribution": round(
+                self.disconnected_cluster_contribution,
+                6,
+            ),
+            "outlier_contribution": round(self.outlier_contribution, 6),
+            "sparse_region_contribution": round(
+                self.sparse_region_contribution,
+                6,
+            ),
         }
 
 
@@ -622,12 +656,23 @@ def format_cleanup_candidate_summary(summary: CleanupCandidateSummary) -> str:
         f"Estimated floating splats: {_format_int(summary.estimated_floating_splats)}",
         f"Small voxel clusters: {_format_int(summary.small_voxel_clusters)}",
         f"Sparse regions: {_format_int(summary.sparse_regions)}",
+        f"Cleanup intensity score: {summary.cleanup_intensity_score:.2f}",
         "Selection preview: report only",
     ]
     if summary.approximate:
         lines.append("Mode: approximate sampled preview")
     else:
         lines.append("Mode: exact preview")
+    if summary.selection_sources:
+        lines.append(f"Selection sources: {', '.join(summary.selection_sources)}")
+    if summary.source_breakdown:
+        lines.append("Source breakdown:")
+        for entry in summary.source_breakdown:
+            lines.append(
+                "- "
+                f"{entry.source}: sample={_format_int(entry.selected_sample_count)}, "
+                f"estimated={_format_int(entry.estimated_full_scene_count)}"
+            )
 
     if summary.notes:
         lines.append("")

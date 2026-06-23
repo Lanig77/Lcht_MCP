@@ -10,10 +10,21 @@ from time import perf_counter
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter as AdapterContract
 from lichtfeld_mcp.core.cleanup_workspace import (
     CleanupParameters,
+    CleanupPresetComparisonEntry,
+    CleanupPresetComparisonReport,
     CleanupSession,
     CleanupWorkspace,
     build_scene_profile,
 )
+from lichtfeld_mcp.core.cleanup_metrics import (
+    CLEANUP_SOURCE_DISCONNECTED,
+    CLEANUP_SOURCE_FLOATING,
+    CLEANUP_SOURCE_OUTLIER,
+    CLEANUP_SOURCE_SPARSE,
+    build_cleanup_source_breakdown,
+    compute_cleanup_intensity_metrics,
+)
+from lichtfeld_mcp.core.cleanup_presets import iter_cleanup_presets
 from lichtfeld_mcp.core.cluster_analysis import (
     analyze_clusters,
     clusters_outside_largest,
@@ -174,6 +185,20 @@ class _CleanupCandidateBuild:
     selection_mask: list[bool]
     selected_indices: list[int]
     selection_sources: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _CleanupMaskMetrics:
+    selection_mask: list[bool]
+    selection_sources: tuple[str, ...]
+    source_sample_counts: dict[str, int]
+    floating_groups: int
+    disconnected_groups: int
+    estimated_floating_splats: int
+    small_voxel_clusters: int
+    estimated_small_cluster_splats: int
+    sparse_regions: int
+    estimated_sparse_splats: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,6 +442,7 @@ class LichtfeldAdapter(AdapterContract):
                 cluster_distance_threshold=0.10,
                 outlier_distance=2.5,
                 cleanup_aggressiveness=0.5,
+                preset_name="Balanced",
             ),
             sampled_gaussian_cloud=build_gaussian_cloud_from_positions(list(analysis_state.sampled_rows)),
         )
@@ -613,6 +639,116 @@ class LichtfeldAdapter(AdapterContract):
         logger.info("LichtFeld cleanup workspace preview invalidated")
         return ToolResult(
             message="Cleanup workspace preview invalidated. Run Update Preview to rebuild it."
+        )
+
+    def compare_cleanup_presets(self) -> CleanupPresetComparisonReport:
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        project_path = get_scene_path(scene)
+        scene_generation = self._read_scene_generation(scene, model)
+        current_splat_count = self._read_current_model_splat_count(model)
+        reusable_session = self._reusable_cleanup_session_for_scene(project_path)
+        valid_session = (
+            reusable_session
+            if reusable_session is not None
+            and not self._scene_generation_changed(
+                reusable_session.workspace.scene_generation,
+                scene_generation,
+            )
+            and reusable_session.workspace.scene_profile.total_splats == current_splat_count
+            else None
+        )
+        cached_state = self._last_scene_analysis
+        analysis_state: _SceneAnalysisState | None = None
+        if (
+            cached_state is not None
+            and cached_state.project_path == project_path
+            and not self._scene_generation_changed(
+                cached_state.scene_generation,
+                scene_generation,
+            )
+            and cached_state.total_splats == current_splat_count
+        ):
+            analysis_state = self._retimestamp_analysis_state(
+                cached_state,
+                scene_generation,
+            )
+        elif valid_session is not None:
+            analysis_state = self._retimestamp_analysis_state(
+                self._analysis_state_from_workspace(valid_session.workspace),
+                scene_generation,
+            )
+        if analysis_state is None:
+            raise AdapterUnavailableError(
+                "No reusable cleanup analysis is available. Run Analyze Scene or reopen Cleanup Workspace first."
+            )
+        sampled_gaussian_cloud = (
+            valid_session.sampled_gaussian_cloud
+            if valid_session is not None
+            else build_gaussian_cloud_from_positions(list(analysis_state.sampled_rows))
+        )
+        cluster_distance_threshold = (
+            valid_session.workspace.current_cleanup_parameters.cluster_distance_threshold
+            if valid_session is not None
+            else 0.10
+        )
+        logger.info(
+            "preset_comparison_started analysis_reused=%s scene_name=%s total_splats=%s",
+            True,
+            get_scene_name(scene, project_path),
+            current_splat_count,
+        )
+        entries: list[CleanupPresetComparisonEntry] = []
+        for preset in iter_cleanup_presets():
+            params = CleanupParameters(
+                voxel_size=preset.voxel_size,
+                min_voxel_cluster_size=preset.min_voxel_cluster_size,
+                cluster_distance_threshold=cluster_distance_threshold,
+                outlier_distance=preset.outlier_distance,
+                cleanup_aggressiveness=preset.cleanup_aggressiveness,
+                preset_name=preset.name,
+            )
+            build = self._build_cleanup_candidate_preview(
+                self._recompute_cleanup_analysis_from_cached_sample(
+                    analysis_state,
+                    params,
+                    scene_generation=scene_generation,
+                ),
+                params,
+                sampled_gaussian_cloud=sampled_gaussian_cloud,
+            )
+            entries.append(
+                CleanupPresetComparisonEntry(
+                    preset_name=preset.name,
+                    cleanup_candidate_summary=build.summary,
+                    selection_sources=build.selection_sources,
+                )
+            )
+            logger.info(
+                "preset_name=%s analysis_reused=%s cleanup_intensity_score=%.4f "
+                "preview_selected_splats=%s estimated_cleanup_percentage=%.6f source_breakdown=%s",
+                preset.name,
+                True,
+                build.summary.cleanup_intensity_score,
+                build.summary.affected_splats_in_sample,
+                build.summary.estimated_percentage_of_total,
+                [
+                    entry.to_dict()
+                    for entry in build.summary.source_breakdown
+                ],
+            )
+        logger.info(
+            "preset_comparison_complete analysis_reused=%s presets=%s",
+            True,
+            len(entries),
+        )
+        return CleanupPresetComparisonReport(
+            scene_name=str(analysis_state.report.scene_stats.get("scene_name", "unknown_scene")),
+            project_path=analysis_state.project_path,
+            approximate=analysis_state.approximate,
+            analysis_reused=True,
+            entries=tuple(entries),
         )
 
     def reset_cleanup_workspace(self) -> ToolResult:
@@ -2767,16 +2903,7 @@ class LichtfeldAdapter(AdapterContract):
     ) -> _CleanupCandidateBuild:
         report = analysis_state.report
         position_rows = analysis_state.sampled_rows
-        (
-            selection_mask,
-            selection_sources,
-            floating_groups,
-            estimated_floating_splats,
-            small_voxel_clusters,
-            estimated_small_cluster_splats,
-            sparse_regions,
-            estimated_sparse_splats,
-        ) = self._build_cleanup_candidate_mask(
+        metrics = self._build_cleanup_candidate_mask(
             position_rows,
             sampled_gaussian_cloud=sampled_gaussian_cloud,
             voxel_size=params.voxel_size,
@@ -2787,10 +2914,10 @@ class LichtfeldAdapter(AdapterContract):
         )
         selected_indices = [
             analysis_state.sampled_indices[index]
-            for index, selected in enumerate(selection_mask)
+            for index, selected in enumerate(metrics.selection_mask)
             if selected and index < len(analysis_state.sampled_indices)
         ]
-        affected_splats_in_sample = sum(selection_mask)
+        affected_splats_in_sample = sum(metrics.selection_mask)
         total_splats = int(report.scene_stats.get("total_splats", analysis_state.total_splats))
         analyzed_splats = int(report.scene_stats.get("analyzed_splats", len(position_rows)))
         approximate = bool(report.scene_stats.get("approximate", analysis_state.approximate))
@@ -2810,16 +2937,16 @@ class LichtfeldAdapter(AdapterContract):
         notes = ["Workspace selection preview.", "Scene remains unchanged."]
         if approximate:
             notes.append("Approximate sampled preview.")
-        if floating_groups > 0:
-            warnings.append(f"{floating_groups} floating voxel groups detected.")
+        if metrics.floating_groups > 0:
+            warnings.append(f"{metrics.floating_groups} floating voxel groups detected.")
             recommendations.append("Preview floating islands.")
-        if "disconnected clusters" in selection_sources:
+        if CLEANUP_SOURCE_DISCONNECTED in metrics.selection_sources:
             warnings.append("Disconnected cleanup clusters detected.")
             recommendations.append("Inspect disconnected cleanup clusters.")
-        if "distant outliers" in selection_sources:
+        if CLEANUP_SOURCE_OUTLIER in metrics.selection_sources:
             warnings.append("Distant outliers detected.")
             recommendations.append("Inspect distant outliers before cleanup.")
-        if "sparse singleton regions" in selection_sources:
+        if CLEANUP_SOURCE_SPARSE in metrics.selection_sources:
             recommendations.append("Scene appears sparse.")
         if estimated_affected_splats_total <= 0:
             recommendations.append("No cleanup required.")
@@ -2831,6 +2958,21 @@ class LichtfeldAdapter(AdapterContract):
                 recommendations.append(
                     f"Estimated cleanup extrapolated to full scene: {estimated_percentage_of_total * 100.0:.1f}%"
                 )
+        source_breakdown = build_cleanup_source_breakdown(
+            source_sample_counts=metrics.source_sample_counts,
+            analyzed_splats=analyzed_splats,
+            total_splats=total_splats,
+            approximate=approximate,
+        )
+        intensity_metrics = compute_cleanup_intensity_metrics(
+            cleanup_aggressiveness=params.cleanup_aggressiveness,
+            estimated_cleanup_percentage=estimated_percentage_of_total,
+            total_splats=total_splats,
+            source_breakdown=source_breakdown,
+            floating_group_count=metrics.floating_groups,
+            disconnected_group_count=metrics.disconnected_groups,
+            sparse_region_count=metrics.sparse_regions,
+        )
         summary = CleanupCandidateSummary(
             scene_name=str(report.scene_stats.get("scene_name", "unknown_scene")),
             project_path=str(report.scene_stats.get("project_path", analysis_state.project_path)),
@@ -2841,30 +2983,41 @@ class LichtfeldAdapter(AdapterContract):
             approximate=approximate,
             report_only=True,
             candidate_group_count=(
-                floating_groups
-                + sparse_regions
-                + (1 if "distant outliers" in selection_sources else 0)
+                metrics.floating_groups
+                + metrics.sparse_regions
+                + (1 if CLEANUP_SOURCE_OUTLIER in metrics.selection_sources else 0)
             ),
             affected_splats_in_sample=affected_splats_in_sample,
             estimated_affected_splats_total=estimated_affected_splats_total,
             affected_percentage_of_sample=affected_percentage_of_sample,
             estimated_percentage_of_total=estimated_percentage_of_total,
             estimated_affected_splats=estimated_affected_splats_total,
-            floating_voxel_groups=floating_groups,
-            estimated_floating_splats=estimated_floating_splats,
-            small_voxel_clusters=small_voxel_clusters,
-            estimated_small_cluster_splats=estimated_small_cluster_splats,
-            sparse_regions=sparse_regions,
-            estimated_sparse_splats=estimated_sparse_splats,
+            floating_voxel_groups=metrics.floating_groups,
+            estimated_floating_splats=metrics.estimated_floating_splats,
+            small_voxel_clusters=metrics.small_voxel_clusters,
+            estimated_small_cluster_splats=metrics.estimated_small_cluster_splats,
+            sparse_regions=metrics.sparse_regions,
+            estimated_sparse_splats=metrics.estimated_sparse_splats,
             warnings=warnings,
             recommendations=recommendations,
             notes=notes,
+            selection_sources=metrics.selection_sources,
+            source_breakdown=source_breakdown,
+            cleanup_intensity_score=intensity_metrics.cleanup_intensity_score,
+            aggressiveness_contribution=intensity_metrics.aggressiveness_contribution,
+            estimated_cleanup_contribution=intensity_metrics.estimated_cleanup_contribution,
+            floating_cluster_contribution=intensity_metrics.floating_cluster_contribution,
+            disconnected_cluster_contribution=(
+                intensity_metrics.disconnected_cluster_contribution
+            ),
+            outlier_contribution=intensity_metrics.outlier_contribution,
+            sparse_region_contribution=intensity_metrics.sparse_region_contribution,
         )
         return _CleanupCandidateBuild(
             summary=summary,
-            selection_mask=selection_mask,
+            selection_mask=metrics.selection_mask,
             selected_indices=selected_indices,
-            selection_sources=selection_sources,
+            selection_sources=metrics.selection_sources,
         )
 
     @staticmethod
@@ -2877,9 +3030,20 @@ class LichtfeldAdapter(AdapterContract):
         cluster_distance_threshold: float,
         outlier_distance: float,
         cleanup_aggressiveness: float,
-    ) -> tuple[list[bool], tuple[str, ...], int, int, int, int, int, int]:
+    ) -> _CleanupMaskMetrics:
         if not position_rows:
-            return [], (), 0, 0, 0, 0, 0, 0
+            return _CleanupMaskMetrics(
+                selection_mask=[],
+                selection_sources=(),
+                source_sample_counts={},
+                floating_groups=0,
+                disconnected_groups=0,
+                estimated_floating_splats=0,
+                small_voxel_clusters=0,
+                estimated_small_cluster_splats=0,
+                sparse_regions=0,
+                estimated_sparse_splats=0,
+            )
 
         voxel_counts: dict[tuple[int, int, int], int] = {}
         voxel_keys: list[tuple[int, int, int]] = []
@@ -2894,7 +3058,18 @@ class LichtfeldAdapter(AdapterContract):
 
         components = LichtfeldAdapter._collect_voxel_components(set(voxel_counts))
         if not components:
-            return [False] * len(position_rows), (), 0, 0, 0, 0, 0, 0
+            return _CleanupMaskMetrics(
+                selection_mask=[False] * len(position_rows),
+                selection_sources=(),
+                source_sample_counts={},
+                floating_groups=0,
+                disconnected_groups=0,
+                estimated_floating_splats=0,
+                small_voxel_clusters=0,
+                estimated_small_cluster_splats=0,
+                sparse_regions=0,
+                estimated_sparse_splats=0,
+            )
 
         largest_component = max(
             components,
@@ -2948,15 +3123,21 @@ class LichtfeldAdapter(AdapterContract):
             )
             for index, key in enumerate(voxel_keys)
         ]
+        source_sample_counts = {
+            CLEANUP_SOURCE_FLOATING: sum(1 for key in voxel_keys if key in floating_keys),
+            CLEANUP_SOURCE_DISCONNECTED: len(disconnected_cluster_indices),
+            CLEANUP_SOURCE_OUTLIER: sum(1 for selected in distant_flags if selected),
+            CLEANUP_SOURCE_SPARSE: sum(1 for selected in sparse_selected_flags if selected),
+        }
         sources: list[str] = []
         if floating_keys:
-            sources.append("floating voxel clusters")
+            sources.append(CLEANUP_SOURCE_FLOATING)
         if disconnected_cluster_indices:
-            sources.append("disconnected clusters")
+            sources.append(CLEANUP_SOURCE_DISCONNECTED)
         if any(distant_flags):
-            sources.append("distant outliers")
+            sources.append(CLEANUP_SOURCE_OUTLIER)
         if any(sparse_selected_flags):
-            sources.append("sparse singleton regions")
+            sources.append(CLEANUP_SOURCE_SPARSE)
         small_voxel_clusters = sum(
             1
             for keys in floating_components
@@ -2985,15 +3166,17 @@ class LichtfeldAdapter(AdapterContract):
         estimated_sparse_splats = sum(
             1 for selected in sparse_selected_flags if selected
         )
-        return (
-            selection_mask,
-            tuple(dict.fromkeys(sources)),
-            len(floating_components),
-            estimated_floating_splats,
-            small_voxel_clusters,
-            estimated_small_cluster_splats,
-            sparse_regions,
-            estimated_sparse_splats,
+        return _CleanupMaskMetrics(
+            selection_mask=selection_mask,
+            selection_sources=tuple(dict.fromkeys(sources)),
+            source_sample_counts=source_sample_counts,
+            floating_groups=len(floating_components),
+            disconnected_groups=len(disconnected_clusters),
+            estimated_floating_splats=estimated_floating_splats,
+            small_voxel_clusters=small_voxel_clusters,
+            estimated_small_cluster_splats=estimated_small_cluster_splats,
+            sparse_regions=sparse_regions,
+            estimated_sparse_splats=estimated_sparse_splats,
         )
 
     @staticmethod

@@ -27,7 +27,10 @@ from lichtfeld_mcp.schemas.common import (
 )
 
 if TYPE_CHECKING:
-    from lichtfeld_mcp.core.cleanup_workspace import CleanupWorkspace
+    from lichtfeld_mcp.core.cleanup_workspace import (
+        CleanupPresetComparisonReport,
+        CleanupWorkspace,
+    )
     from lichtfeld_mcp.core.scene_analysis import CleanupCandidateSummary, SceneAnalysisReport
 
 
@@ -94,6 +97,9 @@ class LichtfeldAdapter(ABC):
 
     @abstractmethod
     def invalidate_cleanup_workspace_preview(self) -> ToolResult: ...
+
+    @abstractmethod
+    def compare_cleanup_presets(self) -> CleanupPresetComparisonReport: ...
 
     @abstractmethod
     def reset_cleanup_workspace(self) -> ToolResult: ...

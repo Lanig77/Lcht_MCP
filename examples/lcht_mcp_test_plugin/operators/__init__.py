@@ -16,6 +16,10 @@ from .open_cleanup_workspace import (
     LCHTMCP_OT_open_cleanup_workspace,
     OPEN_CLEANUP_WORKSPACE_OPERATOR_ID,
 )
+from .compare_cleanup_presets import (
+    COMPARE_CLEANUP_PRESETS_OPERATOR_ID,
+    LCHTMCP_OT_compare_cleanup_presets,
+)
 from .update_cleanup_workspace import (
     LCHTMCP_OT_update_cleanup_workspace,
     UPDATE_CLEANUP_WORKSPACE_OPERATOR_ID,
@@ -146,6 +150,7 @@ __all__ = [
     "ANALYZE_VOXEL_CLUSTERS_OPERATOR_ID",
     "PREVIEW_CLEANUP_CANDIDATES_OPERATOR_ID",
     "OPEN_CLEANUP_WORKSPACE_OPERATOR_ID",
+    "COMPARE_CLEANUP_PRESETS_OPERATOR_ID",
     "UPDATE_CLEANUP_WORKSPACE_OPERATOR_ID",
     "RESET_CLEANUP_WORKSPACE_OPERATOR_ID",
     "SOFT_DELETE_CLEANUP_SELECTION_OPERATOR_ID",
@@ -197,6 +202,7 @@ __all__ = [
     "LCHTMCP_OT_analyze_voxel_clusters",
     "LCHTMCP_OT_preview_cleanup_candidates",
     "LCHTMCP_OT_open_cleanup_workspace",
+    "LCHTMCP_OT_compare_cleanup_presets",
     "LCHTMCP_OT_update_cleanup_workspace",
     "LCHTMCP_OT_reset_cleanup_workspace",
     "LCHTMCP_OT_soft_delete_cleanup_selection",
