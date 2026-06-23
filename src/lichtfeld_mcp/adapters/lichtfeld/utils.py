@@ -102,12 +102,25 @@ def coerce_boolean_mask(value: object) -> list[bool]:
     return [bool(item) for item in items]
 
 
-def _tensor_template_candidates(scene: object | None, model: object | None) -> list[object]:
+def _tensor_template_candidates(
+    scene: object | None,
+    model: object | None,
+    *,
+    prefer_model_templates: bool = False,
+) -> list[object]:
     candidates: list[object] = []
-    for owner, names in (
-        (scene, ("selection_mask", "get_selection_mask")),
-        (model, ("deleted", "get_deleted_mask", "has_deleted_mask")),
-    ):
+    owner_specs = (
+        (
+            (model, ("deleted", "get_deleted_mask", "has_deleted_mask")),
+            (scene, ("selection_mask", "get_selection_mask")),
+        )
+        if prefer_model_templates
+        else (
+            (scene, ("selection_mask", "get_selection_mask")),
+            (model, ("deleted", "get_deleted_mask", "has_deleted_mask")),
+        )
+    )
+    for owner, names in owner_specs:
         if owner is None:
             continue
         for attribute_name in names:
@@ -199,7 +212,14 @@ def build_empty_lf_selection_mask(
     scene: object | None = None,
     model: object | None = None,
 ) -> object:
-    for candidate in _tensor_template_candidates(scene, model):
+    # After apply_deleted(), scene.selection_mask can already be invalidated while
+    # model.deleted has the current compacted size. Prefer the model-owned mask
+    # template here so clearing selection does not clone a stale scene tensor.
+    for candidate in _tensor_template_candidates(
+        scene,
+        model,
+        prefer_model_templates=True,
+    ):
         cloned = _clone_tensor_candidate(candidate)
         if cloned is None:
             continue

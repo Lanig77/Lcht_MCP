@@ -163,6 +163,22 @@ class FakeLfTensor:
         return len(self._values)
 
 
+class WarningCloneTensor(FakeLfTensor):
+    def __init__(self, values=None, *, data=None, warnings=None, valid: bool = True):
+        super().__init__(values=values, data=data)
+        self._warnings = [] if warnings is None else warnings
+        self._valid = valid
+
+    def clone(self):
+        if not self._valid:
+            self._warnings.append("Cannot clone invalid tensor")
+            return WarningCloneTensor([], warnings=self._warnings, valid=False)
+        return WarningCloneTensor(self._values, warnings=self._warnings, valid=self._valid)
+
+    def copy(self):
+        return self.clone()
+
+
 class NonIterableSelectionMask:
     def detach(self):
         return self
@@ -446,6 +462,39 @@ class SceneApplyDeletedScene(FakeScene):
 
     def invalidate_cache(self):
         self.invalidate_cache_calls += 1
+
+
+class InvalidSelectionCloneModel(FakeModel):
+    def __init__(self, means, opacity=None, colors=None, *, warnings: list[str]):
+        super().__init__(means, opacity=opacity, colors=colors)
+        self._warnings = warnings
+        self.deleted = WarningCloneTensor(
+            [False] * len(self._means_values),
+            warnings=self._warnings,
+        )
+
+    def apply_deleted(self):
+        super().apply_deleted()
+        self.deleted = WarningCloneTensor(
+            [False] * len(self._means_values),
+            warnings=self._warnings,
+        )
+
+
+class InvalidSelectionCloneScene(FakeScene):
+    def __init__(self, model, *, warnings: list[str], name="castle_demo", path="C:/data/castle_demo.lf"):
+        self.runtime_warnings = warnings
+        super().__init__(model, name=name, path=path)
+
+    def apply_deleted(self):
+        self._model.apply_deleted()
+        self.selection_mask = WarningCloneTensor(
+            [False] * len(self._model._means_values),
+            warnings=self.runtime_warnings,
+            valid=False,
+        )
+        self.last_selection_mask = [False] * len(self._model._means_values)
+        return 0
 
 
 def _bump_preview_generation_on_notify_changed(scene: FakeScene) -> None:
@@ -3289,6 +3338,11 @@ def test_apply_cleanup_workspace_deleted_uses_scene_apply_deleted_to_clear_rende
     adapter.soft_delete_cleanup_workspace_selection()
 
     applied = adapter.apply_cleanup_workspace_deleted()
+
+    assert applied.ok is True
+    assert len(fake_scene.selection_mask) == 2
+    assert list(fake_scene.selection_mask) == [False, False]
+
     reopened = adapter.open_cleanup_workspace(
         voxel_size=0.01,
         min_voxel_cluster_size=1,
@@ -3306,6 +3360,70 @@ def test_apply_cleanup_workspace_deleted_uses_scene_apply_deleted_to_clear_rende
     assert len(fake_scene.renderer.selection_tensor) == 2
     assert isinstance(fake_scene.rendering_pipeline.selection_tensor, FakeLfTensor)
     assert len(fake_scene.rendering_pipeline.selection_tensor) == 2
+    assert reopened.native_selection_mask_size == 2
+    assert deleted_again.ok is True
+
+
+def test_apply_cleanup_workspace_deleted_resets_selection_without_cloning_invalid_scene_mask(
+    monkeypatch,
+):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    runtime_warnings: list[str] = []
+    fake_scene = InvalidSelectionCloneScene(
+        InvalidSelectionCloneModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                    [10.0, 0.0, 0.0],
+                ]
+            ),
+            opacity=FakeTorchTensor([0.1, 0.2, 0.3, 0.4]),
+            warnings=runtime_warnings,
+        ),
+        warnings=runtime_warnings,
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        max_splats=10,
+        abort_if_above_limit=False,
+    )
+    adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+    adapter.soft_delete_cleanup_workspace_selection()
+
+    result = adapter.apply_cleanup_workspace_deleted()
+    reopened = adapter.open_cleanup_workspace(
+        voxel_size=0.01,
+        min_voxel_cluster_size=1,
+        outlier_distance=0.05,
+        cleanup_aggressiveness=0.5,
+    )
+    deleted_again = adapter.soft_delete_cleanup_workspace_selection()
+
+    assert result.ok is True
     assert reopened.native_selection_mask_size == 2
     assert deleted_again.ok is True
 
