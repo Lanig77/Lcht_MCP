@@ -133,6 +133,15 @@ For native selection/runtime debugging, the panel also exposes:
 - `Diagnose Native Selection API`
 - `Diagnose Apply Deleted Selection Lifetime`
 
+For cleanup category visibility, the panel also exposes:
+
+- `Show Floating Clusters`
+- `Show Disconnected Clusters`
+- `Show Distant Outliers`
+- `Show Sparse Regions`
+- `Preview Selected Category`
+- `Preview All Cleanup Categories`
+
 The panel button invokes the registered operator through:
 
 `lfs_plugins.lcht_mcp_test_plugin.operators.run_test.LCHTMCP_OT_run_test`
@@ -240,6 +249,40 @@ Recommended progression:
 1. Run with `ENABLE_SAFE_DELETE=False` and `CONFIRM_SAFE_DELETE=False`
 2. Then run with `ENABLE_SAFE_DELETE=True` and `CONFIRM_SAFE_DELETE=False`
 3. Only on a duplicated PLY, run with both `ENABLE_SAFE_DELETE=True` and `CONFIRM_SAFE_DELETE=True`
+
+## Cleanup Category Preview
+
+`Cleanup Workspace` and `Compare Cleanup Presets` stay non-destructive.
+
+`Preview Selected Category` and `Preview All Cleanup Categories` also stay
+non-destructive. They reuse the current cleanup workspace sample and only update
+native selection.
+
+The current category model is:
+
+- `FLOATING_VOXEL_CLUSTERS`
+- `DISCONNECTED_CLUSTERS`
+- `DISTANT_OUTLIERS`
+- `SPARSE_SINGLETON_REGIONS`
+
+Recommended workflow:
+
+1. Run `Analyze Scene`
+2. Open `Cleanup Workspace`
+3. Optionally run `Compare Cleanup Presets`
+4. Toggle one or more cleanup categories
+5. Run `Preview Selected Category` or `Preview All Cleanup Categories`
+
+Current limitation:
+
+- the preview is category-isolated native selection only
+- the plugin does not yet render per-category colors in the viewport
+
+Future path:
+
+- keep the same workspace category data
+- swap the native selection-only visualization for a color-coded overlay once
+  the LichtFeld runtime exposes a stable multi-color API
 
 ## Diagnose Apply Deleted Selection Lifetime
 

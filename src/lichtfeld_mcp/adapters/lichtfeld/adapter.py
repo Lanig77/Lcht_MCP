@@ -9,20 +9,30 @@ from time import perf_counter
 
 from lichtfeld_mcp.adapters.base import LichtfeldAdapter as AdapterContract
 from lichtfeld_mcp.core.cleanup_workspace import (
+    CleanupCategoryPreview,
     CleanupParameters,
     CleanupPresetComparisonEntry,
     CleanupPresetComparisonReport,
     CleanupSession,
     CleanupWorkspace,
+    active_cleanup_category_previews,
+    build_cleanup_category_previews,
     build_scene_profile,
 )
 from lichtfeld_mcp.core.cleanup_metrics import (
+    CLEANUP_CATEGORY_DISCONNECTED,
+    CLEANUP_CATEGORY_FLOATING,
+    CLEANUP_CATEGORY_OUTLIER,
+    CLEANUP_CATEGORY_SPARSE,
     CLEANUP_SOURCE_DISCONNECTED,
     CLEANUP_SOURCE_FLOATING,
     CLEANUP_SOURCE_OUTLIER,
     CLEANUP_SOURCE_SPARSE,
     build_cleanup_source_breakdown,
+    cleanup_category_label,
     compute_cleanup_intensity_metrics,
+    normalize_cleanup_categories,
+    normalize_cleanup_category,
 )
 from lichtfeld_mcp.core.cleanup_presets import iter_cleanup_presets
 from lichtfeld_mcp.core.cluster_analysis import (
@@ -185,6 +195,7 @@ class _CleanupCandidateBuild:
     selection_mask: list[bool]
     selected_indices: list[int]
     selection_sources: tuple[str, ...]
+    cleanup_category_previews: tuple[CleanupCategoryPreview, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +203,8 @@ class _CleanupMaskMetrics:
     selection_mask: list[bool]
     selection_sources: tuple[str, ...]
     source_sample_counts: dict[str, int]
+    category_sample_indices: dict[str, tuple[int, ...]]
+    category_preview_selected_indices: dict[str, tuple[int, ...]]
     floating_groups: int
     disconnected_groups: int
     estimated_floating_splats: int
@@ -749,6 +762,95 @@ class LichtfeldAdapter(AdapterContract):
             approximate=analysis_state.approximate,
             analysis_reused=True,
             entries=tuple(entries),
+        )
+
+    def set_active_cleanup_categories(
+        self,
+        categories: tuple[str, ...] | list[str],
+        *,
+        selected_category: str | None = None,
+    ) -> CleanupWorkspace:
+        session = self._require_cleanup_session()
+        workspace = self._require_current_cleanup_workspace(session.workspace)
+        normalized_categories = normalize_cleanup_categories(tuple(categories))
+        normalized_selected_category = None
+        if selected_category is not None:
+            normalized_selected_category = normalize_cleanup_category(selected_category)
+            if normalized_selected_category not in normalized_categories:
+                normalized_selected_category = None
+        updated_workspace = replace(
+            workspace,
+            active_cleanup_categories=normalized_categories,
+            selected_cleanup_category=normalized_selected_category,
+        )
+        session.workspace = updated_workspace
+        return updated_workspace
+
+    def preview_cleanup_category(self, category: str) -> CleanupWorkspace:
+        session = self._require_cleanup_session()
+        workspace = self._require_current_cleanup_workspace(session.workspace)
+        normalized_category = normalize_cleanup_category(category)
+        category_preview = self._require_workspace_category_preview(
+            workspace,
+            normalized_category,
+        )
+        updated_workspace = self._preview_cleanup_workspace_categories(
+            workspace,
+            category_previews=(category_preview,),
+            selected_cleanup_category=normalized_category,
+            category_preview_mode="single",
+        )
+        session.workspace = updated_workspace
+        return updated_workspace
+
+    def preview_active_cleanup_categories(self) -> CleanupWorkspace:
+        session = self._require_cleanup_session()
+        workspace = self._require_current_cleanup_workspace(session.workspace)
+        category_previews = active_cleanup_category_previews(workspace)
+        updated_workspace = self._preview_cleanup_workspace_categories(
+            workspace,
+            category_previews=category_previews,
+            selected_cleanup_category=workspace.selected_cleanup_category,
+            category_preview_mode="active",
+        )
+        session.workspace = updated_workspace
+        return updated_workspace
+
+    def clear_cleanup_category_preview(self) -> ToolResult:
+        session = self._cleanup_workspace_session
+        if session is None:
+            return ToolResult(message="Cleanup category preview was already inactive.")
+        workspace = self._require_current_cleanup_workspace(session.workspace)
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        self._clear_native_selection_preview(scene, model, lichtfeld_module)
+        session.workspace = replace(
+            workspace,
+            candidate_selection_mask=tuple(False for _ in workspace.candidate_selection_mask),
+            preview_selected_indices=(),
+            preview_selection_active=False,
+            native_selection_handle=None,
+            selected_count=0,
+            selection_percentage=0.0,
+            selection_source="no active cleanup category preview",
+            selection_mode="replace",
+            selected_cleanup_category=None,
+            category_preview_mode="cleared",
+            native_selection_mask=None,
+            native_selection_mask_size=None,
+        )
+        logger.info(
+            "category_preview_complete category=%s preview_selected_splats=%s "
+            "estimated_full_scene_splats=%s active_categories=%s selection_update_time=%.6f",
+            "CLEARED",
+            0,
+            0,
+            list(workspace.active_cleanup_categories),
+            0.0,
+        )
+        return ToolResult(
+            message="Cleanup category preview cleared. Run Preview Selected Category or Preview All Cleanup Categories to rebuild it."
         )
 
     def reset_cleanup_workspace(self) -> ToolResult:
@@ -1984,6 +2086,8 @@ class LichtfeldAdapter(AdapterContract):
             selection_percentage=0.0,
             selection_source="no active cleanup preview",
             selection_mode="replace",
+            selected_cleanup_category=None,
+            category_preview_mode="workspace",
             native_selection_mask=None,
             native_selection_mask_size=None,
             workspace_state=workspace_state,
@@ -2377,6 +2481,52 @@ class LichtfeldAdapter(AdapterContract):
             )
         return workspace
 
+    def _require_current_cleanup_workspace(self, workspace: CleanupWorkspace) -> CleanupWorkspace:
+        workspace = self._ensure_workspace_scene_matches(workspace)
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        current_scene_generation = self._read_scene_generation(scene, model)
+        current_splat_count = self._read_current_model_splat_count(model)
+        if self._scene_generation_changed(workspace.scene_generation, current_scene_generation):
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="workspace_scene_generation_changed",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_splat_count,
+            )
+            self._invalidate_cleanup_workspace()
+            raise AdapterUnavailableError(
+                "Cleanup workspace no longer matches the current scene generation. Open Cleanup Workspace again."
+            )
+        if workspace.scene_profile.total_splats != current_splat_count:
+            self._log_cleanup_workspace_validation_failure(
+                workspace,
+                invalidation_reason="workspace_scene_splat_count_changed",
+                current_generation=current_scene_generation,
+                current_splat_count=current_splat_count,
+                current_model_splat_count=current_splat_count,
+            )
+            self._invalidate_cleanup_workspace()
+            raise AdapterUnavailableError(
+                "Cleanup workspace no longer matches the current scene splat count. Open Cleanup Workspace again."
+            )
+        return workspace
+
+    @staticmethod
+    def _require_workspace_category_preview(
+        workspace: CleanupWorkspace,
+        category: str,
+    ) -> CleanupCategoryPreview:
+        normalized_category = normalize_cleanup_category(category)
+        for entry in workspace.cleanup_category_previews:
+            if entry.category == normalized_category:
+                return entry
+        raise AdapterUnavailableError(
+            f"Cleanup category preview is unavailable for {normalized_category!r}."
+        )
+
     @staticmethod
     def _analysis_state_from_workspace(workspace: CleanupWorkspace) -> _SceneAnalysisState:
         return _SceneAnalysisState(
@@ -2643,6 +2793,11 @@ class LichtfeldAdapter(AdapterContract):
             self._selection.read_native_selection_mask(scene)
         )
         native_selection_mask_size = self._native_mask_size(native_selection_mask)
+        active_categories = tuple(
+            entry.category
+            for entry in build.cleanup_category_previews
+            if entry.selected_sample_count > 0
+        )
 
         selection_source = ", ".join(build.selection_sources) or "no cleanup candidates"
         selection_percentage = (
@@ -2672,6 +2827,10 @@ class LichtfeldAdapter(AdapterContract):
             selection_update_time=selection_update_time,
             total_workspace_update_time=total_workspace_update_time,
             estimated_sample_reuse=1.0 if sample_reused else 0.0,
+            cleanup_category_previews=build.cleanup_category_previews,
+            active_cleanup_categories=active_categories,
+            selected_cleanup_category=None,
+            category_preview_mode="workspace",
             native_selection_mask=native_selection_mask,
             native_selection_mask_size=native_selection_mask_size,
             scene_generation=analysis_state.scene_generation,
@@ -2697,6 +2856,103 @@ class LichtfeldAdapter(AdapterContract):
             workspace=workspace,
             sampled_gaussian_cloud=sampled_gaussian_cloud,
         )
+
+    def _preview_cleanup_workspace_categories(
+        self,
+        workspace: CleanupWorkspace,
+        *,
+        category_previews: tuple[CleanupCategoryPreview, ...],
+        selected_cleanup_category: str | None,
+        category_preview_mode: str,
+    ) -> CleanupWorkspace:
+        lichtfeld_module = load_lichtfeld()
+        scene = require_active_scene(lichtfeld_module)
+        model = require_combined_model(scene)
+        workspace = self._require_current_cleanup_workspace(workspace)
+        selection_mask = [
+            False for _ in range(len(workspace.sampled_rows))
+        ]
+        preview_selected_indices: list[int] = []
+        for entry in category_previews:
+            for sample_index in entry.sample_indices:
+                if 0 <= sample_index < len(selection_mask):
+                    selection_mask[sample_index] = True
+            preview_selected_indices.extend(entry.preview_selected_indices)
+        preview_selected_indices = sorted(set(preview_selected_indices))
+        preview_selected_splats = len(preview_selected_indices)
+        estimated_full_scene_splats = sum(
+            entry.estimated_full_scene_count for entry in category_previews
+        )
+        category_label = (
+            cleanup_category_label(selected_cleanup_category)
+            if selected_cleanup_category is not None
+            else "ALL_ACTIVE"
+        )
+        logger.info(
+            "category_preview_started category=%s preview_selected_splats=%s "
+            "estimated_full_scene_splats=%s active_categories=%s",
+            category_label,
+            preview_selected_splats,
+            estimated_full_scene_splats,
+            list(workspace.active_cleanup_categories),
+        )
+        selection_start = perf_counter()
+        if workspace.approximate:
+            self._apply_cleanup_candidate_selection_indices_only(
+                scene,
+                lichtfeld_module,
+                preview_selected_indices,
+            )
+        else:
+            self._apply_cleanup_candidate_selection(
+                scene,
+                model,
+                lichtfeld_module,
+                selection_mask,
+            )
+        selection_update_time = _elapsed_seconds(selection_start)
+        native_selection_mask = self._copy_native_selection_mask(
+            self._selection.read_native_selection_mask(scene)
+        )
+        native_selection_mask_size = self._native_mask_size(native_selection_mask)
+        updated_workspace = replace(
+            workspace,
+            candidate_selection_mask=tuple(selection_mask),
+            preview_selected_indices=tuple(preview_selected_indices),
+            preview_selection_active=preview_selected_splats > 0,
+            native_selection_handle=(
+                None
+                if preview_selected_splats <= 0
+                else f"{workspace.scene_profile.project_path}#cleanup-category-preview"
+            ),
+            selected_count=preview_selected_splats,
+            selection_percentage=(
+                0.0
+                if workspace.scene_profile.total_splats <= 0
+                else preview_selected_splats / workspace.scene_profile.total_splats
+            ),
+            selection_mode="replace",
+            selection_source=(
+                ", ".join(entry.label for entry in category_previews)
+                if category_previews
+                else "no active cleanup category preview"
+            ),
+            selected_cleanup_category=selected_cleanup_category,
+            category_preview_mode=category_preview_mode,
+            native_selection_mask=native_selection_mask,
+            native_selection_mask_size=native_selection_mask_size,
+            selection_update_time=selection_update_time,
+        )
+        logger.info(
+            "category_preview_complete category=%s preview_selected_splats=%s "
+            "estimated_full_scene_splats=%s active_categories=%s selection_update_time=%.6f",
+            category_label,
+            preview_selected_splats,
+            estimated_full_scene_splats,
+            list(updated_workspace.active_cleanup_categories),
+            selection_update_time,
+        )
+        return updated_workspace
 
     def _clear_native_selection_preview(
         self,
@@ -2917,6 +3173,14 @@ class LichtfeldAdapter(AdapterContract):
             for index, selected in enumerate(metrics.selection_mask)
             if selected and index < len(analysis_state.sampled_indices)
         ]
+        category_preview_selected_indices = {
+            category: tuple(
+                analysis_state.sampled_indices[index]
+                for index in sample_indices
+                if index < len(analysis_state.sampled_indices)
+            )
+            for category, sample_indices in metrics.category_sample_indices.items()
+        }
         affected_splats_in_sample = sum(metrics.selection_mask)
         total_splats = int(report.scene_stats.get("total_splats", analysis_state.total_splats))
         analyzed_splats = int(report.scene_stats.get("analyzed_splats", len(position_rows)))
@@ -2973,6 +3237,27 @@ class LichtfeldAdapter(AdapterContract):
             disconnected_group_count=metrics.disconnected_groups,
             sparse_region_count=metrics.sparse_regions,
         )
+        category_scores = {
+            CLEANUP_CATEGORY_FLOATING: intensity_metrics.floating_cluster_contribution,
+            CLEANUP_CATEGORY_DISCONNECTED: intensity_metrics.disconnected_cluster_contribution,
+            CLEANUP_CATEGORY_OUTLIER: intensity_metrics.outlier_contribution,
+            CLEANUP_CATEGORY_SPARSE: intensity_metrics.sparse_region_contribution,
+        }
+        category_reasons = {
+            CLEANUP_CATEGORY_FLOATING: "Outside the dominant voxel component.",
+            CLEANUP_CATEGORY_DISCONNECTED: "Outside the dominant distance-based cluster.",
+            CLEANUP_CATEGORY_OUTLIER: "Beyond the robust scene bounds.",
+            CLEANUP_CATEGORY_SPARSE: "Inside sparse singleton voxel regions.",
+        }
+        category_previews = build_cleanup_category_previews(
+            category_sample_indices=metrics.category_sample_indices,
+            category_preview_selected_indices=category_preview_selected_indices,
+            analyzed_splats=analyzed_splats,
+            total_splats=total_splats,
+            approximate=approximate,
+            category_scores=category_scores,
+            category_reasons=category_reasons,
+        )
         summary = CleanupCandidateSummary(
             scene_name=str(report.scene_stats.get("scene_name", "unknown_scene")),
             project_path=str(report.scene_stats.get("project_path", analysis_state.project_path)),
@@ -3018,6 +3303,7 @@ class LichtfeldAdapter(AdapterContract):
             selection_mask=metrics.selection_mask,
             selected_indices=selected_indices,
             selection_sources=metrics.selection_sources,
+            cleanup_category_previews=category_previews,
         )
 
     @staticmethod
@@ -3036,6 +3322,8 @@ class LichtfeldAdapter(AdapterContract):
                 selection_mask=[],
                 selection_sources=(),
                 source_sample_counts={},
+                category_sample_indices={},
+                category_preview_selected_indices={},
                 floating_groups=0,
                 disconnected_groups=0,
                 estimated_floating_splats=0,
@@ -3062,6 +3350,8 @@ class LichtfeldAdapter(AdapterContract):
                 selection_mask=[False] * len(position_rows),
                 selection_sources=(),
                 source_sample_counts={},
+                category_sample_indices={},
+                category_preview_selected_indices={},
                 floating_groups=0,
                 disconnected_groups=0,
                 estimated_floating_splats=0,
@@ -3114,15 +3404,27 @@ class LichtfeldAdapter(AdapterContract):
             outlier_distance=outlier_distance,
             cleanup_aggressiveness=cleanup_aggressiveness,
         )
-        selection_mask = [
-            (
-                key in floating_keys
-                or index in disconnected_cluster_indices
-                or sparse_selected_flags[index]
-                or distant_flags[index]
-            )
-            for index, key in enumerate(voxel_keys)
-        ]
+        category_sample_indices = {
+            CLEANUP_CATEGORY_FLOATING: [],
+            CLEANUP_CATEGORY_DISCONNECTED: [],
+            CLEANUP_CATEGORY_OUTLIER: [],
+            CLEANUP_CATEGORY_SPARSE: [],
+        }
+        selection_mask = [False] * len(position_rows)
+        for index, key in enumerate(voxel_keys):
+            category: str | None = None
+            if distant_flags[index]:
+                category = CLEANUP_CATEGORY_OUTLIER
+            elif index in disconnected_cluster_indices:
+                category = CLEANUP_CATEGORY_DISCONNECTED
+            elif key in floating_keys:
+                category = CLEANUP_CATEGORY_FLOATING
+            elif sparse_selected_flags[index]:
+                category = CLEANUP_CATEGORY_SPARSE
+            if category is None:
+                continue
+            category_sample_indices[category].append(index)
+            selection_mask[index] = True
         source_sample_counts = {
             CLEANUP_SOURCE_FLOATING: sum(1 for key in voxel_keys if key in floating_keys),
             CLEANUP_SOURCE_DISCONNECTED: len(disconnected_cluster_indices),
@@ -3170,6 +3472,14 @@ class LichtfeldAdapter(AdapterContract):
             selection_mask=selection_mask,
             selection_sources=tuple(dict.fromkeys(sources)),
             source_sample_counts=source_sample_counts,
+            category_sample_indices={
+                category: tuple(indices)
+                for category, indices in category_sample_indices.items()
+            },
+            category_preview_selected_indices={
+                category: tuple(indices)
+                for category, indices in category_sample_indices.items()
+            },
             floating_groups=len(floating_components),
             disconnected_groups=len(disconnected_clusters),
             estimated_floating_splats=estimated_floating_splats,

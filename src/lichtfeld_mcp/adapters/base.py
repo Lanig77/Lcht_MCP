@@ -102,6 +102,14 @@ class LichtfeldAdapter(ABC):
     def compare_cleanup_presets(self) -> CleanupPresetComparisonReport: ...
 
     @abstractmethod
+    def set_active_cleanup_categories(
+        self,
+        categories: tuple[str, ...] | list[str],
+        *,
+        selected_category: str | None = None,
+    ) -> CleanupWorkspace: ...
+
+    @abstractmethod
     def preview_cleanup_category(self, category: str) -> CleanupWorkspace: ...
 
     @abstractmethod

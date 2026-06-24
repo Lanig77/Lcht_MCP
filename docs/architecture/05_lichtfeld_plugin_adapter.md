@@ -155,6 +155,33 @@ Each update logs:
 This keeps parameter iteration interactive on large scenes while preserving a
 single source of truth for later soft delete, restore, and permanent apply flows.
 
+### Cleanup category preview
+
+The workspace now also stores category-isolated preview data for the current
+sampled cleanup analysis:
+
+- `FLOATING_VOXEL_CLUSTERS`
+- `DISCONNECTED_CLUSTERS`
+- `DISTANT_OUTLIERS`
+- `SPARSE_SINGLETON_REGIONS`
+
+Each category preview owns:
+
+- sample-local indices for the current workspace sample
+- native preview indices for the current approximate or exact selection path
+- preview-selected counts
+- estimated full-scene counts
+- an optional score and reason string for UI/log display
+
+The category preview path reuses the current `CleanupWorkspace` sample and does
+not rerun full-scene analysis. When the workspace is stale because the scene
+generation or splat count changed, the adapter refuses the preview and requires
+the user to reopen the workspace.
+
+The current visual path is deliberately limited to native selection updates.
+Color-coded overlays remain future work until the native LichtFeld runtime
+exposes a stable multi-color overlay API.
+
 ## Availability behavior
 
 If LichtFeld is not installed or the plugin API cannot be imported, the adapter raises

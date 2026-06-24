@@ -4,11 +4,17 @@
 
 import lichtfeld as lf
 
-from ..core.runtime_config import snapshot_runtime_config
+from ..core.runtime_config import cleanup_category_label, snapshot_runtime_config
 from ..operators.analyze_scene import ANALYZE_SCENE_OPERATOR_ID
 from ..operators.apply_confirmed_cleanup import APPLY_CONFIRMED_CLEANUP_OPERATOR_ID
 from ..operators.compare_cleanup_presets import COMPARE_CLEANUP_PRESETS_OPERATOR_ID
 from ..operators.open_cleanup_workspace import OPEN_CLEANUP_WORKSPACE_OPERATOR_ID
+from ..operators.preview_all_cleanup_categories import (
+    PREVIEW_ALL_CLEANUP_CATEGORIES_OPERATOR_ID,
+)
+from ..operators.preview_selected_cleanup_category import (
+    PREVIEW_SELECTED_CLEANUP_CATEGORY_OPERATOR_ID,
+)
 from ..operators.restore_last_delete import RESTORE_LAST_DELETE_OPERATOR_ID
 from ..operators.reset_cleanup_workspace import RESET_CLEANUP_WORKSPACE_OPERATOR_ID
 from ..operators.soft_delete_cleanup_selection import SOFT_DELETE_CLEANUP_SELECTION_OPERATOR_ID
@@ -55,6 +61,10 @@ from ..operators.runtime_controls import (
     SMOKE_MAX_Z_UP_OPERATOR_ID,
     SMOKE_MIN_Z_DOWN_OPERATOR_ID,
     SMOKE_MIN_Z_UP_OPERATOR_ID,
+    TOGGLE_DISCONNECTED_CLEANUP_CATEGORY_OPERATOR_ID,
+    TOGGLE_FLOATING_CLEANUP_CATEGORY_OPERATOR_ID,
+    TOGGLE_OUTLIER_CLEANUP_CATEGORY_OPERATOR_ID,
+    TOGGLE_SPARSE_CLEANUP_CATEGORY_OPERATOR_ID,
     VOXEL_MIN_CLUSTER_SIZE_DOWN_OPERATOR_ID,
     VOXEL_MIN_CLUSTER_SIZE_UP_OPERATOR_ID,
     VOXEL_SIZE_DOWN_OPERATOR_ID,
@@ -189,6 +199,12 @@ class LchtMcpTestPanel(lf.ui.Panel):
         if config.last_cleanup_workspace_lines:
             layout.label("Cleanup Workspace")
             for line in config.last_cleanup_workspace_lines:
+                layout.text_colored(line, theme.palette.text_dim)
+            layout.spacing()
+
+        if config.last_cleanup_category_preview_lines:
+            layout.label("Cleanup Category Preview")
+            for line in config.last_cleanup_category_preview_lines:
                 layout.text_colored(line, theme.palette.text_dim)
             layout.spacing()
 
@@ -405,6 +421,81 @@ class LchtMcpTestPanel(lf.ui.Panel):
         layout.text_colored(
             "Changing preset updates cleanup parameters and invalidates the current preview. "
             "Run Update Preview to rebuild it.",
+            theme.palette.text_dim,
+        )
+
+        layout.spacing()
+        layout.label("Cleanup Category Preview")
+        selected_category_label = (
+            cleanup_category_label(config.selected_cleanup_category)
+            if config.selected_cleanup_category is not None
+            else "None"
+        )
+        active_category_labels = (
+            ", ".join(cleanup_category_label(category) for category in config.active_cleanup_categories)
+            if config.active_cleanup_categories
+            else "None"
+        )
+        layout.label(f"Selected Category: {selected_category_label}")
+        layout.label(f"Active Categories: {active_category_labels}")
+        if layout.button_styled(
+            "Show Floating Clusters##toggle_cleanup_floating",
+            (
+                "primary"
+                if "FLOATING_VOXEL_CLUSTERS" in config.active_cleanup_categories
+                else "secondary"
+            ),
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(TOGGLE_FLOATING_CLEANUP_CATEGORY_OPERATOR_ID)
+        if layout.button_styled(
+            "Show Disconnected Clusters##toggle_cleanup_disconnected",
+            (
+                "primary"
+                if "DISCONNECTED_CLUSTERS" in config.active_cleanup_categories
+                else "secondary"
+            ),
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(TOGGLE_DISCONNECTED_CLEANUP_CATEGORY_OPERATOR_ID)
+        if layout.button_styled(
+            "Show Distant Outliers##toggle_cleanup_outliers",
+            (
+                "primary"
+                if "DISTANT_OUTLIERS" in config.active_cleanup_categories
+                else "secondary"
+            ),
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(TOGGLE_OUTLIER_CLEANUP_CATEGORY_OPERATOR_ID)
+        if layout.button_styled(
+            "Show Sparse Regions##toggle_cleanup_sparse",
+            (
+                "primary"
+                if "SPARSE_SINGLETON_REGIONS" in config.active_cleanup_categories
+                else "secondary"
+            ),
+            (-1, 28 * scale),
+        ):
+            lf.ui.ops.invoke(TOGGLE_SPARSE_CLEANUP_CATEGORY_OPERATOR_ID)
+        if layout.button_styled(
+            "Preview Selected Category##preview_cleanup_selected_category",
+            "secondary",
+            (-1, 30 * scale),
+        ):
+            lf.ui.ops.invoke(PREVIEW_SELECTED_CLEANUP_CATEGORY_OPERATOR_ID)
+        if layout.button_styled(
+            "Preview All Cleanup Categories##preview_cleanup_all_categories",
+            "secondary",
+            (-1, 30 * scale),
+        ):
+            lf.ui.ops.invoke(PREVIEW_ALL_CLEANUP_CATEGORIES_OPERATOR_ID)
+        layout.text_colored(
+            "Non-destructive preview only. Native selection updates; scene splats stay unchanged.",
+            theme.palette.text_dim,
+        )
+        layout.text_colored(
+            "Current limitation: category preview is native selection only until multi-color overlays land in the runtime.",
             theme.palette.text_dim,
         )
 

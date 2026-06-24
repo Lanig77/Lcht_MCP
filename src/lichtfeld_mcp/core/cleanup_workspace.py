@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Mapping
 
 from lichtfeld_mcp.core.cleanup_metrics import (
     CleanupSourceBreakdownEntry,
@@ -40,6 +40,7 @@ class CleanupCategoryPreview:
             "category": self.category,
             "label": self.label,
             "selected_sample_count": self.selected_sample_count,
+            "preview_selected_splats": len(self.preview_selected_indices),
             "estimated_full_scene_count": self.estimated_full_scene_count,
             "estimated_full_scene_count_contribution": (
                 self.estimated_full_scene_count_contribution
@@ -161,7 +162,7 @@ class CleanupWorkspace:
             "category_preview_mode": self.category_preview_mode,
             "category_preview_counts": {
                 entry.category: {
-                    "preview_selected_splats": entry.selected_sample_count,
+                    "preview_selected_splats": len(entry.preview_selected_indices),
                     "estimated_full_scene_splats": entry.estimated_full_scene_count,
                 }
                 for entry in self.cleanup_category_previews
@@ -363,6 +364,7 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
             f"{', '.join(cleanup_category_label(category) for category in workspace.active_cleanup_categories)}"
         )
         lines.append("Non-destructive preview: native selection only")
+        lines.append("Current limitation: category preview uses native selection, not color overlays.")
     _append_category_preview_lines(lines, workspace.cleanup_category_previews)
     _append_source_breakdown_lines(lines, summary.source_breakdown)
     if workspace.preview_selection_active and workspace.native_selection_mask is None:
@@ -422,6 +424,7 @@ def format_cleanup_category_preview(workspace: CleanupWorkspace) -> str:
         f"Current preset: {workspace.current_cleanup_parameters.preset_name}",
         f"Analysis mode: {mode_label}",
         "Non-destructive preview: scene splats are unchanged",
+        "Current limitation: native category isolation only; multi-color overlays are future work.",
     ]
     if workspace.active_cleanup_categories:
         lines.append(
@@ -491,6 +494,46 @@ def _append_category_preview_lines(
     for entry in category_previews:
         lines.append(
             "- "
-            f"{entry.label}: sample={entry.selected_sample_count:,}, "
+            f"{entry.label}: preview={len(entry.preview_selected_indices):,}, "
             f"estimated={entry.estimated_full_scene_count:,}"
         )
+
+
+def build_cleanup_category_previews(
+    *,
+    category_sample_indices: Mapping[str, tuple[int, ...] | list[int]],
+    category_preview_selected_indices: Mapping[str, tuple[int, ...] | list[int]],
+    analyzed_splats: int,
+    total_splats: int,
+    approximate: bool,
+    category_scores: Mapping[str, float] | None = None,
+    category_reasons: Mapping[str, str] | None = None,
+) -> tuple[CleanupCategoryPreview, ...]:
+    previews: list[CleanupCategoryPreview] = []
+    score_map = category_scores or {}
+    reason_map = category_reasons or {}
+    for category in cleanup_category_order():
+        sample_indices = tuple(int(index) for index in category_sample_indices.get(category, ()))
+        preview_selected_indices = tuple(
+            int(index)
+            for index in category_preview_selected_indices.get(category, ())
+        )
+        estimated_full_scene_count = extrapolate_cleanup_count(
+            len(preview_selected_indices),
+            analyzed_splats=analyzed_splats,
+            total_splats=total_splats,
+            approximate=approximate,
+        )
+        previews.append(
+            CleanupCategoryPreview(
+                category=category,
+                label=cleanup_category_label(category),
+                sample_indices=sample_indices,
+                preview_selected_indices=preview_selected_indices,
+                estimated_full_scene_count=estimated_full_scene_count,
+                estimated_full_scene_count_contribution=estimated_full_scene_count,
+                score=score_map.get(category),
+                reason=reason_map.get(category),
+            )
+        )
+    return tuple(previews)

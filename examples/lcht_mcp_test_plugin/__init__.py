@@ -9,7 +9,13 @@ from .operators.analyze_clusters import LCHTMCP_OT_analyze_clusters
 from .operators.analyze_voxel_clusters import LCHTMCP_OT_analyze_voxel_clusters
 from .operators.compare_cleanup_presets import LCHTMCP_OT_compare_cleanup_presets
 from .operators.open_cleanup_workspace import LCHTMCP_OT_open_cleanup_workspace
+from .operators.preview_all_cleanup_categories import (
+    LCHTMCP_OT_preview_all_cleanup_categories,
+)
 from .operators.preview_cleanup_candidates import LCHTMCP_OT_preview_cleanup_candidates
+from .operators.preview_selected_cleanup_category import (
+    LCHTMCP_OT_preview_selected_cleanup_category,
+)
 from .operators.reset_cleanup_workspace import LCHTMCP_OT_reset_cleanup_workspace
 from .operators.restore_last_delete import LCHTMCP_OT_restore_last_delete
 from .operators.soft_delete_cleanup_selection import LCHTMCP_OT_soft_delete_cleanup_selection
@@ -57,6 +63,10 @@ from .operators.runtime_controls import (
     LCHTMCP_OT_smoke_max_z_up,
     LCHTMCP_OT_smoke_min_z_down,
     LCHTMCP_OT_smoke_min_z_up,
+    LCHTMCP_OT_toggle_disconnected_cleanup_category,
+    LCHTMCP_OT_toggle_floating_cleanup_category,
+    LCHTMCP_OT_toggle_outlier_cleanup_category,
+    LCHTMCP_OT_toggle_sparse_cleanup_category,
     LCHTMCP_OT_voxel_min_cluster_size_down,
     LCHTMCP_OT_voxel_min_cluster_size_up,
     LCHTMCP_OT_voxel_size_down,
@@ -75,6 +85,8 @@ _classes = [
     LCHTMCP_OT_compare_cleanup_presets,
     LCHTMCP_OT_open_cleanup_workspace,
     LCHTMCP_OT_update_cleanup_workspace,
+    LCHTMCP_OT_preview_selected_cleanup_category,
+    LCHTMCP_OT_preview_all_cleanup_categories,
     LCHTMCP_OT_reset_cleanup_workspace,
     LCHTMCP_OT_soft_delete_cleanup_selection,
     LCHTMCP_OT_restore_last_delete,
@@ -118,6 +130,10 @@ _classes = [
     LCHTMCP_OT_set_cluster_analysis_fast,
     LCHTMCP_OT_set_cluster_analysis_balanced,
     LCHTMCP_OT_set_cluster_analysis_detailed,
+    LCHTMCP_OT_toggle_disconnected_cleanup_category,
+    LCHTMCP_OT_toggle_floating_cleanup_category,
+    LCHTMCP_OT_toggle_outlier_cleanup_category,
+    LCHTMCP_OT_toggle_sparse_cleanup_category,
     LCHTMCP_OT_voxel_size_down,
     LCHTMCP_OT_voxel_size_up,
     LCHTMCP_OT_voxel_min_cluster_size_down,

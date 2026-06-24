@@ -11,9 +11,11 @@ from pathlib import Path
 import lichtfeld as lf
 
 from .runtime_config import (
+    set_cleanup_category_preview_lines,
     set_cleanup_preset_comparison_lines,
     set_cleanup_preview_report_lines,
     set_cleanup_preview_summary,
+    sync_cleanup_category_state,
     set_cleanup_workspace_report_lines,
     set_scene_analysis_report_lines,
     snapshot_runtime_config,
@@ -147,6 +149,29 @@ def _sync_cleanup_workspace_display(adapter) -> None:
         set_cleanup_workspace_report_lines([])
         return
     set_cleanup_workspace_report_lines(format_cleanup_workspace(workspace).splitlines())
+    sync_cleanup_category_state(
+        workspace.active_cleanup_categories,
+        selected_category=workspace.selected_cleanup_category,
+    )
+
+
+def _sync_cleanup_category_preview_display(adapter) -> None:
+    try:
+        from lichtfeld_mcp.core.cleanup_workspace import format_cleanup_category_preview
+    except Exception:
+        set_cleanup_category_preview_lines([])
+        return
+    workspace = _get_cleanup_workspace(adapter)
+    if workspace is None:
+        set_cleanup_category_preview_lines([])
+        return
+    set_cleanup_category_preview_lines(
+        format_cleanup_category_preview(workspace).splitlines()
+    )
+    sync_cleanup_category_state(
+        workspace.active_cleanup_categories,
+        selected_category=workspace.selected_cleanup_category,
+    )
 
 
 def _materialize_sequence(value: object) -> list[object] | None:
@@ -274,6 +299,7 @@ def run_scene_analysis() -> tuple[bool, str]:
     set_cleanup_preview_report_lines([])
     set_cleanup_preview_summary(None)
     set_cleanup_workspace_report_lines([])
+    set_cleanup_category_preview_lines([])
     set_cleanup_preset_comparison_lines([])
     for line in report_lines:
         _log_info(line)
@@ -302,6 +328,7 @@ def run_preview_cleanup_candidates() -> tuple[bool, str]:
         _log_error(message)
         set_cleanup_preview_report_lines([message])
         set_cleanup_preview_summary(None)
+        set_cleanup_category_preview_lines([])
         return False, message
 
     preview_cleanup_candidates = getattr(adapter, "preview_cleanup_candidates", None)
@@ -310,6 +337,7 @@ def run_preview_cleanup_candidates() -> tuple[bool, str]:
         _log_error(message)
         set_cleanup_preview_report_lines([message])
         set_cleanup_preview_summary(None)
+        set_cleanup_category_preview_lines([])
         return False, message
 
     try:
@@ -319,6 +347,7 @@ def run_preview_cleanup_candidates() -> tuple[bool, str]:
         _log_error(message)
         set_cleanup_preview_report_lines([message])
         set_cleanup_preview_summary(None)
+        set_cleanup_category_preview_lines([])
         return False, message
 
     try:
@@ -339,6 +368,7 @@ def run_preview_cleanup_candidates() -> tuple[bool, str]:
     summary_lines = formatted_summary.splitlines()
     set_cleanup_preview_report_lines(summary_lines)
     set_cleanup_preview_summary(summary.to_dict())
+    set_cleanup_category_preview_lines([])
     for line in summary_lines:
         _log_info(line)
     _log_info(f"analysis_time_seconds={summary.analysis_time:.3f}")
@@ -434,6 +464,7 @@ def run_open_cleanup_workspace() -> tuple[bool, str]:
     formatted_workspace = format_cleanup_workspace(workspace)
     workspace_lines = formatted_workspace.splitlines()
     set_cleanup_workspace_report_lines(workspace_lines)
+    _sync_cleanup_category_preview_display(adapter)
     set_cleanup_preview_report_lines([])
     set_cleanup_preview_summary(workspace.cleanup_candidate_summary.to_dict())
     for line in workspace_lines:
@@ -491,6 +522,7 @@ def run_update_cleanup_workspace() -> tuple[bool, str]:
     formatted_workspace = format_cleanup_workspace(workspace)
     workspace_lines = formatted_workspace.splitlines()
     set_cleanup_workspace_report_lines(workspace_lines)
+    _sync_cleanup_category_preview_display(adapter)
     set_cleanup_preview_summary(workspace.cleanup_candidate_summary.to_dict())
     for line in workspace_lines:
         _log_info(line)
@@ -501,6 +533,145 @@ def run_update_cleanup_workspace() -> tuple[bool, str]:
     _log_info(f"total_workspace_update_time={workspace.total_workspace_update_time:.6f}")
     _log_info(f"estimated_sample_reuse={workspace.estimated_sample_reuse:.2f}")
     return True, "Cleanup workspace updated."
+
+
+def _sync_cleanup_category_visibility(adapter, config) -> tuple[bool, str | None]:
+    set_active_cleanup_categories = getattr(adapter, "set_active_cleanup_categories", None)
+    if not callable(set_active_cleanup_categories):
+        return False, "LichtfeldAdapter does not expose set_active_cleanup_categories()."
+    try:
+        set_active_cleanup_categories(
+            config.active_cleanup_categories,
+            selected_category=config.selected_cleanup_category,
+        )
+    except Exception as exc:
+        return False, f"Cleanup category visibility update failed: {exc}"
+    return True, None
+
+
+def run_preview_selected_cleanup_category() -> tuple[bool, str]:
+    """Preview only the currently selected cleanup category as a native selection."""
+    config = snapshot_runtime_config()
+    if config.selected_cleanup_category is None:
+        message = "No cleanup category is selected. Enable one category toggle first."
+        _log_error(message)
+        set_cleanup_category_preview_lines([message])
+        return False, message
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup category preview adapter setup failed: {exc}"
+        _log_error(message)
+        set_cleanup_category_preview_lines([message])
+        return False, message
+
+    sync_ok, sync_message = _sync_cleanup_category_visibility(adapter, config)
+    if not sync_ok:
+        _log_error(sync_message)
+        set_cleanup_category_preview_lines([sync_message])
+        return False, sync_message
+
+    preview_cleanup_category = getattr(adapter, "preview_cleanup_category", None)
+    if not callable(preview_cleanup_category):
+        message = "LichtfeldAdapter does not expose preview_cleanup_category()."
+        _log_error(message)
+        set_cleanup_category_preview_lines([message])
+        return False, message
+
+    try:
+        preview_cleanup_category(config.selected_cleanup_category)
+    except Exception as exc:
+        message = f"Cleanup category preview failed: {exc}"
+        _log_error(message)
+        set_cleanup_category_preview_lines([message])
+        return False, message
+
+    _sync_cleanup_workspace_display(adapter)
+    _sync_cleanup_category_preview_display(adapter)
+    for line in snapshot_runtime_config().last_cleanup_category_preview_lines:
+        _log_info(line)
+    return True, "Cleanup category preview complete."
+
+
+def run_preview_all_cleanup_categories() -> tuple[bool, str]:
+    """Preview all active cleanup categories as one native selection."""
+    config = snapshot_runtime_config()
+    if not config.active_cleanup_categories:
+        message = "No cleanup categories are active. Enable at least one category toggle first."
+        _log_error(message)
+        set_cleanup_category_preview_lines([message])
+        return False, message
+
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup category preview adapter setup failed: {exc}"
+        _log_error(message)
+        set_cleanup_category_preview_lines([message])
+        return False, message
+
+    sync_ok, sync_message = _sync_cleanup_category_visibility(adapter, config)
+    if not sync_ok:
+        _log_error(sync_message)
+        set_cleanup_category_preview_lines([sync_message])
+        return False, sync_message
+
+    preview_active_cleanup_categories = getattr(
+        adapter,
+        "preview_active_cleanup_categories",
+        None,
+    )
+    if not callable(preview_active_cleanup_categories):
+        message = "LichtfeldAdapter does not expose preview_active_cleanup_categories()."
+        _log_error(message)
+        set_cleanup_category_preview_lines([message])
+        return False, message
+
+    try:
+        preview_active_cleanup_categories()
+    except Exception as exc:
+        message = f"Cleanup category preview failed: {exc}"
+        _log_error(message)
+        set_cleanup_category_preview_lines([message])
+        return False, message
+
+    _sync_cleanup_workspace_display(adapter)
+    _sync_cleanup_category_preview_display(adapter)
+    for line in snapshot_runtime_config().last_cleanup_category_preview_lines:
+        _log_info(line)
+    return True, "Cleanup category preview complete."
+
+
+def run_clear_cleanup_category_preview() -> tuple[bool, str]:
+    """Clear the native cleanup category preview without touching the scene."""
+    try:
+        adapter, repository_root = _build_adapter()
+        _log_info(f"LichtfeldAdapter instantiated from {repository_root}.")
+    except Exception as exc:
+        message = f"Cleanup category preview adapter setup failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    clear_cleanup_category_preview = getattr(adapter, "clear_cleanup_category_preview", None)
+    if not callable(clear_cleanup_category_preview):
+        message = "LichtfeldAdapter does not expose clear_cleanup_category_preview()."
+        _log_error(message)
+        return False, message
+
+    try:
+        result = clear_cleanup_category_preview()
+    except Exception as exc:
+        message = f"Cleanup category preview clear failed: {exc}"
+        _log_error(message)
+        return False, message
+
+    _sync_cleanup_workspace_display(adapter)
+    _sync_cleanup_category_preview_display(adapter)
+    _log_info(result.message)
+    return result.ok, result.message
 
 
 def run_compare_cleanup_presets() -> tuple[bool, str]:
@@ -573,6 +744,7 @@ def run_reset_cleanup_workspace() -> tuple[bool, str]:
         return False, message
 
     set_cleanup_workspace_report_lines([])
+    set_cleanup_category_preview_lines([])
     set_cleanup_preview_report_lines([])
     set_cleanup_preview_summary(None)
     _log_info(result.message)
@@ -693,6 +865,7 @@ def run_soft_delete_cleanup_selection() -> tuple[bool, str]:
         "Use Restore Last Delete to undo."
     )
     _sync_cleanup_workspace_display(adapter)
+    _sync_cleanup_category_preview_display(adapter)
     updated_workspace = _get_cleanup_workspace(adapter)
     _log_info(
         f"workspace_state={updated_workspace.workspace_state if updated_workspace is not None else 'inactive'}"
@@ -725,6 +898,7 @@ def run_restore_last_delete() -> tuple[bool, str]:
         return False, message
 
     _sync_cleanup_workspace_display(adapter)
+    _sync_cleanup_category_preview_display(adapter)
 
     _log_info(result.message)
     return result.ok, result.message
@@ -898,6 +1072,7 @@ def run_apply_confirmed_cleanup() -> tuple[bool, str]:
     )
     _log_info(f"confirmed_cleanup_apply ok={result.ok} message={result.message}")
     _sync_cleanup_workspace_display(adapter)
+    _sync_cleanup_category_preview_display(adapter)
     return result.ok, result.message
 
 

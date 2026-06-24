@@ -7,6 +7,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from lichtfeld_mcp.core.cleanup_metrics import (
+    CLEANUP_CATEGORY_DISCONNECTED,
+    CLEANUP_CATEGORY_FLOATING,
+    CLEANUP_CATEGORY_OUTLIER,
+    CLEANUP_CATEGORY_SPARSE,
+)
 from lichtfeld_mcp.errors import AdapterUnavailableError, InvalidParameterError
 
 
@@ -2978,6 +2984,304 @@ def test_cleanup_workspace_reuses_sampled_analysis_on_large_scene_updates(monkey
     assert updated.selected_count >= 0
     assert fake_scene._model.last_soft_delete_argument is None
     assert fake_scene._model.apply_deleted_calls == 0
+
+
+def test_cleanup_workspace_category_previews_exist_and_totals_are_coherent(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.0],
+                    [3.0, 0.0, 0.0],
+                    [20.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(voxel_size=1.0, min_voxel_cluster_size=2, max_splats=10)
+    workspace = adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+
+    assert [entry.category for entry in workspace.cleanup_category_previews] == [
+        CLEANUP_CATEGORY_FLOATING,
+        CLEANUP_CATEGORY_DISCONNECTED,
+        CLEANUP_CATEGORY_OUTLIER,
+        CLEANUP_CATEGORY_SPARSE,
+    ]
+    assert sum(
+        entry.selected_sample_count for entry in workspace.cleanup_category_previews
+    ) == workspace.selected_count
+    assert sorted(
+        {
+            index
+            for entry in workspace.cleanup_category_previews
+            for index in entry.preview_selected_indices
+        }
+    ) == sorted(workspace.preview_selected_indices)
+
+
+def test_preview_cleanup_category_updates_native_selection_without_delete_or_apply(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.0],
+                    [3.0, 0.0, 0.0],
+                    [20.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(voxel_size=1.0, min_voxel_cluster_size=2, max_splats=10)
+    workspace = adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+
+    category_preview = next(
+        entry
+        for entry in workspace.cleanup_category_previews
+        if entry.category == CLEANUP_CATEGORY_OUTLIER
+    )
+    updated_workspace = adapter.preview_cleanup_category(CLEANUP_CATEGORY_OUTLIER)
+
+    assert updated_workspace.selected_cleanup_category == CLEANUP_CATEGORY_OUTLIER
+    assert updated_workspace.preview_selected_indices == category_preview.preview_selected_indices
+    assert fake_scene._model.last_soft_delete_argument is None
+    assert fake_scene._model.apply_deleted_calls == 0
+
+
+def test_preview_active_cleanup_categories_combines_active_masks(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.0],
+                    [3.0, 0.0, 0.0],
+                    [20.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(voxel_size=1.0, min_voxel_cluster_size=2, max_splats=10)
+    workspace = adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+    adapter.set_active_cleanup_categories(
+        (CLEANUP_CATEGORY_OUTLIER, CLEANUP_CATEGORY_SPARSE),
+        selected_category=CLEANUP_CATEGORY_SPARSE,
+    )
+    updated_workspace = adapter.preview_active_cleanup_categories()
+
+    expected_indices = sorted(
+        {
+            index
+            for entry in workspace.cleanup_category_previews
+            if entry.category in (CLEANUP_CATEGORY_OUTLIER, CLEANUP_CATEGORY_SPARSE)
+            for index in entry.preview_selected_indices
+        }
+    )
+    assert updated_workspace.preview_selected_indices == tuple(expected_indices)
+    assert updated_workspace.selected_count == len(expected_indices)
+
+
+def test_preview_cleanup_category_refuses_without_workspace(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(FakeModel(means=FakeTorchTensor([[0.0, 0.0, 0.0]])))
+    fake_module = SimpleNamespace(Tensor=FakeLfTensor, get_scene=lambda: fake_scene)
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="No cleanup workspace is active",
+    ):
+        adapter.preview_cleanup_category(CLEANUP_CATEGORY_FLOATING)
+
+
+def test_preview_cleanup_category_refuses_when_workspace_is_stale(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.0],
+                    [3.0, 0.0, 0.0],
+                    [20.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(voxel_size=1.0, min_voxel_cluster_size=2, max_splats=10)
+    adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+    fake_scene.content_generation = 1
+
+    with pytest.raises(
+        AdapterUnavailableError,
+        match="current scene generation",
+    ):
+        adapter.preview_cleanup_category(CLEANUP_CATEGORY_FLOATING)
+
+
+def test_category_preview_reuses_workspace_sample_on_large_scenes(monkeypatch):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(FakeModel(means=FakeTorchTensor([[0.0, 0.0, 0.0]])))
+    fake_scene._model.get_means = lambda: FakeLargeSampledTensor(
+        250_000,
+        outlier_indices={0, 25_000, 50_000},
+    )
+    fake_scene.set_selection = lambda payload: setattr(
+        fake_scene,
+        "last_selection_payload",
+        list(payload),
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(
+        voxel_size=0.25,
+        min_voxel_cluster_size=10,
+        max_splats=25_000,
+        abort_if_above_limit=False,
+    )
+    adapter.open_cleanup_workspace(
+        voxel_size=0.25,
+        min_voxel_cluster_size=10,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+    monkeypatch.setattr(
+        adapter,
+        "analyze_scene",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("analyze_scene should not run during category preview")
+        ),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_build_cleanup_workspace_session",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("cleanup workspace should not rebuild during category preview")
+        ),
+    )
+
+    preview = adapter.preview_cleanup_category(CLEANUP_CATEGORY_OUTLIER)
+
+    assert preview.approximate is True
+    assert len(preview.sampled_rows) <= 25_000
 
 
 def test_soft_delete_cleanup_candidates_refuses_when_no_preview_exists(monkeypatch):

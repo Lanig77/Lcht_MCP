@@ -7,6 +7,26 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 
+CLEANUP_CATEGORY_FLOATING = "FLOATING_VOXEL_CLUSTERS"
+CLEANUP_CATEGORY_DISCONNECTED = "DISCONNECTED_CLUSTERS"
+CLEANUP_CATEGORY_OUTLIER = "DISTANT_OUTLIERS"
+CLEANUP_CATEGORY_SPARSE = "SPARSE_SINGLETON_REGIONS"
+
+_CLEANUP_CATEGORY_ORDER = (
+    CLEANUP_CATEGORY_FLOATING,
+    CLEANUP_CATEGORY_DISCONNECTED,
+    CLEANUP_CATEGORY_OUTLIER,
+    CLEANUP_CATEGORY_SPARSE,
+)
+
+_CLEANUP_CATEGORY_LABELS = {
+    CLEANUP_CATEGORY_FLOATING: "floating voxel clusters",
+    CLEANUP_CATEGORY_DISCONNECTED: "disconnected clusters",
+    CLEANUP_CATEGORY_OUTLIER: "distant outliers",
+    CLEANUP_CATEGORY_SPARSE: "sparse singleton regions",
+}
+
+
 SMOKE_Z_STEP = 0.05
 SAFE_DELETE_Z_STEP = 0.01
 MAX_SPLATS_STEP = 1_000
@@ -82,10 +102,43 @@ class RuntimeConfig:
     last_cleanup_preview_lines: tuple[str, ...] = ()
     last_cleanup_preview_summary: dict[str, object] | None = None
     last_cleanup_workspace_lines: tuple[str, ...] = ()
+    last_cleanup_category_preview_lines: tuple[str, ...] = ()
     last_cleanup_preset_comparison_lines: tuple[str, ...] = ()
+    active_cleanup_categories: tuple[str, ...] = _CLEANUP_CATEGORY_ORDER
+    selected_cleanup_category: str | None = CLEANUP_CATEGORY_FLOATING
 
 
 _runtime_config = RuntimeConfig()
+
+
+def cleanup_category_order() -> tuple[str, ...]:
+    return _CLEANUP_CATEGORY_ORDER
+
+
+def cleanup_category_label(category: str) -> str:
+    return _CLEANUP_CATEGORY_LABELS[normalize_cleanup_category(category)]
+
+
+def normalize_cleanup_category(category: str) -> str:
+    normalized = str(category).strip()
+    if normalized in _CLEANUP_CATEGORY_LABELS:
+        return normalized
+    for candidate, label in _CLEANUP_CATEGORY_LABELS.items():
+        if normalized.casefold() == candidate.casefold() or normalized.casefold() == label.casefold():
+            return candidate
+    raise ValueError(f"Unsupported cleanup category: {category!r}")
+
+
+def normalize_cleanup_categories(categories: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for category in categories:
+        normalized = normalize_cleanup_category(category)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return tuple(ordered)
 
 
 def _round_z(value: float) -> float:
@@ -153,9 +206,50 @@ def set_cleanup_workspace_report_lines(lines: list[str]) -> None:
     _runtime_config.last_cleanup_workspace_lines = tuple(lines)
 
 
+def set_cleanup_category_preview_lines(lines: list[str]) -> None:
+    """Store the most recent cleanup category preview report for panel display."""
+    _runtime_config.last_cleanup_category_preview_lines = tuple(lines)
+
+
 def set_cleanup_preset_comparison_lines(lines: list[str]) -> None:
     """Store the most recent cleanup preset comparison report for panel display."""
     _runtime_config.last_cleanup_preset_comparison_lines = tuple(lines)
+
+
+def sync_cleanup_category_state(
+    categories: tuple[str, ...] | list[str],
+    *,
+    selected_category: str | None = None,
+) -> None:
+    """Store the active and selected cleanup categories from the workspace/UI."""
+    normalized_categories = normalize_cleanup_categories(tuple(categories))
+    normalized_selected_category = None
+    if selected_category is not None:
+        normalized_selected_category = normalize_cleanup_category(selected_category)
+        if normalized_selected_category not in normalized_categories:
+            normalized_selected_category = None
+    _runtime_config.active_cleanup_categories = normalized_categories
+    _runtime_config.selected_cleanup_category = normalized_selected_category
+
+
+def toggle_cleanup_category_visibility(category: str) -> None:
+    """Toggle category visibility and move selection to the toggled-on category."""
+    normalized_category = normalize_cleanup_category(category)
+    active = list(normalize_cleanup_categories(_runtime_config.active_cleanup_categories))
+    if normalized_category in active:
+        active = [entry for entry in active if entry != normalized_category]
+    else:
+        active.append(normalized_category)
+    normalized_active = normalize_cleanup_categories(tuple(active))
+    selected_category = _runtime_config.selected_cleanup_category
+    if normalized_category in normalized_active:
+        selected_category = normalized_category
+    elif selected_category not in normalized_active:
+        selected_category = normalized_active[0] if normalized_active else None
+    sync_cleanup_category_state(
+        normalized_active,
+        selected_category=selected_category,
+    )
 
 
 def set_cleanup_preset(preset_name: str) -> None:

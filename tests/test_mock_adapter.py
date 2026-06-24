@@ -1,6 +1,10 @@
 import pytest
 
 from lichtfeld_mcp.adapters.mock import MockLichtfeldAdapter
+from lichtfeld_mcp.core.cleanup_metrics import (
+    CLEANUP_CATEGORY_FLOATING,
+    CLEANUP_CATEGORY_SPARSE,
+)
 from lichtfeld_mcp.errors import (
     InvalidParameterError,
     InvalidPathError,
@@ -115,3 +119,39 @@ def test_mock_adapter_rejects_non_positive_max_splats_directly():
 
     with pytest.raises(InvalidParameterError, match="max_splats must be greater than 0"):
         adapter.optimize_for_target("web", max_splats=-5)
+
+
+def test_mock_adapter_previews_cleanup_categories_non_destructively():
+    adapter = MockLichtfeldAdapter()
+    adapter.open_project("demo.lfp")
+    adapter.analyze_scene()
+    workspace = adapter.open_cleanup_workspace()
+
+    updated_workspace = adapter.set_active_cleanup_categories(
+        (CLEANUP_CATEGORY_FLOATING, CLEANUP_CATEGORY_SPARSE),
+        selected_category=CLEANUP_CATEGORY_SPARSE,
+    )
+    single_category_preview = adapter.preview_cleanup_category(CLEANUP_CATEGORY_SPARSE)
+    active_category_preview = adapter.preview_active_cleanup_categories()
+
+    assert workspace.selected_count >= 0
+    assert updated_workspace.active_cleanup_categories == (
+        CLEANUP_CATEGORY_FLOATING,
+        CLEANUP_CATEGORY_SPARSE,
+    )
+    assert updated_workspace.selected_cleanup_category == CLEANUP_CATEGORY_SPARSE
+    assert single_category_preview.selected_cleanup_category == CLEANUP_CATEGORY_SPARSE
+    assert single_category_preview.selected_count == (
+        next(
+            entry.selected_sample_count
+            for entry in single_category_preview.cleanup_category_previews
+            if entry.category == CLEANUP_CATEGORY_SPARSE
+        )
+    )
+    assert active_category_preview.selected_count == (
+        sum(
+            entry.selected_sample_count
+            for entry in active_category_preview.cleanup_category_previews
+            if entry.category in (CLEANUP_CATEGORY_FLOATING, CLEANUP_CATEGORY_SPARSE)
+        )
+    )

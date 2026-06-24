@@ -16,8 +16,15 @@ from lichtfeld_mcp.core.cleanup_workspace import (
     CleanupPresetComparisonReport,
     CleanupWorkspace,
     SceneProfile,
+    build_cleanup_category_previews,
 )
-from lichtfeld_mcp.core.cleanup_metrics import CleanupSourceBreakdownEntry
+from lichtfeld_mcp.core.cleanup_metrics import (
+    CLEANUP_CATEGORY_DISCONNECTED,
+    CLEANUP_CATEGORY_FLOATING,
+    CLEANUP_CATEGORY_OUTLIER,
+    CLEANUP_CATEGORY_SPARSE,
+    CleanupSourceBreakdownEntry,
+)
 from lichtfeld_mcp.schemas.common import CleanupSelectionPreviewResult
 from test_lcht_mcp_test_plugin_undo import _load_runner_modules
 
@@ -32,6 +39,9 @@ class FakeClusterPreviewAdapter:
         self.open_cleanup_workspace_calls = 0
         self.update_cleanup_workspace_calls = 0
         self.invalidate_cleanup_workspace_preview_calls = 0
+        self.preview_cleanup_category_calls = 0
+        self.preview_active_cleanup_categories_calls = 0
+        self.set_active_cleanup_categories_calls = 0
         self.reset_cleanup_workspace_calls = 0
         self.compare_cleanup_presets_calls = 0
         self.soft_delete_cleanup_workspace_selection_calls = 0
@@ -333,6 +343,77 @@ class FakeClusterPreviewAdapter:
     def get_cleanup_workspace(self):
         return self.current_workspace
 
+    def set_active_cleanup_categories(self, categories, *, selected_category=None):
+        self.set_active_cleanup_categories_calls += 1
+        if self.current_workspace is None:
+            raise RuntimeError("No cleanup workspace is active.")
+        self.current_workspace = replace(
+            self.current_workspace,
+            active_cleanup_categories=tuple(categories),
+            selected_cleanup_category=selected_category,
+        )
+        return self.current_workspace
+
+    def preview_cleanup_category(self, category: str):
+        self.preview_cleanup_category_calls += 1
+        if self.current_workspace is None:
+            raise RuntimeError("No cleanup workspace is active.")
+        category_preview = next(
+            entry
+            for entry in self.current_workspace.cleanup_category_previews
+            if entry.category == category
+        )
+        self.current_workspace = replace(
+            self.current_workspace,
+            preview_selected_indices=category_preview.preview_selected_indices,
+            candidate_selection_mask=tuple(
+                index in set(category_preview.sample_indices)
+                for index in range(len(self.current_workspace.sampled_rows))
+            ),
+            preview_selection_active=bool(category_preview.preview_selected_indices),
+            selected_count=len(category_preview.preview_selected_indices),
+            selection_percentage=(
+                len(category_preview.preview_selected_indices) / 1_998_000
+            ),
+            selection_source=category_preview.label,
+            selected_cleanup_category=category,
+            category_preview_mode="single",
+        )
+        return self.current_workspace
+
+    def preview_active_cleanup_categories(self):
+        self.preview_active_cleanup_categories_calls += 1
+        if self.current_workspace is None:
+            raise RuntimeError("No cleanup workspace is active.")
+        selected_indices = sorted(
+            {
+                index
+                for entry in self.current_workspace.cleanup_category_previews
+                if entry.category in self.current_workspace.active_cleanup_categories
+                for index in entry.preview_selected_indices
+            }
+        )
+        sample_indices = {
+            index
+            for entry in self.current_workspace.cleanup_category_previews
+            if entry.category in self.current_workspace.active_cleanup_categories
+            for index in entry.sample_indices
+        }
+        self.current_workspace = replace(
+            self.current_workspace,
+            preview_selected_indices=tuple(selected_indices),
+            candidate_selection_mask=tuple(
+                index in sample_indices
+                for index in range(len(self.current_workspace.sampled_rows))
+            ),
+            preview_selection_active=bool(selected_indices),
+            selected_count=len(selected_indices),
+            selection_percentage=len(selected_indices) / 1_998_000,
+            selection_source=", ".join(self.current_workspace.active_cleanup_categories),
+            category_preview_mode="active",
+        )
+        return self.current_workspace
+
     def compare_cleanup_presets(self):
         self.compare_cleanup_presets_calls += 1
         return CleanupPresetComparisonReport(
@@ -455,6 +536,35 @@ class FakeClusterPreviewAdapter:
             max_splats=25_000,
             abort_if_above_limit=False,
         )
+        category_previews = build_cleanup_category_previews(
+            category_sample_indices={
+                CLEANUP_CATEGORY_FLOATING: (0, 1),
+                CLEANUP_CATEGORY_DISCONNECTED: (),
+                CLEANUP_CATEGORY_OUTLIER: (2,),
+                CLEANUP_CATEGORY_SPARSE: (3,),
+            },
+            category_preview_selected_indices={
+                CLEANUP_CATEGORY_FLOATING: (0, 100),
+                CLEANUP_CATEGORY_DISCONNECTED: (),
+                CLEANUP_CATEGORY_OUTLIER: (200,),
+                CLEANUP_CATEGORY_SPARSE: (300,),
+            },
+            analyzed_splats=25_000,
+            total_splats=1_998_000,
+            approximate=True,
+            category_scores={
+                CLEANUP_CATEGORY_FLOATING: 0.52,
+                CLEANUP_CATEGORY_DISCONNECTED: 0.15,
+                CLEANUP_CATEGORY_OUTLIER: 0.5,
+                CLEANUP_CATEGORY_SPARSE: 0.25,
+            },
+            category_reasons={
+                CLEANUP_CATEGORY_FLOATING: "Outside the dominant voxel component.",
+                CLEANUP_CATEGORY_DISCONNECTED: "Outside the dominant distance-based cluster.",
+                CLEANUP_CATEGORY_OUTLIER: "Beyond the robust scene bounds.",
+                CLEANUP_CATEGORY_SPARSE: "Inside sparse singleton voxel regions.",
+            },
+        )
         return CleanupWorkspace(
             scene_analysis_report=report,
             cleanup_candidate_summary=summary,
@@ -492,6 +602,14 @@ class FakeClusterPreviewAdapter:
             selection_update_time=0.004,
             total_workspace_update_time=0.012,
             estimated_sample_reuse=1.0 if self.current_workspace is not None else 0.0,
+            cleanup_category_previews=category_previews,
+            active_cleanup_categories=(
+                CLEANUP_CATEGORY_FLOATING,
+                CLEANUP_CATEGORY_OUTLIER,
+                CLEANUP_CATEGORY_SPARSE,
+            ),
+            selected_cleanup_category=CLEANUP_CATEGORY_FLOATING,
+            category_preview_mode="workspace",
         )
 
     @staticmethod
@@ -934,6 +1052,66 @@ def test_run_update_cleanup_workspace_reuses_latest_workspace_session(monkeypatc
         "outlier_distance": 2.25,
         "cleanup_aggressiveness": 0.5,
     }
+
+
+def test_run_preview_selected_cleanup_category_uses_runtime_selection(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    fake_adapter = FakeClusterPreviewAdapter()
+    fake_adapter.current_workspace = fake_adapter._workspace(
+        voxel_size=0.25,
+        min_voxel_cluster_size=10,
+        cluster_distance_threshold=0.10,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+        selected_count=512,
+    )
+    runtime_config.sync_cleanup_category_state(
+        (CLEANUP_CATEGORY_FLOATING, CLEANUP_CATEGORY_OUTLIER),
+        selected_category=CLEANUP_CATEGORY_OUTLIER,
+    )
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_preview_selected_cleanup_category()
+
+    config = runtime_config.snapshot_runtime_config()
+    assert success is True
+    assert message == "Cleanup category preview complete."
+    assert fake_adapter.set_active_cleanup_categories_calls == 1
+    assert fake_adapter.preview_cleanup_category_calls == 1
+    assert config.last_cleanup_category_preview_lines
+    assert any("Category: distant outliers" in line for line in config.last_cleanup_category_preview_lines)
+
+
+def test_cleanup_category_toggle_reapplies_active_preview(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    fake_adapter = FakeClusterPreviewAdapter()
+    fake_adapter.current_workspace = replace(
+        fake_adapter._workspace(
+            voxel_size=0.25,
+            min_voxel_cluster_size=10,
+            cluster_distance_threshold=0.10,
+            outlier_distance=2.5,
+            cleanup_aggressiveness=0.5,
+            selected_count=512,
+        ),
+        category_preview_mode="active",
+    )
+    runtime_config.sync_cleanup_category_state(
+        fake_adapter.current_workspace.active_cleanup_categories,
+        selected_category=CLEANUP_CATEGORY_FLOATING,
+    )
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+    runtime_controls = __import__(
+        "examples.lcht_mcp_test_plugin.operators.runtime_controls",
+        fromlist=["runtime_controls"],
+    )
+
+    runtime_controls.LCHTMCP_OT_toggle_sparse_cleanup_category().invoke(None, None)
+
+    config = runtime_config.snapshot_runtime_config()
+    assert fake_adapter.set_active_cleanup_categories_calls >= 1
+    assert fake_adapter.preview_active_cleanup_categories_calls >= 1
+    assert CLEANUP_CATEGORY_SPARSE not in config.active_cleanup_categories
 
 
 def test_run_reset_cleanup_workspace_clears_workspace_summary(monkeypatch):

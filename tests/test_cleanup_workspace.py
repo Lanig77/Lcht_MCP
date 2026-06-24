@@ -5,11 +5,17 @@ from lichtfeld_mcp.core.cleanup_workspace import (
     CleanupPresetComparisonEntry,
     CleanupPresetComparisonReport,
     CleanupWorkspace,
+    build_cleanup_category_previews,
     build_scene_profile,
+    format_cleanup_category_preview,
     format_cleanup_preset_comparison,
     format_cleanup_workspace,
 )
-from lichtfeld_mcp.core.cleanup_metrics import CleanupSourceBreakdownEntry
+from lichtfeld_mcp.core.cleanup_metrics import (
+    CLEANUP_CATEGORY_FLOATING,
+    CLEANUP_CATEGORY_SPARSE,
+    CleanupSourceBreakdownEntry,
+)
 from lichtfeld_mcp.core.scene_analysis import (
     AnalysisResult,
     AnalysisSeverity,
@@ -136,6 +142,27 @@ def _workspace(report: SceneAnalysisReport) -> CleanupWorkspace:
         outlier_contribution=0.0,
         sparse_region_contribution=0.5,
     )
+    category_previews = build_cleanup_category_previews(
+        category_sample_indices={
+            CLEANUP_CATEGORY_FLOATING: (0, 1),
+            CLEANUP_CATEGORY_SPARSE: (2, 3),
+        },
+        category_preview_selected_indices={
+            CLEANUP_CATEGORY_FLOATING: (0, 4),
+            CLEANUP_CATEGORY_SPARSE: (8, 12),
+        },
+        analyzed_splats=250,
+        total_splats=1_000,
+        approximate=True,
+        category_scores={
+            CLEANUP_CATEGORY_FLOATING: 0.5,
+            CLEANUP_CATEGORY_SPARSE: 0.5,
+        },
+        category_reasons={
+            CLEANUP_CATEGORY_FLOATING: "Outside the dominant voxel component.",
+            CLEANUP_CATEGORY_SPARSE: "Inside sparse singleton voxel regions.",
+        },
+    )
     return CleanupWorkspace(
         scene_analysis_report=report,
         cleanup_candidate_summary=summary,
@@ -164,6 +191,10 @@ def _workspace(report: SceneAnalysisReport) -> CleanupWorkspace:
         selection_update_time=0.01,
         total_workspace_update_time=0.02,
         estimated_sample_reuse=1.0,
+        cleanup_category_previews=category_previews,
+        active_cleanup_categories=(CLEANUP_CATEGORY_FLOATING, CLEANUP_CATEGORY_SPARSE),
+        selected_cleanup_category=CLEANUP_CATEGORY_FLOATING,
+        category_preview_mode="single",
     )
 
 
@@ -275,6 +306,14 @@ def test_cleanup_workspace_dict_includes_preset():
         "sparse singleton regions",
     ]
     assert serialized["source_breakdown"][0]["source"] == "floating voxel clusters"
+    assert serialized["active_visible_categories"] == [
+        CLEANUP_CATEGORY_FLOATING,
+        CLEANUP_CATEGORY_SPARSE,
+    ]
+    assert serialized["selected_category"] == CLEANUP_CATEGORY_FLOATING
+    assert serialized["category_preview_counts"][CLEANUP_CATEGORY_FLOATING][
+        "preview_selected_splats"
+    ] == 2
 
 
 def test_cleanup_preset_comparison_format_highlights_non_destructive_intensity():
@@ -297,6 +336,15 @@ def test_cleanup_preset_comparison_format_highlights_non_destructive_intensity()
     assert "Preset Comparison" in formatted
     assert "Non-destructive comparison" in formatted
     assert "Cleanup intensity score: 54.25" in formatted
+
+
+def test_cleanup_category_preview_format_highlights_non_destructive_limitations():
+    formatted = format_cleanup_category_preview(_workspace(_report()))
+
+    assert "Cleanup Category Preview" in formatted
+    assert "Category: floating voxel clusters" in formatted
+    assert "Preview selected splats: 4" in formatted
+    assert "Current limitation: native category isolation only" in formatted
 
 
 def test_quality_score_decreases_when_warnings_exist():

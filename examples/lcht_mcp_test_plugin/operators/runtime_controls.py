@@ -10,6 +10,10 @@ from lfs_plugins.types import Event, Operator
 from ..core.runtime_config import (
     AGGRESSIVE_CLEANUP_PRESET,
     BALANCED_CLEANUP_PRESET,
+    CLEANUP_CATEGORY_DISCONNECTED,
+    CLEANUP_CATEGORY_FLOATING,
+    CLEANUP_CATEGORY_OUTLIER,
+    CLEANUP_CATEGORY_SPARSE,
     CLEANUP_AGGRESSIVENESS_STEP,
     CLUSTER_ANALYSIS_BALANCED_SPLATS,
     CLUSTER_ANALYSIS_DETAILED_SPLATS,
@@ -44,11 +48,13 @@ from ..core.runtime_config import (
     confirm_safe_delete,
     disarm_safe_delete,
     set_cleanup_preset,
+    set_cleanup_category_preview_lines,
     set_cleanup_preview_report_lines,
     set_cleanup_preview_summary,
     set_cleanup_workspace_report_lines,
     set_max_cluster_analysis_splats,
     snapshot_runtime_config,
+    toggle_cleanup_category_visibility,
 )
 
 
@@ -200,6 +206,22 @@ SET_CLEANUP_PRESET_AGGRESSIVE_OPERATOR_ID = (
     "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
     "LCHTMCP_OT_set_cleanup_preset_aggressive"
 )
+TOGGLE_FLOATING_CLEANUP_CATEGORY_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_toggle_floating_cleanup_category"
+)
+TOGGLE_DISCONNECTED_CLEANUP_CATEGORY_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_toggle_disconnected_cleanup_category"
+)
+TOGGLE_OUTLIER_CLEANUP_CATEGORY_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_toggle_outlier_cleanup_category"
+)
+TOGGLE_SPARSE_CLEANUP_CATEGORY_OPERATOR_ID = (
+    "lfs_plugins.lcht_mcp_test_plugin.operators.runtime_controls."
+    "LCHTMCP_OT_toggle_sparse_cleanup_category"
+)
 
 
 def _log_runtime_state(action: str) -> None:
@@ -221,6 +243,8 @@ def _log_runtime_state(action: str) -> None:
         f"voxel_min_cluster_size={config.voxel_min_cluster_size}, "
         f"cleanup_outlier_distance={config.cleanup_outlier_distance:.4f}, "
         f"cleanup_aggressiveness={config.cleanup_aggressiveness:.4f}, "
+        f"active_cleanup_categories={list(config.active_cleanup_categories)}, "
+        f"selected_cleanup_category={config.selected_cleanup_category}, "
         "abort_if_splat_count_above_limit="
         f"{config.abort_if_splat_count_above_limit}"
     )
@@ -242,6 +266,35 @@ def _refresh_cleanup_workspace_if_open() -> None:
         lf.log.error(f"lcht_mcp_test_plugin: cleanup workspace auto-refresh failed: {exc}")
 
 
+def _refresh_cleanup_category_preview_if_open() -> None:
+    try:
+        from ..core.test_runner import (
+            _build_adapter,
+            run_clear_cleanup_category_preview,
+            run_preview_all_cleanup_categories,
+            run_preview_selected_cleanup_category,
+        )
+
+        adapter, _ = _build_adapter()
+        get_cleanup_workspace = getattr(adapter, "get_cleanup_workspace", None)
+        workspace = get_cleanup_workspace() if callable(get_cleanup_workspace) else None
+        if workspace is None:
+            return
+
+        if not workspace.active_cleanup_categories:
+            success, message = run_clear_cleanup_category_preview()
+        elif workspace.category_preview_mode == "single":
+            success, message = run_preview_selected_cleanup_category()
+        elif workspace.category_preview_mode == "active":
+            success, message = run_preview_all_cleanup_categories()
+        else:
+            return
+        log_fn = lf.log.info if success else lf.log.error
+        log_fn(f"lcht_mcp_test_plugin: cleanup category preview auto-refresh: {message}")
+    except Exception as exc:
+        lf.log.error(f"lcht_mcp_test_plugin: cleanup category preview auto-refresh failed: {exc}")
+
+
 def _log_cleanup_preset_change(old_preset: str, new_preset: str) -> None:
     config = snapshot_runtime_config()
     lf.log.info(
@@ -257,6 +310,7 @@ def _log_cleanup_preset_change(old_preset: str, new_preset: str) -> None:
 def _invalidate_cleanup_outputs_for_preset_change() -> None:
     set_cleanup_preview_report_lines([])
     set_cleanup_preview_summary(None)
+    set_cleanup_category_preview_lines([])
     try:
         from ..core.test_runner import _build_adapter
 
@@ -608,6 +662,45 @@ class LCHTMCP_OT_cleanup_aggressiveness_up(_ConfigOperator):
 
     def _apply(self) -> None:
         adjust_cleanup_aggressiveness(CLEANUP_AGGRESSIVENESS_STEP)
+
+
+class _CleanupCategoryToggleOperator(Operator):
+    category = CLEANUP_CATEGORY_FLOATING
+    action_label = "Toggled cleanup category visibility"
+
+    def invoke(self, context, event: Event) -> set:
+        toggle_cleanup_category_visibility(self.category)
+        _refresh_cleanup_category_preview_if_open()
+        _log_runtime_state(self.action_label)
+        return {"FINISHED"}
+
+
+class LCHTMCP_OT_toggle_floating_cleanup_category(_CleanupCategoryToggleOperator):
+    label = "Show Floating Clusters"
+    description = "Toggle visibility for floating voxel clusters"
+    category = CLEANUP_CATEGORY_FLOATING
+    action_label = "Toggled floating cleanup category visibility"
+
+
+class LCHTMCP_OT_toggle_disconnected_cleanup_category(_CleanupCategoryToggleOperator):
+    label = "Show Disconnected Clusters"
+    description = "Toggle visibility for disconnected cleanup clusters"
+    category = CLEANUP_CATEGORY_DISCONNECTED
+    action_label = "Toggled disconnected cleanup category visibility"
+
+
+class LCHTMCP_OT_toggle_outlier_cleanup_category(_CleanupCategoryToggleOperator):
+    label = "Show Distant Outliers"
+    description = "Toggle visibility for distant outliers"
+    category = CLEANUP_CATEGORY_OUTLIER
+    action_label = "Toggled distant outlier cleanup category visibility"
+
+
+class LCHTMCP_OT_toggle_sparse_cleanup_category(_CleanupCategoryToggleOperator):
+    label = "Show Sparse Regions"
+    description = "Toggle visibility for sparse singleton regions"
+    category = CLEANUP_CATEGORY_SPARSE
+    action_label = "Toggled sparse cleanup category visibility"
 
 
 class _CleanupPresetOperator(Operator):
