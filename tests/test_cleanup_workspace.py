@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from lichtfeld_mcp.core.cleanup_workspace import (
@@ -12,7 +14,9 @@ from lichtfeld_mcp.core.cleanup_workspace import (
     format_cleanup_workspace,
 )
 from lichtfeld_mcp.core.cleanup_metrics import (
+    CLEANUP_CATEGORY_DISCONNECTED,
     CLEANUP_CATEGORY_FLOATING,
+    CLEANUP_CATEGORY_OUTLIER,
     CLEANUP_CATEGORY_SPARSE,
     CleanupSourceBreakdownEntry,
 )
@@ -343,8 +347,55 @@ def test_cleanup_category_preview_format_highlights_non_destructive_limitations(
 
     assert "Cleanup Category Preview" in formatted
     assert "Category: floating voxel clusters" in formatted
-    assert "Preview selected splats: 4" in formatted
+    assert "Preview selected splats: 2" in formatted
+    assert "Estimated full-scene splats: 8" in formatted
+    assert "- floating voxel clusters: preview=2, estimated=8" in formatted
+    assert "- sparse singleton regions" not in formatted
     assert "Current limitation: native category isolation only" in formatted
+
+
+@pytest.mark.parametrize(
+    ("category", "expected_label", "expected_preview", "expected_estimated"),
+    [
+        (CLEANUP_CATEGORY_FLOATING, "floating voxel clusters", 2, 8),
+        (CLEANUP_CATEGORY_DISCONNECTED, "disconnected clusters", 0, 0),
+        (CLEANUP_CATEGORY_OUTLIER, "distant outliers", 0, 0),
+        (CLEANUP_CATEGORY_SPARSE, "sparse singleton regions", 2, 8),
+    ],
+)
+def test_cleanup_category_preview_header_metrics_match_selected_category(
+    category: str,
+    expected_label: str,
+    expected_preview: int,
+    expected_estimated: int,
+):
+    workspace = replace(
+        _workspace(_report()),
+        selected_cleanup_category=category,
+        category_preview_mode="single",
+    )
+
+    formatted = format_cleanup_category_preview(workspace)
+
+    assert f"Category: {expected_label}" in formatted
+    assert f"Preview selected splats: {expected_preview}" in formatted
+    assert f"Estimated full-scene splats: {expected_estimated}" in formatted
+
+
+def test_cleanup_category_preview_all_active_uses_combined_label_and_count():
+    workspace = replace(
+        _workspace(_report()),
+        selected_cleanup_category=None,
+        category_preview_mode="active",
+    )
+
+    formatted = format_cleanup_category_preview(workspace)
+
+    assert "Category: All active categories" in formatted
+    assert "Preview selected splats: 4" in formatted
+    assert "Estimated full-scene splats: 16" in formatted
+    assert "- floating voxel clusters: preview=2, estimated=8" in formatted
+    assert "- sparse singleton regions: preview=2, estimated=8" in formatted
 
 
 def test_quality_score_decreases_when_warnings_exist():

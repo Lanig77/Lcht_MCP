@@ -29,7 +29,6 @@ from lichtfeld_mcp.core.cleanup_metrics import (
     CLEANUP_SOURCE_OUTLIER,
     CLEANUP_SOURCE_SPARSE,
     build_cleanup_source_breakdown,
-    cleanup_category_label,
     compute_cleanup_intensity_metrics,
     normalize_cleanup_categories,
     normalize_cleanup_category,
@@ -810,7 +809,7 @@ class LichtfeldAdapter(AdapterContract):
         updated_workspace = self._preview_cleanup_workspace_categories(
             workspace,
             category_previews=category_previews,
-            selected_cleanup_category=workspace.selected_cleanup_category,
+            selected_cleanup_category=None,
             category_preview_mode="active",
         )
         session.workspace = updated_workspace
@@ -841,9 +840,14 @@ class LichtfeldAdapter(AdapterContract):
             native_selection_mask_size=None,
         )
         logger.info(
-            "category_preview_complete category=%s preview_selected_splats=%s "
-            "estimated_full_scene_splats=%s active_categories=%s selection_update_time=%.6f",
+            "category_preview_complete requested_category=%s resolved_category=%s "
+            "preview_selected_splats=%s estimated_full_scene_splats=%s "
+            "category_breakdown_selected_count=%s native_selection_count=%s "
+            "active_categories=%s selection_update_time=%.6f",
             "CLEARED",
+            "CLEARED",
+            0,
+            0,
             0,
             0,
             list(workspace.active_cleanup_categories),
@@ -2883,17 +2887,28 @@ class LichtfeldAdapter(AdapterContract):
         estimated_full_scene_splats = sum(
             entry.estimated_full_scene_count for entry in category_previews
         )
-        category_label = (
-            cleanup_category_label(selected_cleanup_category)
+        requested_category = (
+            selected_cleanup_category
             if selected_cleanup_category is not None
             else "ALL_ACTIVE"
         )
+        resolved_category = (
+            selected_cleanup_category
+            if selected_cleanup_category is not None
+            else "ALL_ACTIVE"
+        )
+        category_breakdown_selected_count = sum(
+            len(entry.preview_selected_indices) for entry in category_previews
+        )
         logger.info(
-            "category_preview_started category=%s preview_selected_splats=%s "
-            "estimated_full_scene_splats=%s active_categories=%s",
-            category_label,
+            "category_preview_started requested_category=%s resolved_category=%s "
+            "preview_selected_splats=%s estimated_full_scene_splats=%s "
+            "category_breakdown_selected_count=%s active_categories=%s",
+            requested_category,
+            resolved_category,
             preview_selected_splats,
             estimated_full_scene_splats,
+            category_breakdown_selected_count,
             list(workspace.active_cleanup_categories),
         )
         selection_start = perf_counter()
@@ -2915,6 +2930,12 @@ class LichtfeldAdapter(AdapterContract):
             self._selection.read_native_selection_mask(scene)
         )
         native_selection_mask_size = self._native_mask_size(native_selection_mask)
+        native_selection_count = self._native_selection_count(
+            scene,
+            expected_length=workspace.scene_profile.total_splats,
+            fallback=preview_selected_splats,
+            lf_module=lichtfeld_module,
+        )
         updated_workspace = replace(
             workspace,
             candidate_selection_mask=tuple(selection_mask),
@@ -2944,11 +2965,16 @@ class LichtfeldAdapter(AdapterContract):
             selection_update_time=selection_update_time,
         )
         logger.info(
-            "category_preview_complete category=%s preview_selected_splats=%s "
-            "estimated_full_scene_splats=%s active_categories=%s selection_update_time=%.6f",
-            category_label,
+            "category_preview_complete requested_category=%s resolved_category=%s "
+            "preview_selected_splats=%s estimated_full_scene_splats=%s "
+            "category_breakdown_selected_count=%s native_selection_count=%s "
+            "active_categories=%s selection_update_time=%.6f",
+            requested_category,
+            resolved_category,
             preview_selected_splats,
             estimated_full_scene_splats,
+            category_breakdown_selected_count,
+            native_selection_count,
             list(updated_workspace.active_cleanup_categories),
             selection_update_time,
         )
@@ -3106,6 +3132,23 @@ class LichtfeldAdapter(AdapterContract):
         if native_selection_mask is None:
             return "none"
         return hex(id(native_selection_mask))
+
+    def _native_selection_count(
+        self,
+        scene: object,
+        *,
+        expected_length: int,
+        fallback: int,
+        lf_module: object | None = None,
+    ) -> int:
+        try:
+            return self._selection.get_selected_count(
+                scene,
+                expected_length,
+                lf_module=lf_module,
+            )
+        except Exception:
+            return fallback
 
     def _apply_cleanup_candidate_selection(
         self,

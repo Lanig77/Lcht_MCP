@@ -410,6 +410,7 @@ class FakeClusterPreviewAdapter:
             selected_count=len(selected_indices),
             selection_percentage=len(selected_indices) / 1_998_000,
             selection_source=", ".join(self.current_workspace.active_cleanup_categories),
+            selected_cleanup_category=None,
             category_preview_mode="active",
         )
         return self.current_workspace
@@ -1112,6 +1113,39 @@ def test_cleanup_category_toggle_reapplies_active_preview(monkeypatch):
     assert fake_adapter.set_active_cleanup_categories_calls >= 1
     assert fake_adapter.preview_active_cleanup_categories_calls >= 1
     assert CLEANUP_CATEGORY_SPARSE not in config.active_cleanup_categories
+
+
+def test_run_preview_all_cleanup_categories_uses_combined_label(monkeypatch):
+    runtime_config, test_runner = _load_runner_modules(monkeypatch)
+    fake_adapter = FakeClusterPreviewAdapter()
+    fake_adapter.current_workspace = replace(
+        fake_adapter._workspace(
+            voxel_size=0.25,
+            min_voxel_cluster_size=10,
+            cluster_distance_threshold=0.10,
+            outlier_distance=2.5,
+            cleanup_aggressiveness=0.5,
+            selected_count=512,
+        ),
+        category_preview_mode="active",
+        selected_cleanup_category=None,
+    )
+    runtime_config.sync_cleanup_category_state(
+        fake_adapter.current_workspace.active_cleanup_categories,
+        selected_category=None,
+    )
+    monkeypatch.setattr(test_runner, "_build_adapter", lambda: (fake_adapter, Path("C:/repo")))
+
+    success, message = test_runner.run_preview_all_cleanup_categories()
+
+    config = runtime_config.snapshot_runtime_config()
+    assert success is True
+    assert message == "Cleanup category preview complete."
+    assert fake_adapter.preview_active_cleanup_categories_calls == 1
+    assert any(
+        "Category: All active categories" in line
+        for line in config.last_cleanup_category_preview_lines
+    )
 
 
 def test_run_reset_cleanup_workspace_clears_workspace_summary(monkeypatch):

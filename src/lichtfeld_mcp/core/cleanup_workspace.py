@@ -365,7 +365,7 @@ def format_cleanup_workspace(workspace: CleanupWorkspace) -> str:
         )
         lines.append("Non-destructive preview: native selection only")
         lines.append("Current limitation: category preview uses native selection, not color overlays.")
-    _append_category_preview_lines(lines, workspace.cleanup_category_previews)
+    _append_category_preview_lines(lines, current_cleanup_category_previews(workspace))
     _append_source_breakdown_lines(lines, summary.source_breakdown)
     if workspace.preview_selection_active and workspace.native_selection_mask is None:
         lines.append("Native workspace delete mask unavailable. Soft delete will refuse until it exists.")
@@ -415,11 +415,12 @@ def format_cleanup_preset_comparison(report: CleanupPresetComparisonReport) -> s
 def format_cleanup_category_preview(workspace: CleanupWorkspace) -> str:
     mode_label = "Approximate sampled" if workspace.approximate else "Exact"
     category_label = describe_cleanup_category_preview(workspace) or "No active preview"
+    preview_selected_splats = preview_selected_splats_for_current_scope(workspace)
     estimated_total = estimate_cleanup_preview_total(workspace)
     lines = [
         "Cleanup Category Preview",
         f"Category: {category_label}",
-        f"Preview selected splats: {workspace.selected_count:,}",
+        f"Preview selected splats: {preview_selected_splats:,}",
         f"Estimated full-scene splats: {estimated_total:,}",
         f"Current preset: {workspace.current_cleanup_parameters.preset_name}",
         f"Analysis mode: {mode_label}",
@@ -431,7 +432,7 @@ def format_cleanup_category_preview(workspace: CleanupWorkspace) -> str:
             "Active categories: "
             f"{', '.join(cleanup_category_label(category) for category in workspace.active_cleanup_categories)}"
         )
-    _append_category_preview_lines(lines, active_cleanup_category_previews(workspace))
+    _append_category_preview_lines(lines, current_cleanup_category_previews(workspace))
     return "\n".join(lines)
 
 
@@ -463,11 +464,27 @@ def active_cleanup_category_previews(
     )
 
 
+def current_cleanup_category_previews(
+    workspace: CleanupWorkspace,
+) -> tuple[CleanupCategoryPreview, ...]:
+    if workspace.selected_cleanup_category is not None:
+        return tuple(
+            entry
+            for entry in workspace.cleanup_category_previews
+            if entry.category == workspace.selected_cleanup_category
+        )
+    if workspace.category_preview_mode == "active":
+        return active_cleanup_category_previews(workspace)
+    if workspace.category_preview_mode == "workspace":
+        return workspace.cleanup_category_previews
+    return ()
+
+
 def describe_cleanup_category_preview(workspace: CleanupWorkspace) -> str | None:
     if workspace.selected_cleanup_category is not None:
         return cleanup_category_label(workspace.selected_cleanup_category)
     if workspace.category_preview_mode == "active":
-        return "All Active Cleanup Categories"
+        return "All active categories"
     if workspace.category_preview_mode == "workspace":
         return "Workspace Cleanup Preview"
     if workspace.category_preview_mode == "cleared":
@@ -476,11 +493,16 @@ def describe_cleanup_category_preview(workspace: CleanupWorkspace) -> str | None
 
 
 def estimate_cleanup_preview_total(workspace: CleanupWorkspace) -> int:
-    return extrapolate_cleanup_count(
-        workspace.selected_count,
-        analyzed_splats=workspace.scene_profile.analyzed_splats,
-        total_splats=workspace.scene_profile.total_splats,
-        approximate=workspace.approximate,
+    return sum(
+        entry.estimated_full_scene_count
+        for entry in current_cleanup_category_previews(workspace)
+    )
+
+
+def preview_selected_splats_for_current_scope(workspace: CleanupWorkspace) -> int:
+    return sum(
+        len(entry.preview_selected_indices)
+        for entry in current_cleanup_category_previews(workspace)
     )
 
 

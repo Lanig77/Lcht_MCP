@@ -3092,6 +3092,7 @@ def test_preview_cleanup_category_updates_native_selection_without_delete_or_app
     updated_workspace = adapter.preview_cleanup_category(CLEANUP_CATEGORY_OUTLIER)
 
     assert updated_workspace.selected_cleanup_category == CLEANUP_CATEGORY_OUTLIER
+    assert updated_workspace.selected_count == len(category_preview.preview_selected_indices)
     assert updated_workspace.preview_selected_indices == category_preview.preview_selected_indices
     assert fake_scene._model.last_soft_delete_argument is None
     assert fake_scene._model.apply_deleted_calls == 0
@@ -3152,6 +3153,7 @@ def test_preview_active_cleanup_categories_combines_active_masks(monkeypatch):
     )
     assert updated_workspace.preview_selected_indices == tuple(expected_indices)
     assert updated_workspace.selected_count == len(expected_indices)
+    assert updated_workspace.selected_cleanup_category is None
 
 
 def test_preview_cleanup_category_refuses_without_workspace(monkeypatch):
@@ -3282,6 +3284,73 @@ def test_category_preview_reuses_workspace_sample_on_large_scenes(monkeypatch):
 
     assert preview.approximate is True
     assert len(preview.sampled_rows) <= 25_000
+
+
+def test_preview_cleanup_category_logs_matching_category_and_native_counts(monkeypatch, caplog):
+    adapter_module = importlib.import_module("lichtfeld_mcp.adapters.lichtfeld")
+    original_import_module = adapter_module.importlib.import_module
+    fake_scene = FakeScene(
+        FakeModel(
+            means=FakeTorchTensor(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.1, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.0],
+                    [3.0, 0.0, 0.0],
+                    [20.0, 0.0, 0.0],
+                ]
+            )
+        )
+    )
+    native_selection = FakeNativeSelectionApi(fake_scene)
+    fake_module = SimpleNamespace(
+        Tensor=FakeLfTensor,
+        add_to_selection=native_selection.add_to_selection,
+        deselect_all=native_selection.deselect_all,
+        get_scene=lambda: fake_scene,
+    )
+
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name, package=None: fake_module if name == "lichtfeld" else original_import_module(name, package),
+    )
+
+    adapter = adapter_module.LichtfeldPluginAdapter()
+    adapter.analyze_scene(voxel_size=1.0, min_voxel_cluster_size=2, max_splats=10)
+    workspace = adapter.open_cleanup_workspace(
+        voxel_size=1.0,
+        min_voxel_cluster_size=2,
+        outlier_distance=2.5,
+        cleanup_aggressiveness=0.5,
+    )
+    expected_preview = next(
+        entry
+        for entry in workspace.cleanup_category_previews
+        if entry.category == CLEANUP_CATEGORY_FLOATING
+    )
+
+    with caplog.at_level(logging.INFO):
+        updated_workspace = adapter.preview_cleanup_category(CLEANUP_CATEGORY_FLOATING)
+
+    complete_messages = [
+        record.message
+        for record in caplog.records
+        if "category_preview_complete" in record.message
+    ]
+    assert complete_messages
+    assert "requested_category=FLOATING_VOXEL_CLUSTERS" in complete_messages[-1]
+    assert "resolved_category=FLOATING_VOXEL_CLUSTERS" in complete_messages[-1]
+    assert (
+        f"preview_selected_splats={len(expected_preview.preview_selected_indices)}"
+        in complete_messages[-1]
+    )
+    assert (
+        f"native_selection_count={len(expected_preview.preview_selected_indices)}"
+        in complete_messages[-1]
+    )
+    assert updated_workspace.selected_count == len(expected_preview.preview_selected_indices)
 
 
 def test_soft_delete_cleanup_candidates_refuses_when_no_preview_exists(monkeypatch):
